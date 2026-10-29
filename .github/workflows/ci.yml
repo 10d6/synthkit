@@ -80,6 +80,8 @@ jobs:
           path: |
             build-web/web/basic.html
             web-test/*.png
+            web-test/*.f32
+            web-test/native.wav
           if-no-files-found: ignore
           retention-days: 30
 
