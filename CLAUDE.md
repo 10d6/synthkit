@@ -17,7 +17,7 @@ builds from CI artifacts at milestones.
 2. **`core/` has no dependencies on JUCE or the browser.** Plain C++20 and the
    standard library only. Platform code lives in `web/` and `plugin/`.
 3. **Real-time safety.** No allocation, locks, I/O or exceptions on the audio
-   thread (`start`, `release`, `render`, `processGlobal`, `onMidi`). Allocate in
+   thread (`start`, `release`, `render`, `processGlobal`, `processEvents`). Allocate in
    `prepare`.
 4. **Stable identifiers.** Parameter IDs, `synth.json` `id`, `pluginCode` and
    `vendorCode` never change once released. Patches store real units, not
@@ -25,7 +25,9 @@ builds from CI artifacts at milestones.
 5. **Build for synths that exist.** A feature goes into the kit when a second
    synth needs it. Until then it lives in the synth repo.
 6. **Expect unusual synths.** The owner's synths often have very custom
-   behaviour (per-note detune tables, self-generating note sequences). Kit
+   behaviour (per-note detune tables, self-generating note sequences,
+   note-triggered tempo-locked modulation). Musical time — beats, bars, time
+   signature — is a first-class input alongside velocity and pitch. Kit
    defaults must always be overridable through the escape hatches and custom
    state in `API.md` — never design a kit feature that forces one way of doing
    things without a way out.

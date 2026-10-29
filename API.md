@@ -43,7 +43,9 @@ web build, plugin builds) comes from synthkit.
     "unison": true,
     "standardEnvelopes": 2,
     "standardLfos": 2,
-    "modSlots": 8
+    "modSlots": 8,
+    "shapes": 4,
+    "eventQueue": 256
   }
 }
 ```
@@ -169,9 +171,7 @@ const Transport& t = ctx.transport(); // bpm, playing, beat position
   downstream (`pitchHz`, key tracking, glide) uses the result.
 - **Escape hatches.** The kit's defaults are meant to be overridden when a synth
   needs something unusual:
-  - `onMidi(const MidiEvent&)` → return `true` to consume an event before the
-    kit sees it (e.g. a synth that triggers its own note sequences). Use
-    `spawnVoice(NoteOn)` to start a voice yourself.
+  - `processEvents` (§4a) → reshape, swallow or generate MIDI before voices.
   - `allocateVoice(const NoteOn&, VoicePool&)` → replace the stealing policy
     (e.g. a fixed voice per key, like a piano emulation).
   - `processGlobal` → anything that happens after the voices are mixed.
@@ -179,9 +179,50 @@ const Transport& t = ctx.transport(); // bpm, playing, beat position
   If an escape hatch is used in a second synth for the same reason, that's the
   signal to turn it into a kit feature.
 
+## 4a. Event processing in musical time (phase 2)
+
+An optional stage that sits between incoming MIDI and the voices. It sees
+every event with its position in beats, and can pass it on, change it, drop it,
+or schedule new events in the future, sample-accurately and locked to tempo.
+
+```cpp
+void processEvents(EventContext& ctx) override {
+  for (auto& e : ctx.in()) {
+    if (e.isNoteOn()) {
+      ctx.out(e);                                         // play the key itself
+      Beats next = ctx.quantize(e.beat, Division::Eighth); // next 1/8 on the grid
+      ctx.schedule(next + 0.5, NoteOn{ e.note + 7, e.vel * 0.6f });
+      ctx.trigger(synth.pump, e);                         // start a shape (§6a)
+    } else {
+      ctx.out(e);
+    }
+  }
+}
+```
+
+| Call | Meaning |
+|---|---|
+| `ctx.in()` | this block's incoming events, each with `.beat`, `.sample` |
+| `ctx.out(e)` | send to the voice stage now |
+| `ctx.schedule(beat, e)` | send later, at a position in beats (or `seconds(t)`) |
+| `ctx.cancel(tag)` / `schedule(…, tag)` | cancel pending events, e.g. on key release |
+| `ctx.quantize(beat, div)` | next grid point; `div` can be a beat, bar, or `Division` |
+| `ctx.trigger(shape, e)` | start a shape (§6a), per voice or global |
+| `ctx.setSource(src, v)` | drive a custom mod source directly |
+| `ctx.rng(e)` | seeded random stream for this event (repeatable per key if wanted) |
+| `ctx.transport()` | bpm, playing, beat, bar, time signature |
+
+- Scheduled notes go through the normal voice stage: tuning, voice allocation
+  and modulation all apply.
+- Pending events are kept in a fixed-size queue (size set in `synth.json`
+  `features.eventQueue`, default 256), so the stage stays real-time safe.
+- When the transport stops or jumps, the kit calls `onTransportJump()` so
+  pending events can be rescheduled or dropped (default: drop and release).
+- A kit arpeggiator, if we add one, will be built on this same stage.
+
 ### Real-time rules (enforced by tests in debug builds)
 
-In `start`, `release`, `render`, `processGlobal`, `onMidi`: no memory
+In `start`, `release`, `render`, `processGlobal`, `processEvents`: no memory
 allocation, no locks, no file/console I/O, no exceptions. Allocate in
 `prepare`. `dsp::Rng` is the only randomness to use (seedable, allocation-free).
 
@@ -253,9 +294,24 @@ double tune(int note, const NoteContext&) override {
 
 ## 6. Modulation (phase 4)
 
-**Sources** provided by the kit: `env1`, `env2`, `lfo1`, `lfo2`, `velocity`,
-`key` (key tracking, 0 at C4), `modwheel`, `aftertouch`, `bend`, `random`
-(new value per note), `const` (fixed 1.0, for offsets via `via`).
+**Sources** provided by the kit: `env1`, `env2`, `lfo1`, `lfo2`, `shape1`…
+(§6a), `velocity`, `key` (key tracking, 0 at C4), `modwheel`, `aftertouch`,
+`bend`, `random` (new value per note), `const` (fixed 1.0, for offsets via
+`via`).
+
+**Musical-time sources** (global, follow the transport):
+
+| Source | Value |
+|---|---|
+| `beat.phase` | 0→1 ramp over each beat |
+| `bar.phase` | 0→1 ramp over each bar (respects time signature) |
+| `bar.beat` | which beat of the bar, 0→1 across the bar's beats, stepped |
+| `downbeat` | 1 on the first beat of a bar, 0 otherwise |
+| `note.age` | per voice: beats since this note started, 0→1 over `note.ageSpan` |
+| `note.offbeat` | per voice: how far the note started from the nearest beat (−1…1) |
+
+Combined with `via`, these let you do things like "velocity sets how hard the
+bar's downbeat accents the filter".
 
 **Matrix:** `modSlots` routes, each `src → dst × amt`, optional `via` (a second
 source that scales the amount). `amt` is −1…1 of the destination's full
@@ -272,6 +328,39 @@ void defineModSources(ModSourceBuilder& b) override {
 ```
 
 Custom sources show up in the matrix like built-ins.
+
+## 6a. Shapes: drawn, tempo-locked modulation (phase 4)
+
+A shape is a curve you draw (breakpoints with adjustable curvature, or steps),
+like an automation lane, that a note or the bar line plays back. It's a mod
+source, so it can drive anything the matrix reaches. Example: an organ
+"pedal pump" curve, one bar long, restarting on each note and pushing
+amplitude and brightness.
+
+`features.shapes: 4` adds `shape1`…`shape4`, each with these parameters
+(so they're automatable and modulatable themselves):
+
+| Param | Options |
+|---|---|
+| `shapeN.length` | in beats/bars (`1/16` … `8 bars`, triplet/dotted) or seconds |
+| `shapeN.trigger` | `note` (per voice), `firstNote` (global, restarts when all keys were up), `bar`, `beat`, `free` (continuous, transport-locked) |
+| `shapeN.start` | `immediate`, or quantised to the next `1/16` … `bar` |
+| `shapeN.loop` | `once`, `loop`, `whileHeld`, `pingPong`, `releaseSegment` (jumps to a tail on key up) |
+| `shapeN.rate` | playback speed multiplier (modulatable, e.g. by velocity) |
+| `shapeN.offset` | phase offset 0…1 (modulatable, e.g. by key) |
+| `shapeN.depth` | output scale |
+| `shapeN.smooth` | slew, for removing steps |
+| `shapeN.keys` / `shapeN.vel` | ranges that may trigger it (e.g. only keys below C3) |
+
+- The curve itself is stored in the patch under `"shapes"` (it's bulk data,
+  not a parameter). A shape can have several stored curves and a `shapeN.curve`
+  param to switch between them, so the curve choice itself is automatable.
+- The editor (`{ "kit": "shape1" }` in the layout) snaps to a grid drawn from
+  the current time signature, with draw, step, and curve-bend tools.
+- `processEvents` can also start a shape directly: `ctx.trigger(shape, e)`, so a
+  synth can decide in code which notes fire it.
+- Synths can read a shape directly: `ctx.shape(synth.pump)` for logic that
+  doesn't fit the matrix.
 
 ## 7. Tempo (phase 4)
 
@@ -354,6 +443,7 @@ Scenarios in `tests/*.json` render offline and are checked in CI:
 ```json
 {
   "patch": "presets/init.json",
+  "transport": { "bpm": 96, "timeSig": [3, 4], "playing": true },
   "events": [
     { "t": 0.0, "on": 60, "vel": 100 },
     { "t": 0.5, "on": 64, "vel": 60 },
@@ -367,6 +457,9 @@ Scenarios in `tests/*.json` render offline and are checked in CI:
 The kit also runs generic checks on every synth: no NaN/inf, no denormal
 slowdowns, every preset loads and round-trips, random patches don't blow up,
 all-notes-off really is silent, and 44.1/48/96 kHz all render.
+
+Events can be given in seconds (`"t"`) or beats (`"beat"`), so tempo-locked
+behaviour (shapes, scheduled notes) is tested against the transport.
 
 Command line: `sk-render tests/chord.json --out chord.wav` (writes the WAV and
 prints the checks).
