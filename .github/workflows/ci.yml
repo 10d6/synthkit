@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: release
+            type: Release
+            flags: ""
+            renders: true
+          - name: sanitizers
+            type: Debug
+            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
+            renders: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.type }} -DCMAKE_CXX_FLAGS="${{ matrix.flags }}"
+      - name: Build
+        run: cmake --build build
+      - name: Core tests
+        run: ./build/synthkit_tests
+      - name: Example synth checks
+        run: ./build/examples/basic/basic_render --check examples/basic ${{ matrix.renders && '--out renders' || '' }}
+      - name: Upload renders
+        if: matrix.renders && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renders-basic
+          path: |
+            renders/tests/*.wav
+            renders/presets/*.wav
+            renders/failures/*
+          if-no-files-found: ignore
+          retention-days: 14

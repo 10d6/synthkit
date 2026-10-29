@@ -1,0 +1,53 @@
+{
+  "patch": "init",
+  "params": {
+    "delay.mix": 0.8,
+    "delay.time": 0,
+    "delay.feedback": 0,
+    "env1.attack": 0.001,
+    "env1.decay": 0.05,
+    "env1.sustain": 0,
+    "env1.release": 0.03,
+    "filter.env": 0
+  },
+  "transport": {
+    "bpm": 90,
+    "timeSig": [
+      3,
+      4
+    ],
+    "playing": true
+  },
+  "lengthBeats": 3,
+  "events": [
+    {
+      "beat": 0,
+      "on": 60,
+      "vel": 120
+    },
+    {
+      "beat": 0.1,
+      "off": 60
+    }
+  ],
+  "expect": {
+    "levelAt": [
+      {
+        "beat": 0.02,
+        "above": -50
+      },
+      {
+        "beat": 0.5,
+        "below": -70
+      },
+      {
+        "beat": 1.02,
+        "above": -55
+      },
+      {
+        "beat": 1.5,
+        "below": -70
+      }
+    ]
+  }
+}
