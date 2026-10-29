@@ -1,6 +1,6 @@
 # synthkit API
 
-> **Status: v0.1.** Sections marked **✓** are implemented (phase 2). The
+> **Status: v0.2.** Sections marked **✓** are implemented (phases 2–3). The
 > rest are the agreed contract for later phases (see README → Roadmap) and may
 > still be refined when they're built.
 
@@ -19,8 +19,8 @@ my-synth/
   synthkit/            git submodule, pinned to a tag
   synth.json           identity + feature flags
   src/Synth.cpp        params, voice, optional hooks
-  ui/layout.json       which controls go where (phase 3)
-  ui/custom.js         optional: custom widgets (phase 3)
+  ui/layout.json       which controls go where (§9)
+  ui/custom.js         optional: custom widgets (§9)
   presets/*.json       factory patches (embedded into the build)
   tests/*.json         render scenarios run in CI
   CMakeLists.txt
@@ -36,8 +36,8 @@ synthkit_add_synth(mysynth SOURCES src/Synth.cpp)
 
 `synthkit_add_synth` builds `mysynth_synth` (a library with the synth, its
 `synth.json` and presets embedded), `mysynth_render` (the render/check tool,
-§10) and a CTest test that runs every check. Later phases add the web and
-plugin targets to the same call.
+§10) and a CTest test that runs every check. With the browser toolchain the
+same call builds `<name>.html` instead (§11). Phase 5 adds the plugin targets.
 
 Everything else (MIDI, voices, patches, mod matrix, UI binding, automation,
 web build, plugin builds) comes from synthkit.
@@ -124,8 +124,9 @@ struct MySynth : Synth {
 | `group(s)` | Groups params in the host's list. |
 | `hidden()` | Saved in patches, not shown to the host. |
 
-Mistakes (duplicate IDs, reserved IDs, `log()` on a range through zero) throw
-when the synth is created, so they show up in the first test run.
+Mistakes (duplicate IDs, reserved IDs, `log()` on a range through zero) are
+reported when the synth is created (`sk::fail`), so they show up in the first
+test run.
 
 **Repeated parameters.** For sets like per-key or per-step controls:
 
@@ -352,7 +353,8 @@ them with `NoteOn{note, vel, ch}`, `NoteOff{note, ch}`, `CC{number, value, ch}`.
 
 In `start`, `release`, `render`, `processGlobal`, `processEvents`, `tune` and
 `allocateVoice`: no memory allocation, no locks, no file or console I/O, no
-exceptions. Allocate in `prepare`. Use `dsp::Rng` for randomness (seedable,
+exceptions. (Synth code never uses exceptions at all, because the browser
+build doesn't have them: §11.) Allocate in `prepare`. Use `dsp::Rng` for randomness (seedable,
 allocation-free). The render tool counts every allocation made while the
 engine is processing audio, and fails on any.
 
@@ -424,7 +426,7 @@ double tune(int note, const NoteContext&) override {
   `modify([](KeyTable& k) { … })` are for other threads (UI, patch load). They
   build a new copy and swap it in whole, so the audio thread never sees half a
   table.
-- `sk::Json` is a small JSON value: `j["key"]`, `j[i]`, `number()`,
+- `sk::Json` is a small JSON value: `Json::tryParse(text, out, &error)`, `j["key"]`, `j[i]`, `number()`,
   `string()`, `boolean()`, `items()`, `members()`, `to(array)`, and assignment
   from numbers, strings, `std::array` and `std::vector`. Missing keys read as
   null, never throw.
@@ -510,9 +512,9 @@ they're automatable and modulatable themselves):
 
 `ctx.transport()` → `Transport { bpm, playing, beat, barStart, timeSigNum,
 timeSigDen }`, plus `beatsPerBar()`, `secondsPerBeat()` and `seconds(s)`. In the
-plugin this comes from the host. In the browser it comes from incoming MIDI
-clock if present, otherwise the shell's internal clock (BPM control in the
-toolbar). `beat` keeps advancing when the transport is stopped (§4a).
+plugin this comes from the host. In the browser it comes from the page's tempo
+clock (Play, BPM and time signature, next to the keyboard). Following incoming
+MIDI clock arrives in phase 4. `beat` keeps advancing when the transport is stopped (§4a).
 
 Synced values use `sk::Division`: `Division::Whole`, `Half`, `Quarter`,
 `Eighth`, `Sixteenth`, `ThirtySecond` and `Bar`, with `.triplet()` and
@@ -542,47 +544,74 @@ All in `sk::dsp`, header-only, allocation-free after `prepare`.
 New blocks are added to the kit when a second synth needs them; until then they
 live in the synth repo.
 
-## 9. UI layout (phase 3)
+## 9. UI layout ✓
+
+`ui/layout.json` arranges the synth's panel. It's optional: without it, the
+kit builds one section per parameter `group`, followed by the voice, envelope
+and output panels.
 
 ```json
 {
-  "size": [960, 560],
-  "theme": { "accent": "#e8a33d" },
-  "header": { "presetBar": true, "bpm": true, "scope": true },
+  "theme": { "accent": "#2457d6" },
   "sections": [
     { "title": "Oscillator", "controls": [
-      { "param": "wave", "type": "segmented" },
-      { "param": "drive", "type": "knob" }
+      { "param": "wave", "label": "Wave" },
+      { "param": "drive", "type": "slider" }
     ]},
     { "title": "Filter", "controls": [
-      { "param": "cutoff", "type": "knob", "size": "large" },
-      { "param": "reso", "type": "knob" }
+      { "param": "cutoff", "size": "large" },
+      { "param": "reso", "label": "Resonance" },
+      { "type": "xy", "params": ["cutoff", "reso"] }
     ]},
-    { "kit": "env1" }, { "kit": "lfo1" }, { "kit": "modMatrix" }
+    { "kit": "env1" }, { "kit": "env2", "title": "Filter envelope" },
+    { "kit": "voices" }, { "kit": "master" }
   ],
   "keyboard": true
 }
 ```
 
-Control types: `knob`, `slider`, `segmented`, `menu`, `toggle`, `xy`
-(`params: [a, b]`). `{ "kit": … }` inserts a ready-made panel for a kit feature.
-Every control gets double-click-to-reset, fine-drag with Shift, right-click
-→ MIDI learn, and a modulation ring when it's a mod destination.
+| Control field | |
+|---|---|
+| `param` | parameter ID |
+| `type` | `knob` (floats, default), `slider`, `segmented` (choices with up to 4 options, default), `menu` (longer choices), `toggle` (toggles, default), `xy` (with `params: [x, y]`), or a custom widget name |
+| `label` | text under the control (default: the parameter's name) |
+| `size` | `small` or `large` knob |
 
-**Custom widgets** (`ui/custom.js`):
+| Section field | |
+|---|---|
+| `title`, `controls` | a panel of controls |
+| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `voices` (mode, glide, unison, bend range), `master` (level, A4). `lfo1`, `modMatrix` and `shape1` arrive in phase 4. |
+| `wide` | `true` makes the panel take a full row |
+
+- `theme.accent` colours the controls. Dark mode derives a lighter shade
+  from it automatically.
+- Parameters the layout doesn't mention (other than kit and hidden ones) get a
+  "More" panel, so nothing is unreachable. Mistakes in the layout (unknown
+  parameter IDs or control types) show as warnings when the page opens.
+- Every control supports dragging (Shift for fine), the mouse wheel, arrow keys
+  when focused, double-click to reset, clicking the value to type one, and
+  right-click for MIDI learn and reset. A modulation ring for mod destinations
+  arrives in phase 4.
+
+**Custom widgets** (`ui/custom.js`): a plain script with no imports that
+defines `register`:
 
 ```js
 export function register(sk) {
   sk.widget("phraseView", (el, ctx) => {
-    ctx.onParam("density", v => { /* redraw */ });
-    ctx.onMeter("phrase.step", v => { /* animate */ });  // from mod sources
-    // ctx.set("density", 0.7) to change a value
+    ctx.onParam("density", (v) => { /* redraw; also called once immediately */ });
+    ctx.onCustom("keys", (table) => { /* custom state (§5a) as JSON */ });
+    // ctx.get(id), ctx.set(id, value), ctx.format(id, value), ctx.param(id)
+    // ctx.custom(id), ctx.setCustom(id, json)
+    // ctx.noteOn(note, vel), ctx.noteOff(note)
+    // ctx.onMeter(sourceId, fn)    mod-source meters (phase 4)
   });
 }
 ```
-Then use `{ "type": "phraseView" }` in the layout. Custom widgets run
-identically in the browser and the plugin. They can also read and edit custom
-state (§5a), e.g. a 128-key detune editor drawn over a keyboard.
+
+Then use `{ "type": "phraseView" }` as a control in the layout. Custom widgets
+run identically in the browser and the plugin. A 128-key detune editor drawn
+over a keyboard is the kind of thing they're for.
 
 ## 10. Testing a synth ✓
 
@@ -648,11 +677,41 @@ basic_render --params                                # list every parameter
 
 CI runs `--check` on every PR and attaches the rendered WAVs.
 
-## 11. Targets
+## 11. The browser build ✓
+
+```
+cmake -S . -B build-web -G Ninja -DCMAKE_TOOLCHAIN_FILE=synthkit/cmake/wasm32-wasi.cmake
+cmake --build build-web          # → build-web/web/<name>.html
+```
+
+This needs clang 18+, `lld` and the wasm32 sysroot. On Ubuntu 24.04:
+`wasi-libc libc++-18-dev-wasm32 libclang-rt-18-dev-wasm32 lld-18`. CI
+installs them.
+
+The result is **one self-contained HTML file** with the synth (WebAssembly),
+the UI, the layout and the presets inside. It runs from a double-click
+(`file://`), from GitHub Pages, or from anywhere else, with no server. The page
+has the preset bar (factory presets, your own presets saved in the browser,
+import and export as files), a keyboard you can play with the mouse, touch or
+computer keys, pitch and mod wheels, Web MIDI input with MIDI learn, a tempo
+clock (play, BPM, time signature), a scope, a level meter and a voice count. The
+current sound is restored when you come back.
+
+The audio engine is the same C++ as the plugin's, so the browser plays exactly
+what the plugin will. CI renders a scenario through the page's real
+AudioWorklet and fails if it differs from the native render by more than
+floating-point noise.
+
+**Rules this adds for synth code:** it must compile without C++ exceptions
+(no `throw`, `try` or `catch`) and without threads. Report definition-time
+mistakes with `sk::fail("message")`, which throws in native builds and stops
+with the message in the browser.
+
+## 12. Targets
 
 | Target | Used in | Phase |
 |---|---|---|
-| Web (WASM + AudioWorklet, GitHub Pages) | development, quick play | 3 |
+| Web (WASM + AudioWorklet, single HTML file) ✓ | development, quick play | 3 |
 | VST3 (Windows, macOS) | Ableton Live, Reaper | 5 |
 | AU (macOS) | GarageBand, Logic, Reaper | 5 |
 | CLAP | Reaper, Bitwig | optional, later |

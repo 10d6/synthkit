@@ -18,6 +18,10 @@ inline float gainToDb(float g) { return g <= 1e-6f ? -120.f : 20.f * std::log10(
 inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
 inline float clamp(float x, float lo, float hi) { return std::min(std::max(x, lo), hi); }
 
+// Filter and delay states that decay towards zero can end up as denormals,
+// which are very slow on most CPUs (and can't be switched off in WebAssembly).
+inline float flushDenormal(float x) { return std::fabs(x) < 1e-15f ? 0.f : x; }
+
 // Smooth saturator, tanh-like, cheap and bounded to (-1, 1).
 inline float softclip(float x) {
   x = clamp(x, -3.f, 3.f);

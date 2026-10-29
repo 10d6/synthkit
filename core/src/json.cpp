@@ -1,5 +1,7 @@
 #include "synthkit/json.h"
 
+#include "synthkit/error.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -18,14 +20,20 @@ const Json& nullJson() {
 struct Parser {
   std::string_view s;
   std::size_t i = 0;
+  bool bad = false;
+  std::string error;
+  int depth = 0;
 
-  [[noreturn]] void fail(const char* what) {
+  Json fail(const char* what) {
+    if (bad) return Json();
+    bad = true;
     // Report line:column for readable errors in hand-edited patches.
     std::size_t line = 1, col = 1;
     for (std::size_t k = 0; k < i && k < s.size(); ++k) {
       if (s[k] == '\n') { ++line; col = 1; } else { ++col; }
     }
-    throw JsonError(std::string("JSON: ") + what + " at " + std::to_string(line) + ":" + std::to_string(col));
+    error = std::string("JSON: ") + what + " at " + std::to_string(line) + ":" + std::to_string(col);
+    return Json();
   }
 
   void ws() {
@@ -49,16 +57,20 @@ struct Parser {
 
   Json value() {
     ws();
-    if (i >= s.size()) fail("unexpected end");
+    if (i >= s.size()) return fail("unexpected end");
+    if (++depth > 200) return fail("nested too deeply");
+    Json v;
     char c = s[i];
-    if (c == '{') return obj();
-    if (c == '[') return arr();
-    if (c == '"') return Json(str());
-    if (lit("true")) return Json(true);
-    if (lit("false")) return Json(false);
-    if (lit("null")) return Json();
-    if (c == '-' || (c >= '0' && c <= '9')) return num();
-    fail("unexpected character");
+    if (c == '{') v = obj();
+    else if (c == '[') v = arr();
+    else if (c == '"') { std::string t; if (str(t)) v = Json(std::move(t)); }
+    else if (lit("true")) v = Json(true);
+    else if (lit("false")) v = Json(false);
+    else if (lit("null")) v = Json();
+    else if (c == '-' || (c >= '0' && c <= '9')) v = num();
+    else return fail("unexpected character");
+    --depth;
+    return v;
   }
 
   Json obj() {
@@ -66,19 +78,23 @@ struct Parser {
     ++i;
     ws();
     if (i < s.size() && s[i] == '}') { ++i; return o; }
-    while (true) {
+    while (!bad) {
       ws();
-      if (i >= s.size() || s[i] != '"') fail("expected key");
-      std::string k = str();
+      if (i >= s.size() || s[i] != '"') return fail("expected key");
+      std::string k;
+      if (!str(k)) return Json();
       ws();
-      if (i >= s.size() || s[i] != ':') fail("expected ':'");
+      if (i >= s.size() || s[i] != ':') return fail("expected ':'");
       ++i;
-      o[k] = value();
+      Json v = value();
+      if (bad) return Json();
+      o[k] = std::move(v);
       ws();
       if (i < s.size() && s[i] == ',') { ++i; ws(); if (i < s.size() && s[i] == '}') { ++i; return o; } continue; }
       if (i < s.size() && s[i] == '}') { ++i; return o; }
-      fail("expected ',' or '}'");
+      return fail("expected ',' or '}'");
     }
+    return Json();
   }
 
   Json arr() {
@@ -86,13 +102,16 @@ struct Parser {
     ++i;
     ws();
     if (i < s.size() && s[i] == ']') { ++i; return a; }
-    while (true) {
-      a.push(value());
+    while (!bad) {
+      Json v = value();
+      if (bad) return Json();
+      a.push(std::move(v));
       ws();
       if (i < s.size() && s[i] == ',') { ++i; ws(); if (i < s.size() && s[i] == ']') { ++i; return a; } continue; }
       if (i < s.size() && s[i] == ']') { ++i; return a; }
-      fail("expected ',' or ']'");
+      return fail("expected ',' or ']'");
     }
+    return Json();
   }
 
   static void utf8(std::string& out, unsigned cp) {
@@ -102,29 +121,28 @@ struct Parser {
     else { out += char(0xF0 | (cp >> 18)); out += char(0x80 | ((cp >> 12) & 0x3F)); out += char(0x80 | ((cp >> 6) & 0x3F)); out += char(0x80 | (cp & 0x3F)); }
   }
 
-  unsigned hex4() {
-    if (i + 4 > s.size()) fail("bad \\u escape");
-    unsigned v = 0;
+  bool hex4(unsigned& v) {
+    if (i + 4 > s.size()) { fail("bad \\u escape"); return false; }
+    v = 0;
     for (int k = 0; k < 4; ++k) {
       char c = s[i++];
       v <<= 4;
-      if (c >= '0' && c <= '9') v |= c - '0';
-      else if (c >= 'a' && c <= 'f') v |= c - 'a' + 10;
-      else if (c >= 'A' && c <= 'F') v |= c - 'A' + 10;
-      else fail("bad \\u escape");
+      if (c >= '0' && c <= '9') v |= static_cast<unsigned>(c - '0');
+      else if (c >= 'a' && c <= 'f') v |= static_cast<unsigned>(c - 'a' + 10);
+      else if (c >= 'A' && c <= 'F') v |= static_cast<unsigned>(c - 'A' + 10);
+      else { fail("bad \\u escape"); return false; }
     }
-    return v;
+    return true;
   }
 
-  std::string str() {
-    std::string out;
+  bool str(std::string& out) {
     ++i;  // opening quote
     while (true) {
-      if (i >= s.size()) fail("unterminated string");
+      if (i >= s.size()) { fail("unterminated string"); return false; }
       char c = s[i++];
-      if (c == '"') return out;
+      if (c == '"') return true;
       if (c != '\\') { out += c; continue; }
-      if (i >= s.size()) fail("unterminated string");
+      if (i >= s.size()) { fail("unterminated string"); return false; }
       char e = s[i++];
       switch (e) {
         case '"': out += '"'; break;
@@ -136,16 +154,18 @@ struct Parser {
         case 'r': out += '\r'; break;
         case 't': out += '\t'; break;
         case 'u': {
-          unsigned cp = hex4();
+          unsigned cp;
+          if (!hex4(cp)) return false;
           if (cp >= 0xD800 && cp < 0xDC00 && i + 1 < s.size() && s[i] == '\\' && s[i + 1] == 'u') {
             i += 2;
-            unsigned lo = hex4();
+            unsigned lo;
+            if (!hex4(lo)) return false;
             cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
           }
           utf8(out, cp);
           break;
         }
-        default: fail("bad escape");
+        default: fail("bad escape"); return false;
       }
     }
   }
@@ -161,7 +181,7 @@ struct Parser {
     in.imbue(std::locale::classic());
     double d;
     in >> d;
-    if (in.fail()) fail("bad number");
+    if (in.fail()) return fail("bad number");
     return Json(d);
   }
 };
@@ -206,12 +226,33 @@ std::string formatNumber(double d) {
 
 }  // namespace
 
-Json Json::parse(std::string_view text) {
-  Parser p{text};
+bool Json::tryParse(std::string_view text, Json& out, std::string* error) {
+  Parser p;
+  p.s = text;
   Json v = p.value();
-  p.ws();
-  if (p.i != text.size()) p.fail("trailing characters");
-  return v;
+  if (!p.bad) {
+    p.ws();
+    if (p.i != text.size()) p.fail("trailing characters");
+  }
+  if (p.bad) {
+    if (error) *error = p.error;
+    return false;
+  }
+  out = std::move(v);
+  return true;
+}
+
+Json Json::parse(std::string_view text) {
+  Json out;
+  std::string err;
+  if (!tryParse(text, out, &err)) {
+#if SK_HAS_EXCEPTIONS
+    throw JsonError(err);
+#else
+    fail(err);
+#endif
+  }
+  return out;
 }
 
 bool Json::contains(std::string_view key) const {
@@ -232,7 +273,7 @@ const Json& Json::operator[](std::size_t i) const {
 
 Json& Json::operator[](std::string_view key) {
   if (type_ == Type::Null) type_ = Type::Object;
-  if (type_ != Type::Object) throw JsonError("JSON: not an object");
+  if (type_ != Type::Object) ::sk::fail("JSON: not an object");
   for (auto& m : obj_) if (m.first == key) return m.second;
   obj_.emplace_back(std::string(key), Json());
   return obj_.back().second;
@@ -240,14 +281,14 @@ Json& Json::operator[](std::string_view key) {
 
 Json& Json::operator[](std::size_t i) {
   if (type_ == Type::Null) type_ = Type::Array;
-  if (type_ != Type::Array) throw JsonError("JSON: not an array");
+  if (type_ != Type::Array) ::sk::fail("JSON: not an array");
   if (i >= arr_.size()) arr_.resize(i + 1);
   return arr_[i];
 }
 
 void Json::push(Json v) {
   if (type_ == Type::Null) type_ = Type::Array;
-  if (type_ != Type::Array) throw JsonError("JSON: not an array");
+  if (type_ != Type::Array) ::sk::fail("JSON: not an array");
   arr_.push_back(std::move(v));
 }
 

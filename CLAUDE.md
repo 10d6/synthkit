@@ -18,7 +18,9 @@ builds from CI artifacts at milestones.
    standard library only. Platform code lives in `web/` and `plugin/`.
 3. **Real-time safety.** No allocation, locks, I/O or exceptions on the audio
    thread (`start`, `release`, `render`, `processGlobal`, `processEvents`). Allocate in
-   `prepare`.
+   `prepare`. Core and synth code never `throw`/`catch` at all (the browser
+   build has no exceptions); use `sk::fail(msg)` for definition errors and
+   `Json::tryParse` for input that may be malformed.
 4. **Stable identifiers.** Parameter IDs, `synth.json` `id`, `pluginCode` and
    `vendorCode` never change once released. Patches store real units, not
    normalised values.
@@ -46,7 +48,12 @@ cmake/                   synthkit_add_synth() + preset embedding
 tools/render/            <synth>_render: scenarios, generic checks, WAV output
 examples/basic/          subtractive synth exercising the whole API
 tests/core_tests.cpp     kit unit tests (no framework; TEST/CHECK macros)
-web/, plugin/, template/ phases 3, 5, 6
+web/wasm/                C API exported to JavaScript
+web/shell/               the page: template, style, js/ (model, audio, controls,
+                         panels, presets, keyboard, midi, app), worklet.js
+web/pack.py              inlines everything into one <synth>.html
+web/test/                headless Chromium test + browser-vs-native compare
+plugin/, template/       phases 5, 6
 ```
 
 ## Commands
@@ -58,7 +65,21 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/examples/basic/basic_render examples/basic/tests/chord.json --out x.wav
 ```
 
-Run both before every PR. For DSP changes, also look at the renders
+Browser build (needs `clang-18 lld-18 wasi-libc libc++-18-dev-wasm32
+libclang-rt-18-dev-wasm32`, already installed if this workspace did phase 3):
+
+```
+cmake -S . -B build-web -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/wasm32-wasi.cmake && cmake --build build-web
+node web/test/browser-test.cjs build-web/web/basic.html build-web/test examples/basic/tests/demo-pluck.json
+./build/examples/basic/basic_render examples/basic/tests/demo-pluck.json --block 128 --out build-web/test/native.wav
+python3 web/test/compare.py build-web/test/web-render.f32 build-web/test/native.wav
+```
+
+The browser test writes screenshots (desktop, phone, dark) to `build-web/test/`.
+Look at them after any UI change. Emscripten can't be installed here (its
+download host is blocked); the browser build uses plain clang + wasi-libc.
+
+Run the native checks before every PR. For DSP changes, also look at the renders
 (spectrograms show clicks as vertical lines) and run a sanitizer build:
 `-DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined"`
 (use GCC; clang's ASan runtime isn't installed in the workspace).
@@ -84,5 +105,6 @@ Switch them to automatic when the repo goes public.
 
 ## Status
 
-See README → Roadmap. Phase 1 (contract) and phase 2 (core, DSP, render tool,
-example synth, Linux CI) are done. Next: **phase 3 — web adapter**.
+See README → Roadmap. Phases 1–3 are done (contract; core, DSP, render tool,
+example synth; browser build). Next: **phase 4 — mod matrix, LFOs, shapes,
+MIDI clock**.

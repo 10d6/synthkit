@@ -7,6 +7,8 @@
 #include <locale>
 #include <sstream>
 #include <stdexcept>
+
+#include "synthkit/error.h"
 #include <unordered_set>
 
 namespace sk {
@@ -193,7 +195,7 @@ std::string noteName(int pc) {
 
 ParamDef ParamBuilder::add(std::string id) {
   if (!allowReserved_ && isReservedParamId(id))
-    throw std::invalid_argument("parameter id '" + id + "' is reserved by synthkit");
+    fail("parameter id '" + id + "' is reserved by synthkit");
   Pending p;
   p.spec.id = std::move(id);
   p.spec.name = p.spec.id;
@@ -211,11 +213,11 @@ ParamDef ParamBuilder::addKit(std::string id) {
 }
 
 ParamDef ParamBuilder::addArray(std::string id, int n) {
-  if (n <= 0) throw std::invalid_argument("parameter array '" + id + "' needs at least one element");
+  if (n <= 0) fail("parameter array '" + id + "' needs at least one element");
   int first = count();
   for (int i = 0; i < n; ++i) {
     std::string eid = id + "." + std::to_string(i);
-    if (isReservedParamId(eid)) throw std::invalid_argument("parameter id '" + eid + "' is reserved by synthkit");
+    if (isReservedParamId(eid)) fail("parameter id '" + eid + "' is reserved by synthkit");
     Pending p;
     p.spec.id = eid;
     p.spec.name = id + " " + std::to_string(i + 1);
@@ -231,11 +233,11 @@ std::vector<ParamSpec> ParamBuilder::finish() {
   std::unordered_set<std::string> seen;
   for (auto& p : specs_) {
     ParamSpec s = p.spec;
-    if (s.id.empty()) throw std::invalid_argument("parameter with empty id");
-    if (!seen.insert(s.id).second) throw std::invalid_argument("duplicate parameter id '" + s.id + "'");
+    if (s.id.empty()) fail("parameter with empty id");
+    if (!seen.insert(s.id).second) fail("duplicate parameter id '" + s.id + "'");
     if (s.curve == Curve::Log && (s.min <= 0 || s.max <= 0))
-      throw std::invalid_argument("parameter '" + s.id + "': log() needs a positive range");
-    if (s.max < s.min) throw std::invalid_argument("parameter '" + s.id + "': range max < min");
+      fail("parameter '" + s.id + "': log() needs a positive range");
+    if (s.max < s.min) fail("parameter '" + s.id + "': range max < min");
     s.def = s.clamp(s.def);
     out.push_back(std::move(s));
   }

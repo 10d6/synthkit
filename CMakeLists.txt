@@ -7,12 +7,16 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
 endif()
 option(SYNTHKIT_BUILD_EXAMPLES "Build the example synths" ${SYNTHKIT_TOP_LEVEL})
 option(SYNTHKIT_BUILD_TESTS "Build synthkit's own tests" ${SYNTHKIT_TOP_LEVEL})
+if(SYNTHKIT_WASM)
+  set(SYNTHKIT_BUILD_TESTS OFF)  # the tests run natively; the browser build is checked in Chromium
+endif()
 
 if(SYNTHKIT_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
 add_library(synthkit_core STATIC
+  core/src/error.cpp
   core/src/json.cpp
   core/src/params.cpp
   core/src/engine.cpp)

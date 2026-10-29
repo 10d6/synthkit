@@ -44,7 +44,9 @@ class Json {
   static Json array() { Json j; j.type_ = Type::Array; return j; }
   static Json object() { Json j; j.type_ = Type::Object; return j; }
 
-  static Json parse(std::string_view text);  // throws sk::JsonError
+  static Json parse(std::string_view text);  // throws sk::JsonError (or fails, without exceptions)
+  // Never throws: false + message (with line:column) on bad input.
+  static bool tryParse(std::string_view text, Json& out, std::string* error = nullptr);
   std::string dump(int indent = 2) const;
 
   Type type() const { return type_; }

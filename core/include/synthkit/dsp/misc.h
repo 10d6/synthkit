@@ -39,7 +39,7 @@ class Delay {
   }
   void reset() { std::fill(buf_.begin(), buf_.end(), 0.f); }
   void write(float x) {
-    buf_[w_] = x;
+    buf_[w_] = flushDenormal(x);
     if (++w_ >= buf_.size()) w_ = 0;
   }
   // Delay in samples, >= 1. Read before write for a standard feedback delay.
