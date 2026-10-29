@@ -94,11 +94,28 @@ struct MySynth : Synth {
 | `group(s)` | Groups params in the host's list. |
 | `hidden()` | Saved in patches, not shown to the host. |
 
+**Repeated parameters.** For sets like per-key or per-step controls:
+
+```cpp
+ParamArray detune;
+detune = b.addArray("detune", 12).name("Detune {note}").range(-50, 50)
+          .def(0).unit("ct").modulatable();     // detune.0 … detune.11
+// later: ctx.get(synth.detune[pitchClass])
+```
+
+`{i}` and `{note}` (C, C#, …) in names are filled in per element.
+
 **Kit-provided parameters** are added automatically according to `features`:
 `master` (dB), `voiceMode`, `glide`, `bendRange`, `unison`, `unisonDetune`,
 `unisonSpread`, and for each standard envelope/LFO its own controls (e.g.
-`env1.attack`, `lfo1.rate`, `lfo1.sync`). Their IDs are reserved; anything
-containing a `.` or starting with `sk.` is reserved.
+`env1.attack`, `lfo1.rate`, `lfo1.sync`). Those exact IDs, and IDs starting
+with `sk.`, `env<n>.` or `lfo<n>.`, are reserved. Otherwise `.` is fine to use
+for grouping (`osc2.level`).
+
+**Parameter or custom setting?** If the host should automate it, or the mod
+matrix should reach it, make it a parameter. If it's bulk data (a 128-key
+table, a step sequence, a sample map) or structure rather than a value, use
+custom state (§5a).
 
 ## 4. Engine: voices and global processing (phase 2)
 
@@ -130,7 +147,7 @@ Inside `render`:
 ```cpp
 float fc  = ctx.get(synth.cutoff);   // smoothed + this voice's modulation
 float res = ctx.get(synth.reso);
-float pitchHz = ctx.pitchHz();       // includes bend, glide, unison detune
+float pitchHz = ctx.pitchHz();       // tuning + bend + glide + unison detune
 float amp = ctx.ampEnv();            // if the standard env1 drives amplitude
 const Transport& t = ctx.transport(); // bpm, playing, beat position
 ```
@@ -141,9 +158,26 @@ const Transport& t = ctx.transport(); // bpm, playing, beat position
 - The kit splits blocks at MIDI events, so `start`/`release` are sample-accurate.
 - Voice allocation, stealing (oldest released → quietest → oldest), mono/legato
   note priority (last note), glide and sustain pedal are handled by the kit.
-- **Escape hatch:** override `Synth::onMidi(const MidiEvent&)` and return `true`
-  to consume an event before the kit sees it (e.g. a synth that triggers its own
-  internal note sequences). Use `spawnVoice(NoteOn)` to start a voice manually.
+- **Tuning.** By default notes are 12-TET at A4 = 440 Hz (`sk.a4` param). To
+  change that, override:
+  ```cpp
+  double tune(int note, const NoteContext& n) override;  // returns fractional MIDI note
+  ```
+  It's called once per note start (and on glide targets), so it can read
+  parameters, custom state or per-note randomness: per-key detune tables,
+  drifting "worn instrument" tuning, alternate temperaments. Everything
+  downstream (`pitchHz`, key tracking, glide) uses the result.
+- **Escape hatches.** The kit's defaults are meant to be overridden when a synth
+  needs something unusual:
+  - `onMidi(const MidiEvent&)` → return `true` to consume an event before the
+    kit sees it (e.g. a synth that triggers its own note sequences). Use
+    `spawnVoice(NoteOn)` to start a voice yourself.
+  - `allocateVoice(const NoteOn&, VoicePool&)` → replace the stealing policy
+    (e.g. a fixed voice per key, like a piano emulation).
+  - `processGlobal` → anything that happens after the voices are mixed.
+
+  If an escape hatch is used in a second synth for the same reason, that's the
+  signal to turn it into a kit feature.
 
 ### Real-time rules (enforced by tests in debug builds)
 
@@ -182,6 +216,40 @@ old patches.
   (browser storage, or the plugin's user folder) and can be exported as files.
 - The same JSON is what the plugin stores inside your DAW project.
 - MIDI-learn mappings are **not** part of a patch; they're per-installation.
+
+## 5a. Custom state (phase 2)
+
+For synth-specific settings that aren't parameters. Stored in the patch under
+`"custom"` and saved with the DAW project like everything else.
+
+```json
+"custom": { "keyDetune": [0, 3.5, -2, …], "temperament": "werckmeister3" }
+```
+
+```cpp
+struct KeyTable { std::array<float, 128> cents{}; std::string temperament; };
+Custom<KeyTable> keys;   // member of the synth
+
+void defineCustom(CustomBuilder& b) override {
+  keys = b.add<KeyTable>("keys", {
+    .save = [](const KeyTable& k, Json& j) { j["keyDetune"] = k.cents; … },
+    .load = [](const Json& j, KeyTable& k) { … },
+  });
+}
+
+double tune(int note, const NoteContext&) override {
+  return note + keys.read().cents[note] / 100.0;   // audio-thread safe
+}
+```
+
+- `read()` is lock-free and safe on the audio thread. Updates from the UI or a
+  patch load are prepared off the audio thread and swapped in whole, so the
+  audio thread never sees half a table.
+- Custom state isn't automatable or modulatable. If one element needs that,
+  promote it to a parameter (`ParamArray` covers per-pitch-class cases).
+- The UI edits it through custom widgets (§9): `ctx.custom("keys")`,
+  `ctx.setCustom("keys", value)`, `ctx.onCustom("keys", fn)`.
+- `migratePatch` (above) can rewrite `"custom"` too.
 
 ## 6. Modulation (phase 4)
 
@@ -276,7 +344,8 @@ export function register(sk) {
 }
 ```
 Then use `{ "type": "phraseView" }` in the layout. Custom widgets run
-identically in the browser and the plugin.
+identically in the browser and the plugin. They can also read and edit custom
+state (§5a), e.g. a 128-key detune editor drawn over a keyboard.
 
 ## 10. Testing a synth (phase 2)
 

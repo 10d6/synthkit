@@ -24,7 +24,12 @@ builds from CI artifacts at milestones.
    normalised values.
 5. **Build for synths that exist.** A feature goes into the kit when a second
    synth needs it. Until then it lives in the synth repo.
-6. **Verify by rendering.** Every DSP or engine change is checked with the
+6. **Expect unusual synths.** The owner's synths often have very custom
+   behaviour (per-note detune tables, self-generating note sequences). Kit
+   defaults must always be overridable through the escape hatches and custom
+   state in `API.md` — never design a kit feature that forces one way of doing
+   things without a way out.
+7. **Verify by rendering.** Every DSP or engine change is checked with the
    offline render tool (`tools/render`) before a PR: no NaN/inf, no clipping,
    no unexpected silence, presets round-trip. Attach rendered WAVs or the web
    preview link when the change is audible.
@@ -42,8 +47,8 @@ template/  starting point for new synth repos
 
 ## Targets
 
-- Owner's main setup: **Windows + Ableton Live** → VST3 is the primary plugin
-  target; Windows CI matters most.
+- Owner's main setup: **Windows + Ableton Live 11** → VST3 is the primary
+  plugin target; Windows CI matters most. (Live 11 has no CLAP support.)
 - Occasional **macOS + GarageBand** → AU (GarageBand loads AU only).
 - Reaper may be used later (loads VST3/AU; CLAP optional).
 
