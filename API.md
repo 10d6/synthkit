@@ -219,6 +219,8 @@ void processEvents(EventContext& ctx) override {
 - When the transport stops or jumps, the kit calls `onTransportJump()` so
   pending events can be rescheduled or dropped (default: drop and release).
 - A kit arpeggiator, if we add one, will be built on this same stage.
+- Generated events stay inside the synth; MIDI output to the host is not
+  planned (Live 11 handles MIDI out from instruments poorly).
 
 ### Real-time rules (enforced by tests in debug builds)
 
@@ -337,8 +339,10 @@ source, so it can drive anything the matrix reaches. Example: an organ
 "pedal pump" curve, one bar long, restarting on each note and pushing
 amplitude and brightness.
 
-`features.shapes: 4` adds `shape1`…`shape4`, each with these parameters
-(so they're automatable and modulatable themselves):
+`features.shapes: 4` adds `shape1`…`shape4`. Any number works; raising it
+later is safe for existing patches and projects, lowering it isn't (patches
+using the removed shapes lose them). Each shape gets these parameters (so
+they're automatable and modulatable themselves):
 
 | Param | Options |
 |---|---|
