@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
+
+#include "synthkit/error.h"
 #include <unordered_set>
 
 #if defined(__SSE__) || defined(_M_X64) || defined(_M_IX86)
@@ -44,7 +46,7 @@ class ScopedNoDenormals {
   }
 
  private:
-  uint64_t saved_ = 0;
+  [[maybe_unused]] uint64_t saved_ = 0;
 };
 
 bool validCode(const std::string& c) {
@@ -124,14 +126,14 @@ SynthInfo SynthInfo::fromJson(const Json& j) {
   s.pluginCode = j["pluginCode"].string("");
   s.vendorCode = j["vendorCode"].string("");
   s.patchVersion = static_cast<int>(j["patchVersion"].number(1));
-  if (s.id.empty()) throw std::invalid_argument("synth.json: \"id\" is required");
+  if (s.id.empty()) fail("synth.json: \"id\" is required");
   for (char c : s.id)
     if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_'))
-      throw std::invalid_argument("synth.json: \"id\" may only use letters, digits, - and _");
+      fail("synth.json: \"id\" may only use letters, digits, - and _");
   if (!s.pluginCode.empty() && !validCode(s.pluginCode))
-    throw std::invalid_argument("synth.json: \"pluginCode\" must be exactly 4 characters");
+    fail("synth.json: \"pluginCode\" must be exactly 4 characters");
   if (!s.vendorCode.empty() && !validCode(s.vendorCode))
-    throw std::invalid_argument("synth.json: \"vendorCode\" must be exactly 4 characters");
+    fail("synth.json: \"vendorCode\" must be exactly 4 characters");
 
   const Json& f = j["features"];
   auto& o = s.features;
@@ -141,7 +143,7 @@ SynthInfo SynthInfo::fromJson(const Json& j) {
     for (auto& m : f["voiceModes"].items()) {
       std::string v = m.string();
       if (v != "poly" && v != "mono" && v != "legato")
-        throw std::invalid_argument("synth.json: unknown voice mode \"" + v + "\"");
+        fail("synth.json: unknown voice mode \"" + v + "\"");
       o.voiceModes.push_back(v);
     }
     if (o.voiceModes.empty()) o.voiceModes = {"poly"};
@@ -257,13 +259,13 @@ struct Core {
     customs = cb.take();
     std::unordered_set<std::string> ids;
     for (auto& c : customs)
-      if (!ids.insert(c->id()).second) throw std::invalid_argument("duplicate custom state id '" + c->id() + "'");
+      if (!ids.insert(c->id()).second) fail("duplicate custom state id '" + c->id() + "'");
 
     int nSlots = info.features.voices * 2;  // spares give stolen voices room to fade
     slots.resize(static_cast<std::size_t>(nSlots));
     for (auto& sl : slots) {
       sl.voice = synth->makeVoice();
-      if (!sl.voice) throw std::invalid_argument("makeVoice() returned null");
+      if (!sl.voice) fail("makeVoice() returned null");
       sl.voice->rng_ = &sl.rng;
       sl.envs.resize(static_cast<std::size_t>(info.features.standardEnvelopes));
       sl.envBuf.resize(sl.envs.size());

@@ -1,0 +1,36 @@
+{
+  "theme": { "accent": "#2457d6" },
+  "sections": [
+    { "title": "Oscillators", "controls": [
+      { "param": "osc1.wave", "label": "Osc 1" },
+      { "param": "osc1.pw", "label": "Pulse width" },
+      { "param": "osc2.wave", "label": "Osc 2" },
+      { "param": "osc2.semi", "label": "Semitones" },
+      { "param": "osc2.fine", "label": "Fine" },
+      { "param": "osc2.level", "label": "Osc 2 level" },
+      { "param": "sub.level", "label": "Sub" },
+      { "param": "noise.level", "label": "Noise" },
+      { "param": "drift", "label": "Drift" }
+    ]},
+    { "title": "Filter", "controls": [
+      { "param": "filter.type", "type": "menu", "label": "Type" },
+      { "param": "filter.cutoff", "size": "large", "label": "Cutoff" },
+      { "param": "filter.reso", "label": "Resonance" },
+      { "param": "filter.drive", "label": "Drive" },
+      { "param": "filter.env", "label": "Env amount" },
+      { "param": "filter.keytrack", "label": "Key track" },
+      { "param": "filter.velocity", "label": "Velocity" }
+    ]},
+    { "kit": "env1" },
+    { "kit": "env2", "title": "Filter envelope" },
+    { "title": "Delay", "controls": [
+      { "param": "delay.time", "type": "menu", "label": "Time" },
+      { "param": "delay.mix", "label": "Mix" },
+      { "param": "delay.feedback", "label": "Feedback" },
+      { "param": "delay.tone", "label": "Tone" }
+    ]},
+    { "kit": "voices" },
+    { "kit": "master" }
+  ],
+  "keyboard": true
+}

@@ -7,14 +7,28 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "synthkit/error.h"
 #include "synthkit/json.h"
 
+#if !SK_SINGLE_THREADED
+#include <mutex>
+#endif
+
 namespace sk {
+
+namespace detail {
+#if SK_SINGLE_THREADED
+struct Mutex { void lock() {} void unlock() {} };
+struct Lock { explicit Lock(Mutex&) {} };
+#else
+using Mutex = std::mutex;
+using Lock = std::lock_guard<std::mutex>;
+#endif
+}  // namespace detail
 
 // Shared between the engine and its custom slots so old copies are only freed
 // once the audio thread can no longer be reading them.
@@ -62,7 +76,7 @@ class CustomSlot final : public CustomSlotBase {
   void write(T value) {
     T* fresh = new T(std::move(value));
     T* old = current_.exchange(fresh, std::memory_order_acq_rel);
-    std::lock_guard<std::mutex> lock(mutex_);
+    detail::Lock lock(mutex_);
     retired_.emplace_back(old, epoch_ ? epoch_->blocks.load() : 0);
     generation_.fetch_add(1, std::memory_order_relaxed);
     collectLocked();
@@ -81,7 +95,7 @@ class CustomSlot final : public CustomSlotBase {
   }
 
   void collect() override {
-    std::lock_guard<std::mutex> lock(mutex_);
+    detail::Lock lock(mutex_);
     collectLocked();
   }
 
@@ -101,7 +115,7 @@ class CustomSlot final : public CustomSlotBase {
   CustomIO<T> io_;
   AudioEpoch* epoch_;
   std::atomic<T*> current_{nullptr};
-  std::mutex mutex_;
+  detail::Mutex mutex_;
   std::vector<std::pair<T*, uint64_t>> retired_;
 };
 

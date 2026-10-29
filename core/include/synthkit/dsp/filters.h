@@ -28,8 +28,8 @@ class Svf {
     float v3 = x - ic2_;
     float v1 = a1_ * ic1_ + a2_ * v3;
     float v2 = ic2_ + a2_ * ic1_ + a3_ * v3;
-    ic1_ = 2.f * v1 - ic1_;
-    ic2_ = 2.f * v2 - ic2_;
+    ic1_ = flushDenormal(2.f * v1 - ic1_);
+    ic2_ = flushDenormal(2.f * v2 - ic2_);
     switch (mode_) {
       case Mode::LowPass: return v2;
       case Mode::HighPass: return x - k_ * v1 - v2;
@@ -69,7 +69,7 @@ class Ladder {
     for (float& s : s_) {
       float v = (y - s) * G_;
       float out = v + s;
-      s = out + v;
+      s = flushDenormal(out + v);
       y = out;
     }
     // Compensate the passband loss that rises with resonance.
@@ -91,7 +91,7 @@ class OnePole {
     float g = std::tan(kPi * clamp(cutoffHz, 1.f, sr_ * 0.49f) / sr_);
     G_ = g / (1.f + g);
   }
-  float lowpass(float x) { float v = (x - z_) * G_; float y = v + z_; z_ = y + v; return y; }
+  float lowpass(float x) { float v = (x - z_) * G_; float y = v + z_; z_ = flushDenormal(y + v); return y; }
   float highpass(float x) { return x - lowpass(x); }
   void reset() { z_ = 0; }
 

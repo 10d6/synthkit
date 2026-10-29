@@ -21,6 +21,26 @@ cmake -S . -B build && cmake --build build
 
 renders every test scenario and preset to `renders/` and runs the kit's checks.
 
+## Playing it in the browser
+
+Every PR's CI run has a **web-basic** artifact: download it, unzip, and
+double-click `basic.html`. It's the whole synth in one file, with no server
+needed. Click once to start the sound, then play with the mouse, your computer
+keyboard (A–K), or a MIDI keyboard (**Connect MIDI**).
+
+To build it yourself (Ubuntu 24.04: `sudo apt install clang-18 lld-18 wasi-libc
+libc++-18-dev-wasm32 libclang-rt-18-dev-wasm32`):
+
+```
+cmake -S . -B build-web -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/wasm32-wasi.cmake
+cmake --build build-web        # → build-web/web/basic.html
+```
+
+**Preview links.** Once the repo is public, CI also publishes each PR to
+`https://10d6.github.io/synthkit/pr/<number>/` (and `main` at the site root) and
+links it on the PR. It needs one setting: Settings → Pages → Build and
+deployment → Deploy from a branch → `gh-pages` / root.
+
 ## How it fits together
 
 ```
@@ -41,7 +61,7 @@ renders every test scenario and preset to `renders/` and runs the kit's checks.
 |---|---|---|
 | 1 ✓ | `API.md`, `CLAUDE.md` | review the contract |
 | 2 ✓ | core library, DSP blocks, example synth, render tool, Linux CI | listen to rendered WAVs on the PR |
-| 3 | web adapter, UI components, Web MIDI, presets, Pages deploy | play the example synth in the browser |
+| 3 ✓ | browser build (one HTML file), UI from layout.json, Web MIDI, presets, previews | play the example synth in the browser |
 | 4 | mod matrix, tempo-synced LFOs, MIDI clock | build richer patches |
 | 5 | JUCE plugin adapter, Windows/macOS CI, pluginval, releases | load it in Live / GarageBand |
 | 6 | synth template + scaffold script | start a new synth in one step |

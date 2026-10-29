@@ -160,6 +160,11 @@ TEST(json_roundtrip) {
   CHECK(Json::parse(j.dump(0)) == j);
   CHECK(Json(0.2f).dump() == "0.2");
   CHECK(Json(3.0).dump() == "3");
+  Json bad;
+  std::string err;
+  CHECK(!Json::tryParse("{\"a\": 1,\n  \"b\": ]", bad, &err));
+  CHECK(err.find("2:8") != std::string::npos);
+  CHECK(Json::tryParse("[1, 2]", bad) && bad.size() == 2);
   CHECK_THROWS(Json::parse("{\"a\": }"));
   CHECK_THROWS(Json::parse("[1, 2"));
 }
