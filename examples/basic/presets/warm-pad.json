@@ -1,0 +1,36 @@
+{
+  "synthkit": 1,
+  "synth": "sk-basic",
+  "patchVersion": 1,
+  "name": "Warm Pad",
+  "author": "synthkit",
+  "tags": [
+    "pad",
+    "warm"
+  ],
+  "params": {
+    "unison": 3,
+    "unisonDetune": 18,
+    "unisonSpread": 0.8,
+    "drift": 0.5,
+    "osc2.fine": 9,
+    "osc2.level": 0.7,
+    "filter.cutoff": 1100,
+    "filter.reso": 0.15,
+    "filter.env": 0.25,
+    "filter.keytrack": 0.3,
+    "env1.attack": 0.6,
+    "env1.decay": 1.5,
+    "env1.sustain": 0.8,
+    "env1.release": 1.6,
+    "env2.attack": 0.9,
+    "env2.decay": 2.5,
+    "env2.sustain": 0.4,
+    "env2.release": 1.5,
+    "delay.mix": 0.25,
+    "delay.time": 0,
+    "delay.feedback": 0.45,
+    "delay.tone": 2500,
+    "master": -3
+  }
+}

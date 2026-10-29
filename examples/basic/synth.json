@@ -1,0 +1,15 @@
+{
+  "id": "sk-basic",
+  "name": "synthkit Basic",
+  "vendor": "10d6",
+  "version": "0.1.0",
+  "pluginCode": "Skba",
+  "vendorCode": "Tend",
+  "patchVersion": 1,
+  "features": {
+    "voices": 24,
+    "voiceModes": ["poly", "mono", "legato"],
+    "unison": true,
+    "standardEnvelopes": 2
+  }
+}

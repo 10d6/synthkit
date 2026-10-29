@@ -36,16 +36,32 @@ builds from CI artifacts at milestones.
    no unexpected silence, presets round-trip. Attach rendered WAVs or the web
    preview link when the change is audible.
 
-## Layout (planned)
+## Layout
 
 ```
-core/      params, voice, mod, dsp, midi, patch   (portable C++)
-web/       worklet (WASM), ui components, host shell
-plugin/    JUCE adapter: VST3/AU, WebView UI
-tools/     render CLI, scaffold script
-examples/  basic subtractive synth used to test the kit
-template/  starting point for new synth repos
+core/include/synthkit/   public headers: synth.h (what synths use), engine.h
+                         (what adapters use), params, json, custom, dsp/…
+core/src/                engine.cpp (voices, events, transport), params, json
+cmake/                   synthkit_add_synth() + preset embedding
+tools/render/            <synth>_render: scenarios, generic checks, WAV output
+examples/basic/          subtractive synth exercising the whole API
+tests/core_tests.cpp     kit unit tests (no framework; TEST/CHECK macros)
+web/, plugin/, template/ phases 3, 5, 6
 ```
+
+## Commands
+
+```
+cmake -S . -B build -G Ninja && cmake --build build
+./build/synthkit_tests                                        # kit unit tests
+./build/examples/basic/basic_render --check examples/basic --out build/renders
+./build/examples/basic/basic_render examples/basic/tests/chord.json --out x.wav
+```
+
+Run both before every PR. For DSP changes, also look at the renders
+(spectrograms show clicks as vertical lines) and run a sanitizer build:
+`-DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined"`
+(use GCC; clang's ASan runtime isn't installed in the workspace).
 
 ## Targets
 
@@ -68,4 +84,5 @@ Switch them to automatic when the repo goes public.
 
 ## Status
 
-See README → Roadmap. Current phase: **1 — contract (docs only)**.
+See README → Roadmap. Phase 1 (contract) and phase 2 (core, DSP, render tool,
+example synth, Linux CI) are done. Next: **phase 3 — web adapter**.

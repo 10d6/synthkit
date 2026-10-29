@@ -1,0 +1,32 @@
+{
+  "synthkit": 1,
+  "synth": "sk-basic",
+  "patchVersion": 1,
+  "name": "Pluck",
+  "author": "synthkit",
+  "tags": [
+    "pluck",
+    "keys"
+  ],
+  "params": {
+    "osc2.wave": 1,
+    "osc2.semi": 12,
+    "osc2.fine": 0,
+    "osc2.level": 0.3,
+    "filter.cutoff": 260,
+    "filter.reso": 0.55,
+    "filter.env": 0.75,
+    "filter.velocity": 0.6,
+    "env1.attack": 0.001,
+    "env1.decay": 0.7,
+    "env1.sustain": 0,
+    "env1.release": 0.35,
+    "env2.attack": 0.001,
+    "env2.decay": 0.22,
+    "env2.sustain": 0,
+    "env2.release": 0.2,
+    "delay.mix": 0.22,
+    "delay.time": 1,
+    "delay.feedback": 0.35
+  }
+}

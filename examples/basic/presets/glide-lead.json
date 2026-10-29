@@ -1,0 +1,34 @@
+{
+  "synthkit": 1,
+  "synth": "sk-basic",
+  "patchVersion": 1,
+  "name": "Glide Lead",
+  "author": "synthkit",
+  "tags": [
+    "lead",
+    "mono"
+  ],
+  "params": {
+    "voiceMode": 2,
+    "glide": 0.09,
+    "osc1.wave": 1,
+    "osc1.pw": 0.35,
+    "osc2.fine": -8,
+    "osc2.level": 0.6,
+    "sub.level": 0.35,
+    "filter.cutoff": 1500,
+    "filter.reso": 0.3,
+    "filter.drive": 6,
+    "filter.env": 0.3,
+    "env1.attack": 0.008,
+    "env1.decay": 0.4,
+    "env1.sustain": 0.9,
+    "env1.release": 0.3,
+    "env2.attack": 0.01,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.5,
+    "delay.mix": 0.22,
+    "delay.time": 2,
+    "delay.feedback": 0.35
+  }
+}

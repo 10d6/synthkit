@@ -1,0 +1,33 @@
+{
+  "synthkit": 1,
+  "synth": "sk-basic",
+  "patchVersion": 1,
+  "name": "Mono Bass",
+  "author": "synthkit",
+  "tags": [
+    "bass",
+    "mono"
+  ],
+  "params": {
+    "voiceMode": 1,
+    "sub.level": 0.6,
+    "osc2.level": 0.4,
+    "osc2.semi": -12,
+    "osc2.fine": 4,
+    "filter.cutoff": 180,
+    "filter.reso": 0.4,
+    "filter.drive": 9,
+    "filter.env": 0.5,
+    "filter.keytrack": 0.6,
+    "env1.attack": 0.002,
+    "env1.decay": 0.5,
+    "env1.sustain": 0.7,
+    "env1.release": 0.12,
+    "env2.attack": 0.001,
+    "env2.decay": 0.3,
+    "env2.sustain": 0.1,
+    "env2.release": 0.1,
+    "delay.mix": 0,
+    "master": -2
+  }
+}
