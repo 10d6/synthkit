@@ -1,0 +1,9 @@
+build/
+build-*/
+dist/
+node_modules/
+*.wav
+!tests/fixtures/*.wav
+.DS_Store
+.vscode/
+.idea/
