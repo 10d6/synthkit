@@ -145,7 +145,8 @@ class Knob extends Control {
     const s = svg("svg", { viewBox: "0 0 100 100", class: "knob-svg", "aria-hidden": "true" });
     s.append(svg("path", { class: "knob-track", d: arcPath(50, 50, 42, KNOB_START, KNOB_END) }));
     this.arc = svg("path", { class: "knob-arc" });
-    s.append(this.arc);
+    this.modArc = svg("path", { class: "knob-mod" });
+    s.append(this.arc, this.modArc);
     s.append(svg("circle", { class: "knob-cap", cx: 50, cy: 50, r: 31 }));
     this.pointer = svg("line", { class: "knob-pointer", x1: 50, y1: 50, x2: 50, y2: 23 });
     s.append(this.pointer);
@@ -163,6 +164,18 @@ class Knob extends Control {
     this.pointer.setAttribute("transform", `rotate(${a.toFixed(1)} 50 50)`);
     this.value.textContent = this.text(v);
     this.aria(this.dial, v);
+    this.base = v;
+    if (this.modValue !== undefined) this.modulated(this.modValue);
+  }
+  // Live modulation: a thin outer arc from the set value to where modulation
+  // has taken it (for the most recent voice).
+  modulated(v) {
+    this.modValue = v;
+    if (Number.isNaN(v) || v === undefined) { this.modArc.setAttribute("d", ""); this.root.classList.remove("is-modulated"); return; }
+    const a0 = KNOB_START + (KNOB_END - KNOB_START) * this.model.toNorm(this.p.index, this.model.get(this.p.index));
+    const a1 = KNOB_START + (KNOB_END - KNOB_START) * this.model.toNorm(this.p.index, v);
+    this.root.classList.add("is-modulated");
+    this.modArc.setAttribute("d", Math.abs(a1 - a0) < 0.8 ? "" : arcPath(50, 50, 49, Math.min(a0, a1), Math.max(a0, a1)));
   }
 }
 

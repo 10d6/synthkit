@@ -11,6 +11,10 @@ class App {
     this.widgets = new Map();
     this.transport = skStore.get("synthkit:transport", { bpm: 120, playing: false, num: 4, den: 4 });
     this.transport.playing = false;
+    this.transportSubs = new Set();
+    this.modMeters = new ModMeters(model);
+    this.clock = new MidiClock(this);
+    this.clockSource = skStore.get("synthkit:clock", "internal");
   }
 
   boot(rootEl) {
@@ -47,6 +51,9 @@ class App {
 
     this.presets.restoreSession();
     this.refreshLearned();
+    // Live modulation rings on knobs.
+    const ringed = this.controls.filter((c) => c.modulated);
+    this.modMeters.on((mm) => { for (const c of ringed) c.modulated(mm.param(c.p.index)); });
     for (const p of panels.problems.concat(this.pending || [])) this.toast(p.msg || p, p.kind || "warn");
 
     // Browsers only allow audio after the first click or key press.
@@ -55,6 +62,7 @@ class App {
     document.addEventListener("keydown", kick, { once: true, capture: true });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") { this.midi.cancelLearn(); this.closeMenu(); } });
 
+    if (this.clockSource === "midi") this.setClockSource("midi");
     this.audio.onMeter = (mtr) => this.meter(mtr);
     this.audio.onLog = (msg) => this.toast(msg, "error");
     for (const l of m.logs) this.toast(l, "error");
@@ -95,7 +103,11 @@ class App {
     this.bpm.addEventListener("keydown", (e) => e.stopPropagation());
     this.sig = h("select", { class: "sig-select", "aria-label": "Time signature", onchange: () => {
       const [n, d] = this.sig.value.split("/").map(Number); t.num = n; t.den = d; this.buildBeats(); this.sendTransport();
+      for (const fn of this.transportSubs) fn(t);
     } }, ...["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "12/8"].map((s) => h("option", { value: s, text: s })));
+    this.clockSel = h("select", { class: "sig-select", "aria-label": "Tempo source", onchange: () => this.setClockSource(this.clockSel.value) },
+      h("option", { value: "internal", text: "Internal" }), h("option", { value: "midi", text: "MIDI clock" }));
+    this.clockSel.value = this.clockSource;
     this.sig.value = `${t.num}/${t.den}`;
     this.play = h("button", { type: "button", class: "btn play-btn", "aria-pressed": "false", title: "Start the tempo clock (space)", onclick: () => this.togglePlay() }, "Play");
     document.addEventListener("keydown", (e) => {
@@ -116,7 +128,7 @@ class App {
 
     // Playing controls (tempo, MIDI) live with the keyboard.
     this.keyboard.addToBar(
-      h("div", { class: "tempo" }, this.play, h("label", { class: "bpm" }, this.bpm, h("span", { text: "BPM" })), this.sig, this.beats),
+      h("div", { class: "tempo" }, this.play, h("label", { class: "bpm" }, this.bpm, h("span", { text: "BPM" })), this.sig, this.clockSel, this.beats),
       this.midi.root);
     return h("header", { class: "top" },
       h("div", { class: "brand" },
@@ -155,7 +167,39 @@ class App {
     this.toast(next === "auto" ? "Theme follows your system" : `${next[0].toUpperCase() + next.slice(1)} theme`);
   }
 
+  onTransport(fn) { this.transportSubs.add(fn); return () => this.transportSubs.delete(fn); }
+
+  followClock(bpm, playing, beat) {
+    if (this.clockSource !== "midi") return;
+    const t = this.transport;
+    t.bpm = bpm;
+    t.playing = playing;
+    this.bpm.value = bpm;
+    this.play.setAttribute("aria-pressed", String(playing));
+    this.play.textContent = playing ? "Stop" : "Play";
+    this.audio.send({ t: "clock", bpm, playing, beat });
+  }
+
+  setClockSource(src) {
+    this.clockSource = src;
+    skStore.set("synthkit:clock", src);
+    const midi = src === "midi";
+    this.bpm.disabled = midi;
+    this.play.disabled = midi;
+    this.play.title = midi ? "Follows your MIDI clock's start and stop" : "Start the tempo clock (space)";
+    if (midi) {
+      if (!this.midi.access) this.midi.connect();
+      this.toast("Following MIDI clock. Start your sequencer or DAW to play.");
+    } else {
+      this.transport.playing = false;
+      this.play.setAttribute("aria-pressed", "false");
+      this.play.textContent = "Play";
+      this.sendTransport();
+    }
+  }
+
   meter(mtr) {
+    this.modMeters.update(mtr.mod);
     this.voices.textContent = `${mtr.voices} ${mtr.voices === 1 ? "voice" : "voices"}`;
     const db = mtr.peak > 0 ? 20 * Math.log10(mtr.peak) : -100;
     const n = Math.max(0, Math.min(1, (db + 48) / 48));
@@ -194,11 +238,34 @@ class App {
   paramMenu(ctl, x, y) {
     const cc = this.midi.ccFor(ctl.p.id);
     const learning = this.midi.learning === ctl.p.id;
+    const canMod = ctl.p.modulatable && this.model.mod.slots > 0;
     this.menu(x, y, [
       { label: `Reset to ${this.model.format(ctl.p.index, ctl.p.def)}`, run: () => ctl.reset() },
+      canMod ? { label: "Modulate…", run: () => this.modulateMenu(ctl, x, y) } : null,
       learning ? { label: "Stop MIDI learn", run: () => this.midi.cancelLearn() } : { label: "MIDI learn", run: () => this.midi.learn(ctl) },
       cc !== null ? { label: `Forget CC ${cc}`, run: () => this.midi.forget(ctl.p.id) } : null,
     ].filter(Boolean));
+  }
+
+  modulateMenu(ctl, x, y) {
+    const items = [];
+    for (const [label, test] of SK_SOURCE_GROUPS) {
+      const group = this.model.mod.sources.filter(test);
+      if (!group.length) continue;
+      if (items.length) items.push(null);
+      for (const s of group) items.push({ label: s.name, run: () => this.addModulation(s, ctl) });
+    }
+    const custom = this.model.mod.sources.filter((s) => !SK_SOURCE_GROUPS.some(([, t]) => t(s)));
+    if (custom.length) { items.push(null); for (const s of custom) items.push({ label: s.name, run: () => this.addModulation(s, ctl) }); }
+    this.menu(x, y, items);
+  }
+  addModulation(src, ctl) {
+    const routes = this.model.routes();
+    if (routes.length >= this.model.mod.slots) { this.toast(`All ${this.model.mod.slots} modulation routes are in use. Remove one to add another.`); return; }
+    routes.push({ src: src.id, dst: ctl.p.id, amt: 0.25 });
+    this.model.setRoutes(routes);
+    this.toast(`${src.name} now modulates ${ctl.label} by 25%. Adjust it in the Modulation panel.`);
+    if (this.matrix) this.matrix.root.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
   refreshLearned() { for (const c of this.controls) c.learned(this.midi.ccFor(c.p.id)); }
@@ -250,7 +317,7 @@ class App {
       custom: (id) => m.custom(id),
       setCustom: (id, v) => m.setCustom(id, v),
       onCustom: (id, fn) => { const off = m.onCustom(id, fn); fn(m.custom(id)); return off; },
-      onMeter: () => () => {},  // mod-source meters arrive in phase 4
+      onMeter: (id, fn) => this.modMeters.on((mm) => fn(mm.sourceById(id))),
       noteOn: (n, v = 100) => this.noteOn(n, v),
       noteOff: (n) => this.noteOff(n),
     };

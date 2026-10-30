@@ -64,6 +64,33 @@ async function main() {
       const name2 = await page.evaluate(() => window.synthkit.model.patchName);
       if (name2 !== "Pluck") fail(`session restore gave "${name2}"`); else pass("session is restored after reload");
       await page.screenshot({ path: path.join(outDir, "ui-desktop-dark.png"), fullPage: false });
+
+      if (await page.evaluate(() => window.synthkit.model.mod.slots > 0)) {
+        // Modulate a knob from its menu.
+        const before = await page.evaluate(() => window.synthkit.model.routes().length);
+        await page.click('[data-param="filter.cutoff"] .knob-dial', { button: "right" });
+        await page.click('.menu-item:has-text("Modulate")');
+        await page.click('.menu-item:has-text("LFO 1")');
+        const after = await page.evaluate(() => window.synthkit.model.routes());
+        if (after.length !== before + 1 || after[after.length - 1].dst !== "filter.cutoff") fail("Modulate… didn't add an LFO 1 → cutoff route");
+        else pass("right-click → Modulate adds a route");
+        // Add a point in the first shape editor.
+        const pts = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points.length);
+        await page.evaluate(() => document.querySelector(".shape-svg").scrollIntoView({ block: "center" }));
+        const box = await page.locator(".shape-svg").first().boundingBox();
+        await page.mouse.dblclick(box.x + box.width * 0.37, box.y + box.height * 0.3);
+        const pts2 = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points.length);
+        if (pts2 !== pts + 1) fail(`double-click in the shape editor gave ${pts2} points (had ${pts})`); else pass("shape editor adds points");
+        // Follow MIDI clock: start + 48 ticks at 120 BPM.
+        const clock = await page.evaluate(() => {
+          const app = window.synthkit.app;
+          app.clockSource = "midi";
+          app.clock.message([0xfa], 0);
+          for (let i = 1; i <= 48; i++) app.clock.message([0xf8], i * (500 / 24));
+          return { bpm: app.transport.bpm, playing: app.transport.playing };
+        });
+        if (!clock.playing || Math.abs(clock.bpm - 120) > 1) fail(`MIDI clock follow gave ${JSON.stringify(clock)}`); else pass(`follows MIDI clock (${clock.bpm} BPM)`);
+      }
     }
     if (errors.length) fail(`${name}: console errors: ${errors.join(" | ")}`); else pass(`${name}: boots with no console errors`);
     await page.close();

@@ -15,10 +15,13 @@ class SynthkitProcessor extends AudioWorkletProcessor {
     this.x = this.w.x;
     // Load the sound before prepare, so parameters start at their values
     // instead of gliding there from the defaults.
+    // (The patch includes the mod matrix and shapes.)
     if (o.patch) this.w.withStrings([o.patch], (p) => this.x.sk_load_patch(p));
     for (const [id, json] of Object.entries(o.custom || {})) this.w.withStrings([id, json], (a, b) => this.x.sk_set_custom(a, b));
     this.block = 128;
     this.x.sk_prepare(sampleRate, this.block);
+    this.meterCount = this.x.sk_mod_meter_count();
+    this.clockCorr = 0;  // beats still to absorb when following MIDI clock
 
     const tr = o.transport || {};
     this.bpm = tr.bpm || 120;
@@ -47,6 +50,18 @@ class SynthkitProcessor extends AudioWorkletProcessor {
       case "param": x.sk_set_param(m.i, m.v); break;
       case "patch": this.w.withStrings([m.json], (p) => x.sk_load_patch(p)); break;
       case "custom": this.w.withStrings([m.id, m.json], (a, b) => x.sk_set_custom(a, b)); break;
+      case "mod": this.w.withStrings([m.json], (p) => x.sk_set_mod(p)); break;
+      case "shapes": this.w.withStrings([m.json], (p) => x.sk_set_shapes(p)); break;
+      case "clock": {
+        // Follow external MIDI clock: big differences are jumps, small ones
+        // are absorbed gradually so the engine never sees a false jump.
+        this.bpm = m.bpm;
+        if (m.playing && !this.playing) { this.beat = m.beat; this.clockCorr = 0; }
+        this.playing = m.playing;
+        const err = m.beat - this.beat;
+        if (Math.abs(err) > 0.5) { this.beat = m.beat; this.clockCorr = 0; } else this.clockCorr = err;
+        break;
+      }
       case "transport":
         if (m.playing && !this.playing) this.beat = 0;  // start from the top
         this.bpm = m.bpm; this.playing = m.playing; this.num = m.num; this.den = m.den;
@@ -68,7 +83,15 @@ class SynthkitProcessor extends AudioWorkletProcessor {
       x.sk_midi(Math.max(0, ev.sample - this.pos), ev.d[0], ev.d[1] | 0, ev.d[2] | 0);
     }
     x.sk_process(n, this.bpm, this.playing ? 1 : 0, this.beat, this.num, this.den);
-    if (this.playing) this.beat += (n / sampleRate) * (this.bpm / 60);
+    if (this.playing) {
+      this.beat += (n / sampleRate) * (this.bpm / 60);
+      if (this.clockCorr !== 0) {
+        const step = this.clockCorr * Math.min(1, n / (sampleRate * 0.2));
+        this.beat += step;
+        this.clockCorr -= step;
+        if (Math.abs(this.clockCorr) < 1e-6) this.clockCorr = 0;
+      }
+    }
     this.pos += n;
     // Views must be re-created if the module's memory grew.
     const buf = this.x.memory.buffer;
@@ -90,7 +113,9 @@ class SynthkitProcessor extends AudioWorkletProcessor {
       const st = new Float32Array(this.x.memory.buffer, x.sk_stats(), 5);
       const trace = new Float32Array(SCOPE);
       for (let i = 0; i < SCOPE; i++) trace[i] = this.scope[(this.scopePos + i) % SCOPE];
-      this.port.postMessage({ t: "meter", voices: st[0], limiterDb: st[1], peak: this.peak, beat: this.beat, playing: this.playing, scope: trace }, [trace.buffer]);
+      const mod = new Float32Array(this.meterCount);
+      if (this.meterCount) mod.set(new Float32Array(this.x.memory.buffer, x.sk_mod_meters(), this.meterCount));
+      this.port.postMessage({ t: "meter", voices: st[0], limiterDb: st[1], peak: this.peak, beat: this.beat, playing: this.playing, bpm: this.bpm, scope: trace, mod }, [trace.buffer, mod.buffer]);
       this.peak = 0;
     }
     return true;

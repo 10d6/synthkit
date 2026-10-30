@@ -1,6 +1,6 @@
 # synthkit API
 
-> **Status: v0.2.** Sections marked **✓** are implemented (phases 2–3). The
+> **Status: v0.3.** Sections marked **✓** are implemented (phases 2–4). The
 > rest are the agreed contract for later phases (see README → Roadmap) and may
 > still be refined when they're built.
 
@@ -83,7 +83,9 @@ web build, plugin builds) comes from synthkit.
 | `standardEnvelopes` | 1 | ADSRs the kit runs per voice (`env1`, `env2`, …) |
 | `ampEnv` | true | `env1` shapes every voice's output (see §4) |
 | `eventQueue` | 256 | capacity for scheduled events (§4a) |
-| `standardLfos`, `modSlots`, `shapes` | 0 | phase 4 (§6) |
+| `standardLfos` | 0 | standard LFOs (§6) |
+| `modSlots` | 0 | matrix routes; also adds `sk.pitch`, `sk.level` (§6) |
+| `shapes` | 0 | drawn, tempo-locked curves (§6a) |
 
 ## 3. Parameters ✓
 
@@ -119,7 +121,7 @@ struct MySynth : Synth {
 | `step(s)` / `integer()` | Quantise. |
 | `choices({...})` | Enum parameter; value is the index. |
 | `toggle()` | Boolean. |
-| `modulatable()` | Appears as a mod matrix destination (phase 4). |
+| `modulatable()` | Appears as a mod matrix destination (§6). |
 | `smoothing(ms)` | Default 10 ms for floats, 0 for choices/toggles/integers. |
 | `group(s)` | Groups params in the host's list. |
 | `hidden()` | Saved in patches, not shown to the host. |
@@ -213,7 +215,7 @@ samples** (`kControlBlock`), and ADDS into `out` (`out.left[i]`,
 
 ```cpp
 void MyVoice::render(VoiceContext& ctx, Buffer& out) {
-  float fc = ctx.get(synth.cutoff);    // smoothed (+ this voice's modulation, phase 4)
+  float fc = ctx.get(synth.cutoff);    // smoothed, plus this voice's modulation
   osc.setFreq(ctx.pitchHz());          // tuning + bend + glide + unison detune
   filter.set(fc, ctx.get(synth.reso));
   for (int i = 0; i < out.frames; ++i) out.add(i, filter.process(osc.next()));
@@ -222,7 +224,7 @@ void MyVoice::render(VoiceContext& ctx, Buffer& out) {
 
 | `VoiceContext` | |
 |---|---|
-| `get(p)`, `choice(p)`, `on(p)` | parameter value (float, choice index, toggle) |
+| `get(p)`, `choice(p)`, `on(p)` | parameter value (float, choice index, toggle), including this voice's modulation |
 | `ramp(p)` | `.at(i)` gives a per-sample ramp across this block, for zipper-free gain |
 | `pitchHz()`, `pitch()` | current pitch in Hz / as a fractional MIDI note |
 | `key()`, `velocity()`, `channel()` | the note that started the voice |
@@ -230,6 +232,7 @@ void MyVoice::render(VoiceContext& ctx, Buffer& out) {
 | `env(n)`, `envSamples(n)` | standard envelope n (1-based): block-start value / per-sample array |
 | `unisonIndex()`, `unisonCount()` | this voice's unison layer |
 | `rng()` | per-voice random stream (same as `rng()` in `start`) |
+| `lfo(n)`, `shape(n)`, `source(s)`, `setSource(s, v)` | modulation sources (§6) |
 | `modwheel()`, `aftertouch()`, `bend()`, `cc(n)` | controller state (aftertouch = max of channel and poly) |
 | `noteAge()` | beats since the note started |
 | `transport()`, `sampleRate()`, `frames()` | |
@@ -325,8 +328,8 @@ void processEvents(EventContext& ctx) override {
 | `ctx.seconds(s)` | a duration in seconds, as beats at the current tempo |
 | `ctx.rng(e, perKey)` | random stream for this event; `perKey = true` gives the same stream for that key every time |
 | `ctx.get(p)`, `ctx.transport()`, `ctx.sampleRate()`, `ctx.pending()` | |
-| `ctx.trigger(shape, e)` | start a shape (phase 4, §6a) |
-| `ctx.setSource(src, v)` | drive a custom mod source (phase 4) |
+| `ctx.trigger(n)` | restart shape n now (§6a) |
+| `ctx.setSource(src, v)` | set a custom mod source's global value (§6) |
 
 Events are `MidiEvent`s (`type`, `note`, `vel`, `cc`, `value`, `channel`,
 `sample`, `beat`, `tag`, plus `isNoteOn()`, `isNoteOff()`, `isCC(n)`). Build
@@ -397,8 +400,8 @@ old patches.
   folder) and can be exported as files.
 - The same JSON is what the plugin stores inside your DAW project.
 - MIDI-learn mappings are **not** part of a patch; they're per-installation.
-- `"mod"` and `"shapes"` are preserved through load and save now, and used from
-  phase 4.
+- `"mod"` holds the matrix routes (§6) and `"shapes"` the shape curves (§6a).
+  A synth without those features keeps them unchanged through load and save.
 
 ## 5a. Custom state ✓
 
@@ -436,91 +439,151 @@ double tune(int note, const NoteContext&) override {
   `ctx.setCustom("keys", value)`, `ctx.onCustom("keys", fn)`.
 - `migratePatch` (above) can rewrite `"custom"` too.
 
-## 6. Modulation (phase 4)
+## 6. Modulation ✓
 
-**Sources** provided by the kit: `env1`, `env2`, `lfo1`, `lfo2`, `shape1`…
-(§6a), `velocity`, `key` (key tracking, 0 at C4), `modwheel`, `aftertouch`,
-`bend`, `random` (new value per note), `const` (fixed 1.0, for offsets via
-`via`).
+Turned on by `features`: `modSlots` (matrix routes), `standardLfos` and
+`shapes` (§6a). A synth makes a parameter a destination with
+`.modulatable()`.
 
-**Musical-time sources** (global, follow the transport):
+**Sources.** Unipolar sources run 0…1; bipolar ones run −1…1.
 
-| Source | Value |
+| Source id | Value | Per voice |
+|---|---|---|
+| `env1`… | standard envelopes (after their velocity scaling) | ✓ |
+| `lfo1`… | standard LFOs × depth, bipolar | in Per Voice mode, or with a fade-in |
+| `shape1`… | shapes × depth (§6a) | when triggered by Note |
+| `velocity` | note velocity | ✓ |
+| `key` | (note − 60) / 60, bipolar: 0 at C4 | ✓ |
+| `random` | a new value for each note, bipolar | ✓ |
+| `aftertouch` | the larger of channel and poly pressure | ✓ |
+| `modwheel`, `bend` | CC 1; pitch bend (bipolar) | |
+| `const` | always 1, so a route adds a fixed offset (useful with `via`) | |
+| `beat.phase` | 0→1 ramp over each quarter note | |
+| `bar.phase` | 0→1 ramp over each bar (follows the time signature) | |
+| `bar.beat` | which beat of the bar, as beat ÷ beats per bar, stepped | |
+| `downbeat` | 1 during the bar's first beat, else 0 | |
+| `note.age` | beats since the note started, 0→1 over `sk.ageSpan` beats (default 4) | ✓ |
+| `note.offbeat` | how far the note started from the nearest beat, bipolar: ±1 is half a beat early or late | ✓ |
+| custom | the synth's own, below | if declared per voice |
+
+**Matrix.** Up to `modSlots` routes, each `src → dst × amt`, with an optional
+`via` (a second source that multiplies the amount). `amt` runs −1…1 of the
+destination's full knob range, in normalised (knob) units, so an amount means
+the same on a log cutoff as on a linear mix. Routes to the same destination
+add, and the result is clamped to the parameter's range.
+
+**Kit destinations,** added with `modSlots`:
+
+| ID | |
 |---|---|
-| `beat.phase` | 0→1 ramp over each beat |
-| `bar.phase` | 0→1 ramp over each bar (respects time signature) |
-| `bar.beat` | which beat of the bar, 0→1 across the bar's beats, stepped |
-| `downbeat` | 1 on the first beat of a bar, 0 otherwise |
-| `note.age` | per voice: beats since this note started, 0→1 over `note.ageSpan` |
-| `note.offbeat` | per voice: how far the note started from the nearest beat (−1…1) |
+| `sk.pitch` | pitch offset, ±12 semitones (vibrato, pitch envelopes). Every voice's `pitch()`/`pitchHz()` includes it. |
+| `sk.level` | voice level 0…1, applied by the kit after the amp envelope (tremolo, gates, pedal pumps) |
+| `lfoN.rate`, `lfoN.phase`, `lfoN.depth` | LFOs modulating LFOs |
+| `shapeN.rate`, `shapeN.offset`, `shapeN.depth` | |
 
-Combined with `via`, these let you do things like "velocity sets how hard the
-bar's downbeat accents the filter".
+`sk.ageSpan` (1–32 beats) sets the span of `note.age`.
 
-**Matrix:** `modSlots` routes, each `src → dst × amt`, optional `via` (a second
-source that scales the amount). `amt` is −1…1 of the destination's full
-normalised range. Per-voice sources (envelopes, velocity, key, random) give
-per-voice modulation; global ones (LFOs in global mode, modwheel) are shared.
+**Where modulation applies.** Voices see their own modulated values through
+`ctx.get()`. `processGlobal`, `processEvents` (`ctx.get`) and the master level
+see *global* modulation: routes are evaluated with per-voice sources counting
+as 0, and aftertouch as channel pressure. Values update once per control block
+(32 samples). Use `ctx.ramp(p)` for anything that would zipper, such as
+amplitude.
 
-**Custom sources:** a synth can publish its own.
+**Custom sources:**
 
 ```cpp
+ModSource phraseStep;
 void defineModSources(ModSourceBuilder& b) override {
-  phraseStep = b.add("phrase.step").name("Phrase Step").perVoice().unipolar();
+  phraseStep = b.add("phrase.step").name("Phrase Step").perVoice();  // .bipolar() for -1…1
 }
-// in render: ctx.setSource(synth.phraseStep, value01);
+// in a voice:       ctx.setSource(synth.phraseStep, value);   (used from the next block)
+// in processEvents / processGlobal:  ctx.setSource(synth.phraseStep, value);  (global value)
 ```
 
-Custom sources show up in the matrix like built-ins.
+Custom sources show up in the matrix and in custom widgets (`ctx.onMeter`)
+like the built-in ones. A per-voice source that a voice hasn't set uses the
+global value.
 
-## 6a. Shapes: drawn, tempo-locked modulation (phase 4)
+**Reading modulation directly.** In a voice, `ctx.lfo(n)`, `ctx.shape(n)` and
+`ctx.source(src)` give this voice's values. In `processGlobal`, `ctx.lfo(n)`
+and `ctx.shape(n)` give the global ones. This is for logic that doesn't fit the
+matrix.
 
-A shape is a curve you draw (breakpoints with adjustable curvature, or steps),
+**Standard LFOs** (`standardLfos: 2` adds `lfo1`, `lfo2`):
+
+| Param | |
+|---|---|
+| `lfoN.shape` | Sine, Triangle, Saw Up, Saw Down, Square, S&H, Drift (smooth random) |
+| `lfoN.rate` | 0.01–40 Hz, when not synced |
+| `lfoN.sync`, `lfoN.division` | lock to the beat: 8 bars … 1/32, with dotted and triplet values. A synced global LFO's phase comes from the song position, so it lines up with the bar whenever notes start. |
+| `lfoN.mode` | Global (one LFO shared by all voices) or Per Voice (restarts with each note) |
+| `lfoN.phase` | phase offset / start phase |
+| `lfoN.depth` | output scale |
+| `lfoN.fade` | per-voice fade-in after each note (classic delayed vibrato) |
+
+The patch stores routes as `"mod": [{ "src", "dst", "amt", "via"? }]`.
+Unknown sources and non-modulatable destinations are dropped with a warning.
+
+## 6a. Shapes: drawn, tempo-locked modulation ✓
+
+A shape is a curve you draw (points with adjustable curvature, or steps),
 like an automation lane, that a note or the bar line plays back. It's a mod
 source, so it can drive anything the matrix reaches. Example: an organ
-"pedal pump" curve, one bar long, restarting on each note and pushing
-amplitude and brightness.
+"pedal pump" curve, one bar long, restarting with each new phrase and
+pushing voice level and brightness (the example synth's *Pedal Pump* preset).
 
-`features.shapes: 4` adds `shape1`…`shape4`. Any number works; raising it
-later is safe for existing patches and projects, lowering it isn't (patches
-using the removed shapes lose them). Each shape gets these parameters (so
-they're automatable and modulatable themselves):
+`features.shapes: 4` adds `shape1`…`shape4`. Raising the count later is safe
+for existing patches and projects; lowering it isn't (patches using the
+removed shapes lose them). Each shape has these parameters, so they're
+automatable, and rate, offset and depth are modulatable too:
 
 | Param | Options |
 |---|---|
-| `shapeN.length` | in beats/bars (`1/16` … `8 bars`, triplet/dotted) or seconds |
-| `shapeN.trigger` | `note` (per voice), `firstNote` (global, restarts when all keys were up), `bar`, `beat`, `free` (continuous, transport-locked) |
-| `shapeN.start` | `immediate`, or quantised to the next `1/16` … `bar` |
-| `shapeN.loop` | `once`, `loop`, `whileHeld`, `pingPong`, `releaseSegment` (jumps to a tail on key up) |
-| `shapeN.rate` | playback speed multiplier (modulatable, e.g. by velocity) |
-| `shapeN.offset` | phase offset 0…1 (modulatable, e.g. by key) |
+| `shapeN.length` | 16 bars … 1/16 (with dotted and triplet values), when `sync` is on |
+| `shapeN.sync`, `shapeN.time` | off: the length is `time` seconds (0.01–30) instead |
+| `shapeN.trigger` | **Note** (per voice), **First Note** (global, restarts when a note starts with no other key held), **Bar**, **Beat** (restarts every bar or beat), **Free** (runs continuously, locked to song position), **Manual** (only `ctx.trigger`) |
+| `shapeN.start` | Immediately, or wait for the next 1/16, 1/8, 1/4 or bar (for Note, First Note and Manual) |
+| `shapeN.loop` | **Once** (holds the end), **Loop**, **While Held** (loops while the key is down, then finishes the cycle), **Ping-Pong**, **Release** (plays to the curve's release point and holds there, then plays the tail on key up) |
+| `shapeN.rate` | playback speed, 0.25–4× |
+| `shapeN.offset` | phase offset 0…1 |
 | `shapeN.depth` | output scale |
-| `shapeN.smooth` | slew, for removing steps |
-| `shapeN.keys` / `shapeN.vel` | ranges that may trigger it (e.g. only keys below C3) |
+| `shapeN.smooth` | slew, for softening steps |
+| `shapeN.keyLow/keyHigh`, `shapeN.velLow/velHigh` | which notes may trigger it (Note and First Note) |
+| `shapeN.curve` | which of up to 8 stored curves plays (so curve changes can be automated) |
 
-- The curve itself is stored in the patch under `"shapes"` (it's bulk data,
-  not a parameter). A shape can have several stored curves and a `shapeN.curve`
-  param to switch between them, so the curve choice itself is automatable.
-- The editor (`{ "kit": "shape1" }` in the layout) snaps to a grid drawn from
-  the current time signature, with draw, step, and curve-bend tools.
-- `processEvents` can also start a shape directly: `ctx.trigger(shape, e)`, so a
-  synth can decide in code which notes fire it.
-- Synths can read a shape directly: `ctx.shape(synth.pump)` for logic that
-  doesn't fit the matrix.
+- The curves are stored in the patch under `"shapes"`, one entry per shape:
+  ```json
+  "shapes": [ { "curves": [ { "points": [[0, 1, -0.5, 0], [0.5, 0.2, 0, 1], [1, 0, 0, 0]], "release": 0.5 } ] } ]
+  ```
+  Each point is `[x 0…1, y 0…1, curvature −1…1, step 0|1]`. Curvature bends
+  the segment that starts at the point. Step holds the point's level until the
+  next point. Curves always span 0…1 (missing ends are added), with up to 64
+  points.
+- The editor (`{ "kit": "shape1" }` in the layout) draws a grid from the length
+  and time signature and snaps to sixteenths. Drag points; double-click to add
+  or remove one; drag a diamond to bend a segment; right-click a point to make
+  it a step. The **Steps** tool paints step levels, and **Curves…** has ready-made
+  shapes, random steps and the release point. A playhead shows the most recent
+  voice's position.
+- `processEvents` can start a shape itself: `ctx.trigger(n)` restarts shape `n`
+  (1-based) now, for its global instance and every held voice. This is the way
+  to decide in code which notes fire it.
 
-## 7. Tempo ✓ (LFO sync: phase 4)
+## 7. Tempo ✓
 
 `ctx.transport()` → `Transport { bpm, playing, beat, barStart, timeSigNum,
 timeSigDen }`, plus `beatsPerBar()`, `secondsPerBeat()` and `seconds(s)`. In the
 plugin this comes from the host. In the browser it comes from the page's tempo
-clock (Play, BPM and time signature, next to the keyboard). Following incoming
-MIDI clock arrives in phase 4. `beat` keeps advancing when the transport is stopped (§4a).
+clock (Play, BPM and time signature by the keyboard), or follows incoming
+**MIDI clock** (choose *MIDI clock* next to the time signature): start, stop,
+continue and song position are followed, and tempo is measured from the clock.
+`beat` keeps advancing when the transport is stopped (§4a).
 
 Synced values use `sk::Division`: `Division::Whole`, `Half`, `Quarter`,
 `Eighth`, `Sixteenth`, `ThirtySecond` and `Bar`, with `.triplet()` and
 `.dotted()`. `d.length(transport)` gives beats. `Division::parse("1/8T", d)`
-and `d.name()` convert to and from text. Standard LFOs will have this built in
-(`lfo1.sync`, phase 4).
+and `d.name()` convert to and from text.
 
 ## 8. DSP building blocks ✓
 
@@ -580,7 +643,7 @@ and output panels.
 | Section field | |
 |---|---|
 | `title`, `controls` | a panel of controls |
-| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `voices` (mode, glide, unison, bend range), `master` (level, A4). `lfo1`, `modMatrix` and `shape1` arrive in phase 4. |
+| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4) |
 | `wide` | `true` makes the panel take a full row |
 
 - `theme.accent` colours the controls. Dark mode derives a lighter shade
@@ -590,8 +653,9 @@ and output panels.
   parameter IDs or control types) show as warnings when the page opens.
 - Every control supports dragging (Shift for fine), the mouse wheel, arrow keys
   when focused, double-click to reset, clicking the value to type one, and
-  right-click for MIDI learn and reset. A modulation ring for mod destinations
-  arrives in phase 4.
+  right-click for MIDI learn, reset and **Modulate…** (adds a matrix route from
+  any source). Modulated knobs show a live outer ring for the most recent
+  voice.
 
 **Custom widgets** (`ui/custom.js`): a plain script with no imports that
 defines `register`:
@@ -604,7 +668,7 @@ export function register(sk) {
     // ctx.get(id), ctx.set(id, value), ctx.format(id, value), ctx.param(id)
     // ctx.custom(id), ctx.setCustom(id, json)
     // ctx.noteOn(note, vel), ctx.noteOff(note)
-    // ctx.onMeter(sourceId, fn)    mod-source meters (phase 4)
+    // ctx.onMeter(sourceId, fn)    live value of any mod source (~30 times a second)
   });
 }
 ```

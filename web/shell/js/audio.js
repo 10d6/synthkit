@@ -71,6 +71,8 @@ class Audio {
       param: (i, v) => this.send({ t: "param", i, v }),
       patch: (json) => this.send({ t: "patch", json }),
       custom: (id, json) => this.send({ t: "custom", id, json }),
+      mod: (json) => this.send({ t: "mod", json }),
+      shapes: (json) => this.send({ t: "shapes", json }),
     };
   }
 

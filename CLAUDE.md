@@ -43,14 +43,16 @@ builds from CI artifacts at milestones.
 ```
 core/include/synthkit/   public headers: synth.h (what synths use), engine.h
                          (what adapters use), params, json, custom, dsp/…
-core/src/                engine.cpp (voices, events, transport), params, json
+core/src/                engine.cpp (voices, events, transport), modulation.cpp
+                         (sources, matrix, LFOs, shapes), params, json
 cmake/                   synthkit_add_synth() + preset embedding
 tools/render/            <synth>_render: scenarios, generic checks, WAV output
 examples/basic/          subtractive synth exercising the whole API
 tests/core_tests.cpp     kit unit tests (no framework; TEST/CHECK macros)
 web/wasm/                C API exported to JavaScript
 web/shell/               the page: template, style, js/ (model, audio, controls,
-                         panels, presets, keyboard, midi, app), worklet.js
+                         panels, modulation, presets, keyboard, midi, clock, app),
+                         worklet.js
 web/pack.py              inlines everything into one <synth>.html
 web/test/                headless Chromium test + browser-vs-native compare
 plugin/, template/       phases 5, 6
@@ -70,8 +72,8 @@ libclang-rt-18-dev-wasm32`, already installed if this workspace did phase 3):
 
 ```
 cmake -S . -B build-web -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/wasm32-wasi.cmake && cmake --build build-web
-node web/test/browser-test.cjs build-web/web/basic.html build-web/test examples/basic/tests/demo-pluck.json
-./build/examples/basic/basic_render examples/basic/tests/demo-pluck.json --block 128 --out build-web/test/native.wav
+node web/test/browser-test.cjs build-web/web/basic.html build-web/test examples/basic/tests/demo-pump.json
+./build/examples/basic/basic_render examples/basic/tests/demo-pump.json --block 128 --out build-web/test/native.wav
 python3 web/test/compare.py build-web/test/web-render.f32 build-web/test/native.wav
 ```
 
@@ -105,6 +107,6 @@ Switch them to automatic when the repo goes public.
 
 ## Status
 
-See README → Roadmap. Phases 1–3 are done (contract; core, DSP, render tool,
-example synth; browser build). Next: **phase 4 — mod matrix, LFOs, shapes,
-MIDI clock**.
+See README → Roadmap. Phases 1–4 are done (contract; core, DSP, render tool,
+example synth; browser build; modulation). Next: **phase 5 — JUCE plugin
+adapter (VST3 for Live on Windows first, AU for GarageBand)**.

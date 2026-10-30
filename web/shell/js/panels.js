@@ -80,17 +80,29 @@ class Panels {
     const out = [...groups].map(([title, controls]) => ({ title, controls }));
     out.push({ kit: "voices" });
     for (let n = 1; n <= this.model.info.synth.standardEnvelopes; n++) out.push({ kit: "env" + n });
+    for (let n = 1; n <= this.model.mod.lfos; n++) out.push({ kit: "lfo" + n });
+    for (let n = 1; n <= this.model.mod.shapes; n++) out.push({ kit: "shape" + n });
+    if (this.model.mod.slots) out.push({ kit: "modMatrix" });
     out.push({ kit: "master" });
     return out;
   }
 
   section(spec) {
     let s = spec;
+    const lfo = spec.kit && /^lfo(\d+)$/.exec(spec.kit);
+    if (lfo) return Number(lfo[1]) <= this.model.mod.lfos ? new LfoPanel(this.app, Number(lfo[1])).root : this.missing(spec.kit);
+    const shape = spec.kit && /^shape(\d+)$/.exec(spec.kit);
+    if (shape) return Number(shape[1]) <= this.model.mod.shapes ? new ShapePanel(this.app, Number(shape[1]), spec.title).root : this.missing(spec.kit);
+    if (spec.kit === "modMatrix") {
+      if (!this.model.mod.slots) return this.missing(spec.kit);
+      this.app.matrix = new MatrixPanel(this.app);
+      return this.app.matrix.root;
+    }
     if (spec.kit) {
       const m = /^env(\d+)$/.exec(spec.kit);
       if (m) s = envPanel(Number(m[1]), this.model);
       else if (KIT_PANELS[spec.kit]) s = KIT_PANELS[spec.kit];
-      else return null;  // lfo / modMatrix / shapes arrive in phase 4
+      else return this.missing(spec.kit);
       s = { ...s, title: spec.title || s.title, controls: s.controls.map(([param, label]) => ({ param, label })) };
     }
     const controls = h("div", { class: "controls" });
@@ -104,6 +116,11 @@ class Panels {
     if (s.env) sec.append(new EnvPreview(this.model, s.env).root);
     sec.append(controls);
     return sec;
+  }
+
+  missing(kit) {
+    this.problems.push(`layout.json asks for the "${kit}" panel, but synth.json doesn't enable that feature.`);
+    return null;
   }
 
   control(c) {
