@@ -9,11 +9,15 @@ class ModMeters {
     this.ns = model.mod.sources.length;
     this.np = model.params.length;
     this.data = null;
+    this.active = false;   // any voice sounding? Live displays rest when not.
     this.subs = new Set();
   }
-  update(arr) {
+  update(arr, active) {
     if (!arr || !arr.length) return;
+    // Settle once when playing stops, then stay quiet until it starts again.
+    if (!active && !this.active) return;
     this.data = arr;
+    this.active = !!active;
     for (const fn of this.subs) fn(this);
   }
   on(fn) { this.subs.add(fn); return () => this.subs.delete(fn); }
@@ -86,9 +90,11 @@ class LfoPanel {
     this.draw();
     this.src = m.sourceIndex.get(`lfo${n}`);
     app.modMeters.on((mm) => {
+      this.dot.setAttribute("visibility", mm.active ? "visible" : "hidden");
       const v = mm.source(this.src);
       this.dot.setAttribute("cy", (20 - Math.max(-1, Math.min(1, v)) * 17).toFixed(1));
     });
+    this.dot.setAttribute("visibility", "hidden");
     this.root = root;
   }
   draw() {
@@ -150,6 +156,7 @@ class ShapeEditor {
     this.g = { grid: svg("g"), fill: svg("path", { class: "shape-fill" }), line: svg("path", { class: "shape-line" }),
       rel: svg("g", { class: "shape-release" }), handles: svg("g"), points: svg("g"), head: svg("line", { class: "shape-head" }) };
     this.svg.append(this.g.grid, this.g.fill, this.g.line, this.g.rel, this.g.handles, this.g.points, this.g.head);
+    this.g.head.setAttribute("visibility", "hidden");
     this.area = h("div", { class: "shape-area", tabindex: 0, role: "application",
       "aria-label": `Shape ${n} curve editor. Arrow keys move the selected point, comma and period select points, Delete removes, H toggles a step.` }, this.svg);
     const toolSeg = h("div", { class: "seg seg-small", role: "radiogroup", "aria-label": "Editing tool" });
@@ -167,7 +174,7 @@ class ShapeEditor {
     for (const id of ["curve", "loop", "length", "sync"]) this.m.on(this.pre + id, () => { this.load(); this.draw(); });
     this.app.onTransport(() => this.draw());
     new ResizeObserver(() => this.resize()).observe(this.area);
-    this.app.modMeters.on((mm) => this.playhead(mm.shape(n - 1)));
+    this.app.modMeters.on((mm) => this.playhead(mm.active ? mm.shape(n - 1) : null));
     this.bindPointer();
     this.bindKeys();
   }
@@ -228,6 +235,29 @@ class ShapeEditor {
     const y = 1 - ((e.clientY - r.top) / r.height * this.H - this.pad) / (this.H - 2 * this.pad);
     return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
   }
+  // What's under the pointer, by position rather than by DOM element (the
+  // editor redraws between clicks, so element targets go stale).
+  hit(e) {
+    const r = this.svg.getBoundingClientRect();
+    const mx = (e.clientX - r.left) * (this.W / r.width), my = (e.clientY - r.top) * (this.H / r.height);
+    const pts = this.curve.points;
+    if (Math.round(this.m.get(this.pre + "loop")) === 4) {
+      const rx = this.px(this.curve.release >= 0 ? this.curve.release : 1);
+      if (Math.abs(mx - rx) <= 8 && my <= 16) return { kind: "rel" };
+    }
+    let best = null, bd = 10;
+    pts.forEach((p, i) => { const d = Math.hypot(mx - this.px(p[0]), my - this.py(p[1])); if (d < bd) { bd = d; best = { kind: "pt", i }; } });
+    if (best) return best;
+    if (this.tool === "points") {
+      for (let i = 0; i + 1 < pts.length; i++) {
+        if (pts[i][3] || pts[i + 1][0] - pts[i][0] <= 0.02) continue;
+        const hx = (pts[i][0] + pts[i + 1][0]) / 2;
+        if (Math.hypot(mx - this.px(hx), my - this.py(skEvalCurve(pts, hx))) < 9) return { kind: "seg", i };
+      }
+    }
+    return { kind: "none" };
+  }
+
   snapX(x, e) {
     if (!this.snap || (e && e.shiftKey)) return x;
     const s = this.snapStep();
@@ -302,16 +332,21 @@ class ShapeEditor {
   // Editing ---------------------------------------------------------------------------
   bindPointer() {
     let drag = null;
+    let lastDown = { t: 0, x: 0, y: 0 };
     this.svg.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
       this.area.focus({ preventScroll: true });
-      const t = e.target;
+      const now = performance.now();
+      const isDouble = now - lastDown.t < 400 && Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) < 8;
+      lastDown = isDouble ? { t: 0, x: 0, y: 0 } : { t: now, x: e.clientX, y: e.clientY };
+      if (isDouble && this.tool === "points") { e.preventDefault(); this.onDouble(e); return; }
       const pts = this.curve.points;
+      const hit = this.hit(e);
       this.svg.setPointerCapture(e.pointerId);
-      if (t.dataset && t.dataset.rel) { drag = { kind: "rel" }; return; }
+      if (hit.kind === "rel") { drag = { kind: "rel" }; return; }
       if (this.tool === "steps") { drag = { kind: "steps" }; this.paintStep(e); return; }
-      if (t.dataset && t.dataset.pt !== undefined) { this.sel = Number(t.dataset.pt); drag = { kind: "pt", i: this.sel }; this.draw(); return; }
-      if (t.dataset && t.dataset.seg !== undefined) { const i = Number(t.dataset.seg); drag = { kind: "bend", i, y: e.clientY, c: pts[i][2] }; return; }
+      if (hit.kind === "pt") { this.sel = hit.i; drag = { kind: "pt", i: hit.i }; this.draw(); return; }
+      if (hit.kind === "seg") { drag = { kind: "bend", i: hit.i, y: e.clientY, c: pts[hit.i][2] }; return; }
       this.sel = -1;
       this.draw();
     });
@@ -339,14 +374,19 @@ class ShapeEditor {
     const end = () => { drag = null; };
     this.svg.addEventListener("pointerup", end);
     this.svg.addEventListener("pointercancel", end);
-    this.svg.addEventListener("dblclick", (e) => {
+    // Double-click (or double-tap), detected here rather than with the dblclick
+    // event, which browsers drop when the editor redraws between the clicks.
+    this.onDouble = (e) => {
       if (this.tool !== "points") return;
-      const t = e.target, pts = this.curve.points;
-      if (t.dataset && t.dataset.pt !== undefined) {
-        const i = Number(t.dataset.pt);
+      const pts = this.curve.points;
+      const hit = this.hit(e);
+      if (hit.kind === "pt") {
+        const i = hit.i;
         if (i > 0 && i < pts.length - 1) { pts.splice(i, 1); this.sel = -1; this.commit(); }
+        else this.app.toast("The first and last points can't be removed, but you can drag them up and down.");
         return;
       }
+      if (hit.kind !== "none") return;
       if (pts.length >= 64) { this.app.toast("A curve can have up to 64 points."); return; }
       const { x, y } = this.fromEvent(e);
       const sx = this.snapX(x, e);
@@ -355,12 +395,12 @@ class ShapeEditor {
       pts.sort((a, b) => a[0] - b[0]);
       this.sel = pts.findIndex((p) => p[0] === sx && p[1] === y);
       this.commit();
-    });
+    };
     this.svg.addEventListener("contextmenu", (e) => {
-      const t = e.target;
-      if (t.dataset && t.dataset.pt !== undefined) {
+      const hit = this.hit(e);
+      if (hit.kind === "pt") {
         e.preventDefault();
-        const p = this.curve.points[Number(t.dataset.pt)];
+        const p = this.curve.points[hit.i];
         p[3] = p[3] ? 0 : 1;
         this.commit();
       }
@@ -606,7 +646,7 @@ class MatrixPanel {
   }
   meter(mm) {
     for (const r of this.meters || []) {
-      const v = Math.max(-1, Math.min(1, mm.source(r.src)));
+      const v = mm.active ? Math.max(-1, Math.min(1, mm.source(r.src))) : 0;
       r.el.style.left = (50 + Math.min(0, v) * 50) + "%";
       r.el.style.width = Math.abs(v) * 50 + "%";
     }

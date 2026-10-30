@@ -53,7 +53,7 @@ class App {
     this.refreshLearned();
     // Live modulation rings on knobs.
     const ringed = this.controls.filter((c) => c.modulated);
-    this.modMeters.on((mm) => { for (const c of ringed) c.modulated(mm.param(c.p.index)); });
+    this.modMeters.on((mm) => { for (const c of ringed) c.modulated(mm.active ? mm.param(c.p.index) : NaN); });
     for (const p of panels.problems.concat(this.pending || [])) this.toast(p.msg || p, p.kind || "warn");
 
     // Browsers only allow audio after the first click or key press.
@@ -199,7 +199,7 @@ class App {
   }
 
   meter(mtr) {
-    this.modMeters.update(mtr.mod);
+    this.modMeters.update(mtr.mod, mtr.voices > 0);
     this.voices.textContent = `${mtr.voices} ${mtr.voices === 1 ? "voice" : "voices"}`;
     const db = mtr.peak > 0 ? 20 * Math.log10(mtr.peak) : -100;
     const n = Math.max(0, Math.min(1, (db + 48) / 48));

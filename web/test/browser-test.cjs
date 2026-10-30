@@ -81,6 +81,25 @@ async function main() {
         await page.mouse.dblclick(box.x + box.width * 0.37, box.y + box.height * 0.3);
         const pts2 = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points.length);
         if (pts2 !== pts + 1) fail(`double-click in the shape editor gave ${pts2} points (had ${pts})`); else pass("shape editor adds points");
+        // Double-click the new point to remove it again.
+        const added = await page.evaluate(() => {
+          const ed = document.querySelector(".shape-svg");
+          const c = [...ed.querySelectorAll(".shape-point")].map((e) => e.getBoundingClientRect());
+          return c.map((r) => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 }));
+        });
+        const mid = added[1];
+        await page.mouse.dblclick(mid.x, mid.y);
+        const pts3 = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points.length);
+        if (pts3 !== pts) fail(`double-clicking a point left ${pts3} points (expected ${pts})`); else pass("double-clicking a point removes it");
+        // With nothing playing, live displays rest.
+        await page.evaluate(() => window.synthkit.app.audio.send({ t: "panic" }));
+        await page.waitForTimeout(400);
+        const idle = await page.evaluate(() => ({
+          rings: document.querySelectorAll(".ctl.is-modulated").length,
+          dots: [...document.querySelectorAll(".lfo-dot")].filter((d) => d.getAttribute("visibility") !== "hidden").length,
+          heads: [...document.querySelectorAll(".shape-head")].filter((d) => d.getAttribute("visibility") !== "hidden").length,
+        }));
+        if (idle.rings || idle.dots || idle.heads) fail(`live displays still moving with nothing playing: ${JSON.stringify(idle)}`); else pass("nothing animates while nothing plays");
         // Follow MIDI clock: start + 48 ticks at 120 BPM.
         const clock = await page.evaluate(() => {
           const app = window.synthkit.app;
