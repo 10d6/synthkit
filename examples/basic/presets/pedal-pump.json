@@ -1,0 +1,111 @@
+{
+  "synthkit": 1,
+  "synth": "sk-basic",
+  "patchVersion": 1,
+  "name": "Pedal Pump",
+  "author": "synthkit",
+  "tags": [
+    "organ",
+    "keys",
+    "tempo"
+  ],
+  "params": {
+    "osc1.wave": 1,
+    "osc1.pw": 0.42,
+    "osc2.wave": 0,
+    "osc2.semi": 12,
+    "osc2.fine": 3,
+    "osc2.level": 0.35,
+    "sub.level": 0.25,
+    "drift": 0.35,
+    "filter.type": 1,
+    "filter.cutoff": 1700,
+    "filter.reso": 0.12,
+    "filter.env": 0.08,
+    "filter.keytrack": 0.4,
+    "env1.attack": 0.045,
+    "env1.decay": 0.3,
+    "env1.sustain": 1,
+    "env1.release": 0.35,
+    "shape1.trigger": 1,
+    "shape1.length": 4,
+    "shape1.loop": 1,
+    "shape1.smooth": 0.15,
+    "sk.level": 0.2,
+    "delay.mix": 0.08,
+    "delay.time": 0,
+    "master": -5
+  },
+  "mod": [
+    {
+      "src": "shape1",
+      "dst": "sk.level",
+      "amt": 0.8
+    },
+    {
+      "src": "shape1",
+      "dst": "filter.cutoff",
+      "amt": 0.1
+    }
+  ],
+  "shapes": [
+    {
+      "curves": [
+        {
+          "points": [
+            [
+              0,
+              0.15,
+              -0.4,
+              0
+            ],
+            [
+              0.1,
+              1,
+              0.5,
+              0
+            ],
+            [
+              0.5,
+              0.3,
+              -0.3,
+              0
+            ],
+            [
+              0.6,
+              1,
+              0.5,
+              0
+            ],
+            [
+              1,
+              0.15,
+              0,
+              0
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "curves": [
+        {
+          "points": [
+            [
+              0,
+              1,
+              -0.5,
+              0
+            ],
+            [
+              1,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

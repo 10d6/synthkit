@@ -459,6 +459,44 @@ int runCheck(const fs::path& synthDir, const fs::path& outDir) {
         if (ps.spec(i).id == "master") continue;
         ps.setNorm(i, rng.uniform());
       }
+      // Random modulation routes and shape curves too.
+      if (eng->modSlots() > 0) {
+        auto srcs = eng->modSources();
+        std::vector<std::string> dsts;
+        for (int i = 0; i < ps.size(); ++i) if (ps.spec(i).modulatable) dsts.push_back(ps.spec(i).id);
+        Json routes = Json::array();
+        for (int k2 = 0; k2 < eng->modSlots() && !dsts.empty(); ++k2) {
+          Json r = Json::object();
+          r["src"] = srcs[static_cast<std::size_t>(rng.integer(0, static_cast<int>(srcs.size()) - 1))].id;
+          r["dst"] = dsts[static_cast<std::size_t>(rng.integer(0, static_cast<int>(dsts.size()) - 1))];
+          r["amt"] = rng.bipolar();
+          if (rng.chance(0.3f)) r["via"] = srcs[static_cast<std::size_t>(rng.integer(0, static_cast<int>(srcs.size()) - 1))].id;
+          routes.push(r);
+        }
+        eng->setModMatrix(routes);
+      }
+      if (eng->shapeCount() > 0) {
+        Json shapes = Json::array();
+        for (int k2 = 0; k2 < eng->shapeCount(); ++k2) {
+          Json pts = Json::array();
+          int n = rng.integer(2, 12);
+          for (int q = 0; q < n; ++q) {
+            Json pt = Json::array();
+            pt.push(q == 0 ? 0.0 : q == n - 1 ? 1.0 : rng.uniform());
+            pt.push(rng.uniform()); pt.push(rng.bipolar()); pt.push(rng.chance(0.3f) ? 1 : 0);
+            pts.push(pt);
+          }
+          Json curve = Json::object();
+          curve["points"] = pts;
+          if (rng.chance(0.5f)) curve["release"] = rng.uniform();
+          Json sh = Json::object();
+          Json curves = Json::array();
+          curves.push(curve);
+          sh["curves"] = curves;
+          shapes.push(sh);
+        }
+        eng->setShapes(shapes);
+      }
       RenderOpts o;
       o.stopWhenSilentAfter = 1.2;
       o.maxLength = 31.2;

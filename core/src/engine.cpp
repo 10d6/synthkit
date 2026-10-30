@@ -9,6 +9,8 @@
 #include <stdexcept>
 
 #include "synthkit/error.h"
+
+#include "modulation.h"
 #include <unordered_set>
 
 #if defined(__SSE__) || defined(_M_X64) || defined(_M_IX86)
@@ -187,6 +189,7 @@ struct Slot {
   float polyAT = 0;
   dsp::Rng rng;
   Beats startBeat = 0;
+  ModVoice mv;
 };
 
 enum Mode { Poly = 0, Mono = 1, Legato = 2 };
@@ -248,12 +251,24 @@ struct Core {
   VoiceContext vctx;
   GlobalContext gctx;
 
+  Modulation mod;
+  int pPitch = -1, pLevel = -1;
+  const float* gvals = nullptr;   // globally modulated values this block
+  const float* gprev = nullptr;
+  bool anyHeld = false;
+  std::vector<ModVoice*> heldScratch;
+
   Core(std::unique_ptr<Synth> s, SynthInfo i) : synth(std::move(s)), info(std::move(i)) {
     pool.core_ = this;
     ectx.core_ = this;
     vctx.core_ = this;
     gctx.core_ = this;
     buildParams();
+    ModSourceBuilder mb;
+    synth->defineModSources(mb);
+    mod.init(*store, info, mb.take(), &epoch);
+    pPitch = mod.pitchParam();
+    pLevel = mod.levelParam();
     CustomBuilder cb(&epoch);
     synth->defineCustom(cb);
     customs = cb.take();
@@ -271,6 +286,7 @@ struct Core {
       sl.envBuf.resize(sl.envs.size());
     }
     queue.resize(static_cast<std::size_t>(info.features.eventQueue));
+    heldScratch.reserve(slots.size());
   }
 
   void buildParams() {
@@ -311,6 +327,7 @@ struct Core {
       ep.vel = b.count(); b.addKit(p + "velocity").name(n + "Velocity").range(0, 1).def(amp ? 0.5 : 0).group(g);
       envP.push_back(ep);
     }
+    mod.addKitParams(b, info);
     store = std::make_unique<ParamStore>(b.finish());
   }
 
@@ -345,6 +362,10 @@ struct Core {
       resetSlot(sl);
     }
     limiter.prepare(static_cast<float>(sr));
+    mod.prepare(sr, n, values.data());
+    for (auto& sl : slots) mod.prepareVoice(sl.mv);
+    gvals = values.data();
+    gprev = prev.data();
     mode = currentMode();
     prepared = true;
     epoch.running = true;
@@ -464,6 +485,7 @@ struct Core {
     std::fill(mixR.begin(), mixR.begin() + n, 0.f);
     int pos = 0, oi = 0;
     while (pos < n) {
+      transport.beat = blockStart + pos / spb;
       while (oi < outCount && outEv[static_cast<std::size_t>(oi)].sample <= pos) handle(outEv[static_cast<std::size_t>(oi++)]);
       int next = std::min(n, pos + kControlBlock);
       if (oi < outCount) next = std::min(next, outEv[static_cast<std::size_t>(oi)].sample);
@@ -483,6 +505,13 @@ struct Core {
     for (int c = 2; c < nOut; ++c) std::memset(outs[c] + offset, 0, sizeof(float) * static_cast<std::size_t>(n));
 
     clock = blockEnd;
+    if (mod.enabled()) {
+      // Meters follow the most recently started voice that's still sounding.
+      const Slot* disp = nullptr;
+      for (auto& s : slots)
+        if ((s.state == VoicePool::State::Held || s.state == VoicePool::State::Released) && (!disp || s.age > disp->age)) disp = &s;
+      mod.publish(disp ? &disp->mv : nullptr);
+    }
     int active = 0;
     for (auto& s : slots) active += s.state == VoicePool::State::Held || s.state == VoicePool::State::Released;
     statActive.store(active);
@@ -562,16 +591,29 @@ struct Core {
     double bpb = transport.beatsPerBar();
     while (transport.beat >= transport.barStart + bpb - 1e-9) transport.barStart += bpb;
 
+    bool heldNow = false;
+    for (auto& s : slots) heldNow |= s.state == VoicePool::State::Held;
+    if (anyHeld && !heldNow) mod.allKeysUp();
+    anyHeld = heldNow;
+    if (mod.enabled()) {
+      mod.beginBlock(values.data(), transport, 0, len, modwheel, bend, aftertouch);
+      gvals = mod.globalValues();
+      gprev = mod.prevGlobalValues();
+    } else {
+      gvals = values.data();
+      gprev = prev.data();
+    }
+
     for (auto& s : slots)
       if (s.state != VoicePool::State::Free) renderSlot(s, pos, len);
 
     Buffer io{mixL.data() + pos, mixR.data() + pos, len};
-    gctx.values_ = values.data();
-    gctx.prev_ = prev.data();
+    gctx.values_ = gvals;
+    gctx.prev_ = gprev;
     gctx.frames_ = len;
     synth->processGlobal(gctx, io);
 
-    Ramp master{dsp::dbToGain(prev[pMaster]), dsp::dbToGain(values[pMaster]), len};
+    Ramp master{dsp::dbToGain(gprev[pMaster]), dsp::dbToGain(gvals[pMaster]), len};
     float peak = 0;
     for (int i = 0; i < len; ++i) {
       float g = master.at(i);
@@ -602,11 +644,23 @@ struct Core {
       for (int i = 0; i < len; ++i) s.envBuf[e][static_cast<std::size_t>(i)] = s.envs[e].next() * scale;
     }
 
+    const float* vv = values.data();
+    const float* vp = prev.data();
+    if (mod.enabled()) {
+      std::array<float, 8> envStart{};
+      for (std::size_t e = 0; e < s.envs.size() && e < envStart.size(); ++e) envStart[e] = s.envBuf[e][0];
+      VoiceIn in{envStart.data(), static_cast<int>(std::min<std::size_t>(s.envs.size(), envStart.size())), s.vel, s.note,
+                 std::max(aftertouch, s.polyAT)};
+      mod.voiceBlock(s.mv, in, values.data(), transport, len);
+      vv = s.mv.vals.data();
+      vp = s.mv.prevVals.data();
+    }
+
     std::fill(scratchL.begin(), scratchL.begin() + len, 0.f);
     std::fill(scratchR.begin(), scratchR.begin() + len, 0.f);
     Buffer buf{scratchL.data(), scratchR.data(), len};
-    vctx.values_ = values.data();
-    vctx.prev_ = prev.data();
+    vctx.values_ = vv;
+    vctx.prev_ = vp;
     vctx.frames_ = len;
     vctx.slot_ = &s;
     s.voice->render(vctx, buf);
@@ -618,9 +672,11 @@ struct Core {
       gain = 1.f / std::sqrt(static_cast<float>(s.uniCount));
     }
     bool amp = info.features.ampEnv && !s.envs.empty();
+    Ramp level{1.f, 1.f, len};
+    if (pLevel >= 0) level = Ramp{vp[pLevel], vv[pLevel], len};
     float peak = 0;
     for (int i = 0; i < len; ++i) {
-      float g = gain * (amp ? s.envBuf[0][static_cast<std::size_t>(i)] : 1.f);
+      float g = gain * level.at(i) * (amp ? s.envBuf[0][static_cast<std::size_t>(i)] : 1.f);
       if (s.state == St::Fading) { s.fade = std::max(0.f, s.fade - s.fadeStep); g *= s.fade; }
       float l = scratchL[static_cast<std::size_t>(i)] * g * gl;
       float r = scratchR[static_cast<std::size_t>(i)] * g * gr;
@@ -653,7 +709,7 @@ struct Core {
     return std::isfinite(t) ? std::clamp(t, -24.0, 160.0) : static_cast<double>(e.note);
   }
 
-  void startSlot(int idx, const MidiEvent& e, double tuned, uint64_t serial, int u, int uc, bool mono, double glideFrom) {
+  void startSlot(int idx, const MidiEvent& e, double tuned, uint64_t serial, int u, int uc, bool mono, double glideFrom, bool first = false) {
     auto& s = slots[static_cast<std::size_t>(idx)];
     bool sounding = s.state != VoicePool::State::Free;
     if (s.state == VoicePool::State::Fading) resetSlot(s);  // hard steal
@@ -678,6 +734,7 @@ struct Core {
     s.startBeat = e.beat;
     s.rng.seed(dsp::hashSeed(serial, static_cast<uint64_t>(u), 0x51u));
     for (auto& env : s.envs) env.gate(true);
+    if (mod.enabled()) mod.noteOn(s.mv, e.note, e.vel, transport, serial * 16 + static_cast<uint64_t>(u), first && u == 0);
     StartInfo si;
     si.sounding = sounding;
     s.voice->start(NoteOn{e.note, e.vel, e.channel}, si);
@@ -700,6 +757,7 @@ struct Core {
     s.state = VoicePool::State::Released;
     s.sustained = false;
     for (auto& env : s.envs) env.gate(false);
+    if (mod.enabled()) mod.noteOff(s.mv);
     s.voice->release();
   }
 
@@ -766,6 +824,8 @@ struct Core {
   }
 
   void noteOn(const MidiEvent& e) {
+    bool first = true;
+    for (auto& s : slots) if (s.state == VoicePool::State::Held) { first = false; break; }
     uint64_t serial = ++serialCounter;
     double tuned = tune(e, serial);
     int uc = uniCount();
@@ -773,7 +833,7 @@ struct Core {
       for (int u = 0; u < uc; ++u) {
         int idx = synth->allocateVoice(NoteOn{e.note, e.vel, e.channel}, pool);
         if (idx < 0 || idx >= static_cast<int>(slots.size())) continue;
-        startSlot(idx, e, tuned, serial, u, uc, false, tuned);
+        startSlot(idx, e, tuned, serial, u, uc, false, tuned, first);
       }
       return;
     }
@@ -785,7 +845,7 @@ struct Core {
       for (int u = 0; u < uc; ++u) {
         int idx = synth->allocateVoice(NoteOn{e.note, e.vel, e.channel}, pool);
         if (idx < 0 || idx >= static_cast<int>(slots.size())) continue;
-        startSlot(idx, e, tuned, serial, u, uc, true, tuned);
+        startSlot(idx, e, tuned, serial, u, uc, true, tuned, first);
       }
       return;
     }
@@ -807,6 +867,7 @@ struct Core {
         s.vel = vel;
         s.startBeat = transport.beat;
         for (auto& env : s.envs) env.gate(true);
+        if (mod.enabled()) mod.noteOn(s.mv, note, vel, transport, serial * 16 + static_cast<uint64_t>(s.uniIndex), false);
       }
       bool wasReleased = s.state == VoicePool::State::Released;
       s.state = VoicePool::State::Held;
@@ -865,6 +926,7 @@ double VoiceContext::pitch() const {
     float t = 2.f * slot_->uniIndex / static_cast<float>(slot_->uniCount - 1) - 1.f;
     p += t * values_[core_->pUniDetune] / 100.0;
   }
+  if (core_->pPitch >= 0) p += values_[core_->pPitch];
   return p;
 }
 int VoiceContext::key() const { return slot_->note; }
@@ -890,6 +952,10 @@ float VoiceContext::bend() const { return core_->bend; }
 float VoiceContext::cc(int n) const { return core_->ccs[std::clamp(n, 0, 127)]; }
 Beats VoiceContext::noteAge() const { return core_->transport.beat - slot_->startBeat; }
 const Transport& VoiceContext::transport() const { return core_->transport; }
+float VoiceContext::lfo(int n) const { return core_->mod.voiceSource(slot_->mv, core_->mod.sourceIndex(detail::Src::Lfo, n - 1)); }
+float VoiceContext::shape(int n) const { return core_->mod.voiceSource(slot_->mv, core_->mod.sourceIndex(detail::Src::Shape, n - 1)); }
+float VoiceContext::source(ModSource s) const { return core_->mod.voiceSource(slot_->mv, core_->mod.sourceIndex(detail::Src::Custom, s.index)); }
+void VoiceContext::setSource(ModSource s, float v) { core_->mod.setVoiceSource(slot_->mv, s.index, v); }
 double VoiceContext::sampleRate() const { return core_->sr; }
 
 float GlobalContext::modwheel() const { return core_->modwheel; }
@@ -900,6 +966,9 @@ int GlobalContext::activeVoices() const {
   return a;
 }
 const Transport& GlobalContext::transport() const { return core_->transport; }
+float GlobalContext::lfo(int n) const { return core_->mod.globalSource(core_->mod.sourceIndex(detail::Src::Lfo, n - 1)); }
+float GlobalContext::shape(int n) const { return core_->mod.globalSource(core_->mod.sourceIndex(detail::Src::Shape, n - 1)); }
+void GlobalContext::setSource(ModSource s, float v) { core_->mod.setGlobalSource(s.index, v); }
 double GlobalContext::sampleRate() const { return core_->sr; }
 
 EventContext::Range EventContext::in() const {
@@ -915,7 +984,15 @@ dsp::Rng EventContext::rng(const MidiEvent& e, bool perKey) {
   return dsp::Rng(dsp::hashSeed(++core_->eventSerial, static_cast<uint64_t>(e.note), 0xE7u));
 }
 const Transport& EventContext::transport() const { return core_->transport; }
-float EventContext::get(Param p) const { return core_->values[static_cast<std::size_t>(p.index)]; }
+float EventContext::get(Param p) const { return core_->gvals[p.index]; }
+void EventContext::setSource(ModSource s, float v) { core_->mod.setGlobalSource(s.index, v); }
+void EventContext::trigger(int shape) {
+  auto& held = core_->heldScratch;
+  held.clear();
+  for (auto& s : core_->slots)
+    if (s.state == VoicePool::State::Held) held.push_back(&s.mv);
+  core_->mod.trigger(shape - 1, core_->transport, held.data(), static_cast<int>(held.size()));
+}
 double EventContext::sampleRate() const { return core_->sr; }
 int EventContext::pending() const {
   int n = 0;
@@ -1021,6 +1098,8 @@ Json Engine::savePatch() const {
     for (auto& s : core_->customs) c[s->id()] = s->save();
     p["custom"] = c;
   }
+  if (core_->mod.modSlots() > 0) p["mod"] = core_->mod.saveMatrix();
+  if (core_->mod.shapeCount() > 0) p["shapes"] = core_->mod.saveShapes();
   for (auto& m : core_->extra.members()) p[m.first] = m.second;
   return p;
 }
@@ -1061,8 +1140,12 @@ LoadResult Engine::loadPatch(const Json& in) {
   core_->meta.tags.clear();
   for (auto& t : j["tags"].items()) core_->meta.tags.push_back(t.string());
   core_->extra = Json::object();
-  for (const char* k : {"mod", "shapes"})
-    if (j.contains(k)) core_->extra[k] = j[k];
+  // Modulation the synth supports is loaded; otherwise it's carried through
+  // unchanged so nothing is lost by saving.
+  if (core_->mod.modSlots() > 0) core_->mod.loadMatrix(j["mod"], &r.warnings);
+  else if (j.contains("mod")) core_->extra["mod"] = j["mod"];
+  if (core_->mod.shapeCount() > 0) core_->mod.loadShapes(j["shapes"], &r.warnings);
+  else if (j.contains("shapes")) core_->extra["shapes"] = j["shapes"];
   return r;
 }
 
@@ -1075,6 +1158,28 @@ bool Engine::setCustomState(const std::string& id, const Json& v) {
     if (c->id() == id) { c->load(v); return true; }
   return false;
 }
+std::vector<ModSourceDesc> Engine::modSources() const {
+  std::vector<ModSourceDesc> v;
+  for (auto& s : core_->mod.sources()) v.push_back(s.desc);
+  return v;
+}
+int Engine::modSlots() const { return core_->mod.modSlots(); }
+int Engine::lfoCount() const { return core_->mod.lfoCount(); }
+int Engine::shapeCount() const { return core_->mod.shapeCount(); }
+Json Engine::modMatrix() const { return core_->mod.saveMatrix(); }
+std::vector<std::string> Engine::setModMatrix(const Json& routes) {
+  std::vector<std::string> w;
+  core_->mod.loadMatrix(routes, &w);
+  return w;
+}
+Json Engine::shapes() const { return core_->mod.saveShapes(); }
+std::vector<std::string> Engine::setShapes(const Json& s) {
+  std::vector<std::string> w;
+  core_->mod.loadShapes(s, &w);
+  return w;
+}
+void Engine::readModMeters(float* sources, float* params, float* shapes) const { core_->mod.readMeters(sources, params, shapes); }
+
 std::vector<std::string> Engine::customIds() const {
   std::vector<std::string> ids;
   for (auto& c : core_->customs) ids.push_back(c->id());

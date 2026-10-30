@@ -8,8 +8,15 @@
   "patchVersion": 1,
   "features": {
     "voices": 24,
-    "voiceModes": ["poly", "mono", "legato"],
+    "voiceModes": [
+      "poly",
+      "mono",
+      "legato"
+    ],
     "unison": true,
-    "standardEnvelopes": 2
+    "standardEnvelopes": 2,
+    "standardLfos": 2,
+    "modSlots": 8,
+    "shapes": 2
   }
 }

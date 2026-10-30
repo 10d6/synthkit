@@ -29,6 +29,27 @@
     "env2.sustain": 0.5,
     "delay.mix": 0.22,
     "delay.time": 2,
-    "delay.feedback": 0.35
-  }
+    "delay.feedback": 0.35,
+    "lfo1.rate": 5.5,
+    "lfo1.mode": 1,
+    "lfo1.fade": 0.6
+  },
+  "mod": [
+    {
+      "src": "lfo1",
+      "dst": "sk.pitch",
+      "amt": 0.008
+    },
+    {
+      "src": "lfo1",
+      "dst": "sk.pitch",
+      "amt": 0.03,
+      "via": "modwheel"
+    },
+    {
+      "src": "velocity",
+      "dst": "filter.cutoff",
+      "amt": 0.12
+    }
+  ]
 }

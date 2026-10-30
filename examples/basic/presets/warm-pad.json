@@ -31,6 +31,23 @@
     "delay.time": 0,
     "delay.feedback": 0.45,
     "delay.tone": 2500,
-    "master": -3
-  }
+    "master": -3,
+    "lfo1.rate": 0.12,
+    "lfo1.shape": 0,
+    "lfo2.shape": 1,
+    "lfo2.mode": 1,
+    "lfo2.rate": 0.35
+  },
+  "mod": [
+    {
+      "src": "lfo1",
+      "dst": "filter.cutoff",
+      "amt": 0.07
+    },
+    {
+      "src": "lfo2",
+      "dst": "osc2.level",
+      "amt": 0.15
+    }
+  ]
 }

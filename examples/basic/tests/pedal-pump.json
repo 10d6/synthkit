@@ -1,0 +1,35 @@
+{
+  "patch": "pedal-pump",
+  "params": {
+    "delay.mix": 0,
+    "drift": 0
+  },
+  "transport": {
+    "bpm": 96,
+    "playing": true
+  },
+  "lengthBeats": 8.5,
+  "events": [
+    {
+      "beat": 0,
+      "on": 60,
+      "vel": 100
+    },
+    {
+      "beat": 0,
+      "on": 64,
+      "vel": 100
+    },
+    {
+      "beat": 8,
+      "off": 60
+    },
+    {
+      "beat": 8,
+      "off": 64
+    }
+  ],
+  "expect": {
+    "soundBy": 0.1
+  }
+}
