@@ -130,19 +130,87 @@ const SK_SHAPE_PRESETS = [
   ["Square", [[0, 1, 0, 1], [0.5, 0, 0, 1], [1, 0, 0, 0]]],
 ];
 
+// Curve points: [x, y, curvature, step, outX, outY, inX, inY, corner].
+// Points with 8+ entries have handles (offsets from the point); a segment with
+// handles at either end is a cubic Bezier, otherwise the older curvature
+// model applies. This must match ShapeCurve::eval in the engine.
+function skHasHandles(p) { return p.length >= 8; }
+
+function skBez(p0, p1, p2, p3, t) {
+  const u = 1 - t;
+  return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
+}
+
 function skEvalCurve(pts, x) {
   if (!pts.length) return 0;
   if (x <= pts[0][0]) return pts[0][1];
   for (let i = 0; i + 1 < pts.length; i++) {
-    const [x0, y0, c, hold] = pts[i], [x1, y1] = pts[i + 1];
+    const a = pts[i], b = pts[i + 1];
+    const [x0, y0, c, hold] = a, [x1, y1] = b;
     if (x > x1) continue;
     if (hold) return y0;
-    if (x1 - x0 < 1e-6) return y1;
-    let t = (x - x0) / (x1 - x0);
+    const w = x1 - x0;
+    if (w < 1e-6) return y1;
+    if (skHasHandles(a) || skHasHandles(b)) {
+      const c1x = x0 + (skHasHandles(a) ? Math.min(Math.max(a[4], 0), w / 2) : 0);
+      const c2x = x1 + (skHasHandles(b) ? Math.max(Math.min(b[6], 0), -w / 2) : 0);
+      const c1y = y0 + (skHasHandles(a) ? a[5] : 0), c2y = y1 + (skHasHandles(b) ? b[7] : 0);
+      let lo = 0, hi = 1, t = (x - x0) / w;
+      for (let k = 0; k < 24; k++) {
+        const xt = skBez(x0, c1x, c2x, x1, t);
+        if (Math.abs(xt - x) < 1e-6) break;
+        if (xt < x) lo = t; else hi = t;
+        t = 0.5 * (lo + hi);
+      }
+      return Math.min(1, Math.max(0, skBez(y0, c1y, c2y, y1, t)));
+    }
+    let t = (x - x0) / w;
     if (c) t = Math.pow(t, Math.pow(2, 3 * c));
     return y0 + (y1 - y0) * t;
   }
   return pts[pts.length - 1][1];
+}
+
+// Convert a curve that uses the older curvature model to handles, fitting
+// each segment (handles at a third of the way in; least-squares heights).
+function skToHandles(pts) {
+  if (pts.every(skHasHandles)) return;
+  const out = pts.map((p) => [p[0], p[1], 0, p[3] ? 1 : 0, 0, 0, 0, 0, skHasHandles(p) ? (p[8] || 0) : 1]);
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const w = b[0] - a[0];
+    if (a[3] || w < 1e-6) continue;
+    if (skHasHandles(a) || skHasHandles(b)) {  // already a Bezier segment
+      if (skHasHandles(a)) { out[i][4] = a[4]; out[i][5] = a[5]; }
+      if (skHasHandles(b)) { out[i + 1][6] = b[6]; out[i + 1][7] = b[7]; }
+      continue;
+    }
+    const y0 = a[1], y1 = b[1], e = Math.pow(2, 3 * (a[2] || 0));
+    let s11 = 0, s12 = 0, s22 = 0, r1 = 0, r2 = 0;
+    for (let k = 0; k <= 32; k++) {
+      const t = k / 32, u = 1 - t;
+      const b1 = 3 * u * u * t, b2 = 3 * u * t * t;
+      const r = y0 + (y1 - y0) * Math.pow(t, e) - y0 * u * u * u - y1 * t * t * t;
+      s11 += b1 * b1; s12 += b1 * b2; s22 += b2 * b2; r1 += b1 * r; r2 += b2 * r;
+    }
+    const det = s11 * s22 - s12 * s12;
+    const Y1 = (r1 * s22 - r2 * s12) / det, Y2 = (s11 * r2 - s12 * r1) / det;
+    out[i][4] = w / 3; out[i][5] = Y1 - y0;
+    out[i + 1][6] = -w / 3; out[i + 1][7] = Y2 - y1;
+  }
+  pts.length = 0;
+  pts.push(...out);
+}
+
+// Smooth handles for point i: tangent through its neighbours, a third of the
+// way to each.
+function skSmoothHandles(pts, i) {
+  const p = pts[i], prev = pts[i - 1], next = pts[i + 1];
+  const slope = prev && next ? (next[1] - prev[1]) / Math.max(1e-6, next[0] - prev[0])
+    : next ? (next[1] - p[1]) / Math.max(1e-6, next[0] - p[0])
+    : prev ? (p[1] - prev[1]) / Math.max(1e-6, p[0] - prev[0]) : 0;
+  const wo = next ? (next[0] - p[0]) / 3 : 0, wi = prev ? (p[0] - prev[0]) / 3 : 0;
+  p[4] = wo; p[5] = slope * wo; p[6] = -wi; p[7] = -slope * wi; p[8] = 0;
 }
 
 class ShapeEditor {
@@ -158,7 +226,7 @@ class ShapeEditor {
     this.svg.append(this.g.grid, this.g.fill, this.g.line, this.g.rel, this.g.handles, this.g.points, this.g.head);
     this.g.head.setAttribute("visibility", "hidden");
     this.area = h("div", { class: "shape-area", tabindex: 0, role: "application",
-      "aria-label": `Shape ${n} curve editor. Arrow keys move the selected point, comma and period select points, Delete removes, H toggles a step.` }, this.svg);
+      "aria-label": `Shape ${n} curve editor. Comma and period select points; arrow keys move the selected point; S smooths it; H makes it a step; Delete removes it.` }, this.svg);
     const toolSeg = h("div", { class: "seg seg-small", role: "radiogroup", "aria-label": "Editing tool" });
     this.toolBtns = ["points", "steps"].map((t) => h("button", { type: "button", class: "seg-btn", role: "radio", text: t === "points" ? "Points" : "Steps", onclick: () => this.setTool(t) }));
     toolSeg.append(...this.toolBtns);
@@ -183,8 +251,9 @@ class ShapeEditor {
     this.tool = t;
     this.toolBtns.forEach((b, i) => b.setAttribute("aria-checked", String(["points", "steps"][i] === t)));
     this.hint.textContent = t === "points"
-      ? "Drag points. Double-click to add or remove one, drag a diamond to bend, right-click a point to make a step."
+      ? "Click a point to show its handles, then drag them to curve the line. Double-click to add or remove a point; right-click a point for more."
       : "Click or drag to set each step's level.";
+    this.draw();
   }
 
   // Data ---------------------------------------------------------------------------
@@ -194,11 +263,24 @@ class ShapeEditor {
     const s = this.all[this.n - 1] || (this.all[this.n - 1] = { curves: [] });
     while (s.curves.length <= this.curveIndex()) s.curves.push({ points: [[0, 1, -0.5, 0], [1, 0, 0, 0]] });
     this.curve = s.curves[this.curveIndex()];
+    this.preview = null;
     if (this.sel >= this.curve.points.length) this.sel = -1;
+  }
+  // Older curves switch to handles the first time they're edited; until then
+  // they display (and play) exactly as saved.
+  editable() { skToHandles(this.curve.points); this.preview = null; return this.curve.points; }
+  // Points with handles for display: an older curve shows the handles it will
+  // get, without changing it until it's edited.
+  shown() {
+    const pts = this.curve.points;
+    if (pts.every(skHasHandles)) return pts;
+    if (!this.preview) { this.preview = pts.map((p) => p.slice()); skToHandles(this.preview); }
+    return this.preview;
   }
   commit() {
     // Keep points ordered and the ends pinned to 0 and 1.
     const p = this.curve.points;
+    this.preview = null;
     p.sort((a, b) => a[0] - b[0]);
     p[0][0] = 0;
     p[p.length - 1][0] = 1;
@@ -213,8 +295,7 @@ class ShapeEditor {
   snapStep() {
     const beats = this.lengthBeats();
     if (!beats) return 1 / 16;
-    const unit = 0.25;  // sixteenth notes
-    return Math.max(1 / 64, unit / beats);
+    return Math.max(1 / 64, 0.25 / beats);  // sixteenth notes
   }
 
   // Geometry -------------------------------------------------------------------------
@@ -229,39 +310,61 @@ class ShapeEditor {
   }
   px(x) { return this.pad + x * (this.W - 2 * this.pad); }
   py(y) { return this.pad + (1 - y) * (this.H - 2 * this.pad); }
-  fromEvent(e) {
+  sx() { return this.W - 2 * this.pad; }   // pixels per unit x
+  sy() { return this.H - 2 * this.pad; }   // pixels per unit y
+  local(e) {
     const r = this.svg.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width * this.W - this.pad) / (this.W - 2 * this.pad);
-    const y = 1 - ((e.clientY - r.top) / r.height * this.H - this.pad) / (this.H - 2 * this.pad);
+    return { mx: (e.clientX - r.left) * (this.W / r.width), my: (e.clientY - r.top) * (this.H / r.height) };
+  }
+  fromEvent(e) {
+    const { mx, my } = this.local(e);
+    const x = (mx - this.pad) / this.sx(), y = 1 - (my - this.pad) / this.sy();
     return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
   }
+  snapX(x, e) {
+    if (!this.snap || (e && e.shiftKey)) return x;
+    const s = this.snapStep();
+    return Math.round(x / s) * s;
+  }
+
+  // Where the selected point's handles are drawn (in pixels). Handles of zero
+  // length are shown a short way out along the curve's direction, so there's
+  // always something to grab.
+  handlePositions(i) {
+    const pts = this.shown(), p = pts[i];
+    const out = [];
+    const ghost = 26;
+    const add = (kind, dx, dy, neighbour) => {
+      if (!neighbour) return;
+      let hx = this.px(p[0] + dx), hy = this.py(p[1] + dy);
+      if (Math.hypot(hx - this.px(p[0]), hy - this.py(p[1])) < 3) {
+        const dirx = this.px(neighbour[0]) - this.px(p[0]), diry = this.py(neighbour[1]) - this.py(p[1]);
+        const len = Math.hypot(dirx, diry) || 1, reach = Math.min(ghost, len / 3);
+        hx = this.px(p[0]) + (dirx / len) * reach; hy = this.py(p[1]) + (diry / len) * reach;
+      }
+      out.push({ kind, x: hx, y: hy });
+    };
+    const has = skHasHandles(p);
+    if (!p[3]) add("out", has ? Math.min(Math.max(p[4], 0), pts[i + 1] ? (pts[i + 1][0] - p[0]) / 2 : 0) : 0, has ? p[5] : 0, pts[i + 1]);
+    add("in", has ? Math.max(Math.min(p[6], 0), pts[i - 1] ? -(p[0] - pts[i - 1][0]) / 2 : 0) : 0, has ? p[7] : 0, pts[i - 1]);
+    return out;
+  }
+
   // What's under the pointer, by position rather than by DOM element (the
   // editor redraws between clicks, so element targets go stale).
   hit(e) {
-    const r = this.svg.getBoundingClientRect();
-    const mx = (e.clientX - r.left) * (this.W / r.width), my = (e.clientY - r.top) * (this.H / r.height);
+    const { mx, my } = this.local(e);
     const pts = this.curve.points;
     if (Math.round(this.m.get(this.pre + "loop")) === 4) {
       const rx = this.px(this.curve.release >= 0 ? this.curve.release : 1);
       if (Math.abs(mx - rx) <= 8 && my <= 16) return { kind: "rel" };
     }
+    if (this.tool === "points" && this.sel >= 0 && this.sel < pts.length) {
+      for (const hp of this.handlePositions(this.sel)) if (Math.hypot(mx - hp.x, my - hp.y) < 9) return { kind: "handle", i: this.sel, which: hp.kind };
+    }
     let best = null, bd = 10;
     pts.forEach((p, i) => { const d = Math.hypot(mx - this.px(p[0]), my - this.py(p[1])); if (d < bd) { bd = d; best = { kind: "pt", i }; } });
-    if (best) return best;
-    if (this.tool === "points") {
-      for (let i = 0; i + 1 < pts.length; i++) {
-        if (pts[i][3] || pts[i + 1][0] - pts[i][0] <= 0.02) continue;
-        const hx = (pts[i][0] + pts[i + 1][0]) / 2;
-        if (Math.hypot(mx - this.px(hx), my - this.py(skEvalCurve(pts, hx))) < 9) return { kind: "seg", i };
-      }
-    }
-    return { kind: "none" };
-  }
-
-  snapX(x, e) {
-    if (!this.snap || (e && e.shiftKey)) return x;
-    const s = this.snapStep();
-    return Math.round(x / s) * s;
+    return best || { kind: "none" };
   }
 
   // Drawing ----------------------------------------------------------------------------
@@ -274,8 +377,7 @@ class ShapeEditor {
     const lines = [];
     if (beats) {
       const beatUnit = 4 / t.den, barLen = t.num * beatUnit;
-      const sub = 0.25;
-      for (let b = 0; b <= beats + 1e-9; b += sub) {
+      for (let b = 0; b <= beats + 1e-9; b += 0.25) {
         const x = b / beats;
         const kind = Math.abs(b / barLen - Math.round(b / barLen)) < 1e-9 ? "bar" : Math.abs(b / beatUnit - Math.round(b / beatUnit)) < 1e-9 ? "beat" : "sub";
         lines.push([x, kind]);
@@ -292,7 +394,7 @@ class ShapeEditor {
 
     const pts = this.curve.points;
     let d = "";
-    const steps = Math.max(80, Math.round(this.W / 3));
+    const steps = Math.max(120, Math.round(this.W / 2));
     for (let i = 0; i <= steps; i++) {
       const x = i / steps;
       d += (i ? "L" : "M") + this.px(x).toFixed(1) + " " + this.py(skEvalCurve(pts, x)).toFixed(1) + " ";
@@ -303,13 +405,20 @@ class ShapeEditor {
     this.g.points.textContent = "";
     this.g.handles.textContent = "";
     if (this.tool === "points") {
-      pts.forEach((p, i) => {
-        if (i + 1 < pts.length && !p[3] && pts[i + 1][0] - p[0] > 0.02) {
-          const mx = (p[0] + pts[i + 1][0]) / 2;
-          const hy = this.py(skEvalCurve(pts, mx));
-          this.g.handles.append(svg("rect", { class: "shape-handle", "data-seg": i, x: this.px(mx) - 4, y: hy - 4, width: 8, height: 8, transform: `rotate(45 ${this.px(mx)} ${hy})` }));
+      if (this.sel >= 0 && this.sel < pts.length) {
+        const p = this.shown()[this.sel];
+        for (const hp of this.handlePositions(this.sel)) {
+          this.g.handles.append(svg("line", { class: "handle-arm", x1: this.px(p[0]), y1: this.py(p[1]), x2: hp.x, y2: hp.y }),
+            svg("circle", { class: "handle-knob", cx: hp.x, cy: hp.y, r: 4.5 }));
         }
-        this.g.points.append(svg("circle", { class: "shape-point" + (p[3] ? " is-step" : "") + (i === this.sel ? " is-sel" : ""), "data-pt": i, cx: this.px(p[0]), cy: this.py(p[1]), r: i === this.sel ? 6 : 5 }));
+      }
+      pts.forEach((p, i) => {
+        const smooth = skHasHandles(p) && !p[8];
+        this.g.points.append(svg(smooth || !skHasHandles(p) ? "circle" : "rect", Object.assign(
+          { class: "shape-point" + (p[3] ? " is-step" : "") + (i === this.sel ? " is-sel" : "") },
+          smooth || !skHasHandles(p)
+            ? { cx: this.px(p[0]), cy: this.py(p[1]), r: i === this.sel ? 6 : 5 }
+            : { x: this.px(p[0]) - 5, y: this.py(p[1]) - 5, width: 10, height: 10, rx: 1.5 })));
       });
     }
 
@@ -317,7 +426,7 @@ class ShapeEditor {
     if (Math.round(this.m.get(this.pre + "loop")) === 4) {
       const rx = this.px(this.curve.release >= 0 ? this.curve.release : 1);
       this.g.rel.append(svg("line", { x1: rx, x2: rx, y1: this.pad, y2: this.H - this.pad }),
-        svg("rect", { class: "release-grip", "data-rel": 1, x: rx - 6, y: 0, width: 12, height: 12, rx: 2 }));
+        svg("rect", { class: "release-grip", x: rx - 6, y: 0, width: 12, height: 12, rx: 2 }));
     }
   }
 
@@ -330,6 +439,30 @@ class ShapeEditor {
   }
 
   // Editing ---------------------------------------------------------------------------
+  moveHandle(i, which, e) {
+    const pts = this.editable(), p = pts[i];
+    const { mx, my } = this.local(e);
+    const sx = this.sx(), sy = this.sy();
+    let dx = (mx - this.px(p[0])) / sx, dy = -(my - this.py(p[1])) / sy;
+    const wOut = pts[i + 1] ? (pts[i + 1][0] - p[0]) / 2 : 0, wIn = pts[i - 1] ? (p[0] - pts[i - 1][0]) / 2 : 0;
+    if (e.altKey) p[8] = 1;  // Alt/Option breaks the pair
+    if (which === "out") { p[4] = Math.min(Math.max(dx, 0), wOut); p[5] = dy; }
+    else { p[6] = Math.max(Math.min(dx, 0), -wIn); p[7] = dy; }
+    if (!p[8]) {
+      // Smooth point: the other handle points the opposite way, keeping its length.
+      const [ax, ay] = which === "out" ? [p[4], p[5]] : [p[6], p[7]];
+      const [ox, oy] = which === "out" ? [p[6], p[7]] : [p[4], p[5]];
+      const aLen = Math.hypot(ax * sx, ay * sy);
+      let oLen = Math.hypot(ox * sx, oy * sy);
+      if (oLen < 3) oLen = aLen;
+      if (aLen > 0.5) {
+        let nx = (-ax * sx / aLen) * oLen / sx, ny = (-ay * sy / aLen) * oLen / sy;
+        if (which === "out") { nx = Math.max(Math.min(nx, 0), -wIn); p[6] = nx; p[7] = ny; }
+        else { nx = Math.min(Math.max(nx, 0), wOut); p[4] = nx; p[5] = ny; }
+      }
+    }
+  }
+
   bindPointer() {
     let drag = null;
     let lastDown = { t: 0, x: 0, y: 0 };
@@ -340,32 +473,26 @@ class ShapeEditor {
       const isDouble = now - lastDown.t < 400 && Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) < 8;
       lastDown = isDouble ? { t: 0, x: 0, y: 0 } : { t: now, x: e.clientX, y: e.clientY };
       if (isDouble && this.tool === "points") { e.preventDefault(); this.onDouble(e); return; }
-      const pts = this.curve.points;
       const hit = this.hit(e);
       this.svg.setPointerCapture(e.pointerId);
       if (hit.kind === "rel") { drag = { kind: "rel" }; return; }
       if (this.tool === "steps") { drag = { kind: "steps" }; this.paintStep(e); return; }
+      if (hit.kind === "handle") { drag = hit; return; }
       if (hit.kind === "pt") { this.sel = hit.i; drag = { kind: "pt", i: hit.i }; this.draw(); return; }
-      if (hit.kind === "seg") { drag = { kind: "bend", i: hit.i, y: e.clientY, c: pts[hit.i][2] }; return; }
       this.sel = -1;
       this.draw();
     });
     this.svg.addEventListener("pointermove", (e) => {
       if (!drag) return;
-      const pts = this.curve.points;
+      if (drag.kind === "steps") { this.paintStep(e); return; }
       const { x, y } = this.fromEvent(e);
       if (drag.kind === "pt") {
-        const i = drag.i;
+        const pts = this.editable(), i = drag.i;
         const lo = i === 0 ? 0 : pts[i - 1][0], hi = i === pts.length - 1 ? 1 : pts[i + 1][0];
         if (i !== 0 && i !== pts.length - 1) pts[i][0] = Math.min(hi, Math.max(lo, this.snapX(x, e)));
         pts[i][1] = y;
-      } else if (drag.kind === "bend") {
-        const up = pts[drag.i + 1][1] >= pts[drag.i][1];
-        const d = (drag.y - e.clientY) / 80;
-        pts[drag.i][2] = Math.max(-1, Math.min(1, drag.c + (up ? -d : d)));
-      } else if (drag.kind === "steps") {
-        this.paintStep(e);
-        return;
+      } else if (drag.kind === "handle") {
+        this.moveHandle(drag.i, drag.which, e);
       } else if (drag.kind === "rel") {
         this.curve.release = Math.min(1, Math.max(0, this.snapX(x, e)));
       }
@@ -377,34 +504,50 @@ class ShapeEditor {
     // Double-click (or double-tap), detected here rather than with the dblclick
     // event, which browsers drop when the editor redraws between the clicks.
     this.onDouble = (e) => {
-      if (this.tool !== "points") return;
-      const pts = this.curve.points;
       const hit = this.hit(e);
-      if (hit.kind === "pt") {
-        const i = hit.i;
-        if (i > 0 && i < pts.length - 1) { pts.splice(i, 1); this.sel = -1; this.commit(); }
-        else this.app.toast("The first and last points can't be removed, but you can drag them up and down.");
-        return;
-      }
+      if (hit.kind === "pt") { this.removePoint(hit.i); return; }
       if (hit.kind !== "none") return;
+      const pts = this.editable();
       if (pts.length >= 64) { this.app.toast("A curve can have up to 64 points."); return; }
       const { x, y } = this.fromEvent(e);
       const sx = this.snapX(x, e);
       if (sx <= 0 || sx >= 1) return;
-      pts.push([sx, y, 0, 0]);
+      const p = [sx, y, 0, 0, 0, 0, 0, 0, 0];
+      pts.push(p);
       pts.sort((a, b) => a[0] - b[0]);
-      this.sel = pts.findIndex((p) => p[0] === sx && p[1] === y);
+      this.sel = pts.indexOf(p);
+      skSmoothHandles(pts, this.sel);
       this.commit();
     };
     this.svg.addEventListener("contextmenu", (e) => {
       const hit = this.hit(e);
-      if (hit.kind === "pt") {
-        e.preventDefault();
-        const p = this.curve.points[hit.i];
-        p[3] = p[3] ? 0 : 1;
-        this.commit();
-      }
+      if (hit.kind !== "pt") return;
+      e.preventDefault();
+      this.sel = hit.i;
+      this.draw();
+      this.pointMenu(hit.i, e.clientX, e.clientY);
     });
+  }
+
+  removePoint(i) {
+    const pts = this.editable();
+    if (i <= 0 || i >= pts.length - 1) { this.app.toast("The first and last points can't be removed, but you can drag them up and down."); return; }
+    pts.splice(i, 1);
+    this.sel = -1;
+    this.commit();
+  }
+
+  pointMenu(i, x, y) {
+    const pts = this.editable(), p = pts[i];
+    const mid = i > 0 && i < pts.length - 1;
+    this.app.menu(x, y, [
+      { label: "Smooth (handles move together)", run: () => { skSmoothHandles(pts, i); this.commit(); } },
+      { label: "Corner (handles move separately)", run: () => { p[8] = 1; this.commit(); } },
+      { label: "Straight lines", run: () => { p[4] = p[5] = p[6] = p[7] = 0; p[8] = 1; this.commit(); } },
+      { label: p[3] ? "Not a step" : "Step (hold until the next point)", run: () => { p[3] = p[3] ? 0 : 1; this.commit(); } },
+      null,
+      { label: "Delete point", run: () => this.removePoint(i), disabled: !mid },
+    ]);
   }
 
   // Steps tool: cells on the snap grid, each a flat step.
@@ -424,21 +567,22 @@ class ShapeEditor {
 
   bindKeys() {
     this.area.addEventListener("keydown", (e) => {
-      const pts = this.curve.points;
+      const n = this.curve.points.length;
       if (e.key === "," || e.key === ".") {
-        this.sel = this.sel < 0 ? 0 : (this.sel + (e.key === "." ? 1 : -1) + pts.length) % pts.length;
+        this.sel = this.sel < 0 ? 0 : (this.sel + (e.key === "." ? 1 : -1) + n) % n;
         e.preventDefault(); e.stopPropagation(); this.draw(); return;
       }
       if (this.sel < 0) return;
-      const p = pts[this.sel], fine = e.shiftKey;
+      const pts = this.editable(), p = pts[this.sel], fine = e.shiftKey;
       const dx = fine ? 0.005 : this.snapStep(), dy = fine ? 0.01 : 0.05;
       let used = true;
       if (e.key === "ArrowUp") p[1] = Math.min(1, p[1] + dy);
       else if (e.key === "ArrowDown") p[1] = Math.max(0, p[1] - dy);
       else if (e.key === "ArrowLeft" && this.sel > 0 && this.sel < pts.length - 1) p[0] = Math.max(pts[this.sel - 1][0], p[0] - dx);
       else if (e.key === "ArrowRight" && this.sel > 0 && this.sel < pts.length - 1) p[0] = Math.min(pts[this.sel + 1][0], p[0] + dx);
-      else if ((e.key === "Delete" || e.key === "Backspace") && this.sel > 0 && this.sel < pts.length - 1) { pts.splice(this.sel, 1); this.sel = -1; }
+      else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); e.stopPropagation(); this.removePoint(this.sel); return; }
       else if (e.key === "h" || e.key === "H") p[3] = p[3] ? 0 : 1;
+      else if (e.key === "s" || e.key === "S") skSmoothHandles(pts, this.sel);
       else used = false;
       if (used) { e.preventDefault(); e.stopPropagation(); this.commit(); }
     });

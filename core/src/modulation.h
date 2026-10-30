@@ -35,8 +35,14 @@ struct SourceInfo {
 
 struct ShapePoint {
   float x = 0, y = 0;
-  float c = 0;       // curvature of the segment that starts here, -1…1
+  float c = 0;       // older curves: curvature of the segment that starts here, -1…1
   bool hold = false; // flat (step) segment
+  // Handles (offsets from the point). A segment with a handle at either end
+  // is a cubic Bezier; otherwise it uses the curvature `c`.
+  bool handles = false;
+  float ox = 0, oy = 0;  // out handle: shapes the segment after the point
+  float ix = 0, iy = 0;  // in handle: shapes the segment before the point
+  bool corner = false;   // handles move independently (editor only)
 };
 
 struct ShapeCurve {

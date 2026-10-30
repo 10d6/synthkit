@@ -470,6 +470,37 @@ TEST(shape_release_segment) {
   CHECK_NEAR(modAt(2.9), 0.0, 1e-3);
 }
 
+TEST(shape_curves_with_handles) {
+  Harness h(256, kMod);
+  auto& ps = h.eng->params();
+  ps.set(h.param("shape1.length"), 7);  // one beat
+  // S-curve: flat handles a third of the way in from each end. x(t) = t here,
+  // so y(0.25) = 3(0.75)(0.25^2) + 0.25^3 = 0.15625.
+  loadMod(h, R"({"mod":[{"src":"shape1","dst":"mod","amt":1}],
+                 "shapes":[{"curves":[{"points":[[0,0,0,0, 0.3333333,0,0,0,0],[1,1,0,0, 0,0,-0.3333333,0,0]]}]}]})");
+  h.run(48000, {{0, on(60)}});
+  CHECK_NEAR(modAt(0.25), 0.15625, 0.01);
+  CHECK_NEAR(modAt(0.5), 0.5, 0.01);
+  CHECK_NEAR(modAt(0.75), 0.84375, 0.01);
+  // Handles are kept through save and load.
+  Json saved = h.eng->savePatch();
+  CHECK(saved["shapes"][0]["curves"][0]["points"][0].size() == 9);
+  Harness h2(256, kMod);
+  CHECK(h2.eng->loadPatch(saved).ok);
+  CHECK(h2.eng->savePatch() == saved);
+  // A handle reaching past half the segment is limited, so the curve can't
+  // bend back in time: still increasing everywhere.
+  Harness h3(256, kMod);
+  h3.eng->params().set(h3.param("shape1.length"), 7);
+  loadMod(h3, R"({"mod":[{"src":"shape1","dst":"mod","amt":1}],
+                  "shapes":[{"curves":[{"points":[[0,0,0,0, 0.9,0.5,0,0,1],[1,1,0,0, 0,0,-0.9,-0.5,1]]}]}]})");
+  h3.run(24000, {{0, on(60)}});
+  float last = -1;
+  bool monotonic = true;
+  for (auto& m : gLog.mods) { if (m.value < last - 1e-4f) monotonic = false; last = m.value; }
+  CHECK(monotonic);
+}
+
 TEST(bar_shape_follows_the_bar) {
   Harness h(256, kMod);
   h.ht.timeSigNum = 3;

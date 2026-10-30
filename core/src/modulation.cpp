@@ -56,6 +56,26 @@ float ShapeCurve::eval(float x) const {
   if (a.hold) return a.y;
   float w = b.x - a.x;
   if (w <= 1e-6f) return b.y;
+  if (a.handles || b.handles) {
+    // Cubic Bezier. Handle reach is limited to half the segment each way, so
+    // x(t) always increases and the curve can't bend back in time.
+    float c1x = a.x + std::clamp(a.handles ? a.ox : 0.f, 0.f, 0.5f * w);
+    float c2x = b.x + std::clamp(b.handles ? b.ix : 0.f, -0.5f * w, 0.f);
+    float c1y = a.y + (a.handles ? a.oy : 0.f);
+    float c2y = b.y + (b.handles ? b.iy : 0.f);
+    auto bez = [](float p0, float p1, float p2, float p3, float t) {
+      float u = 1 - t;
+      return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
+    };
+    float lo = 0, hi = 1, t = (x - a.x) / w;
+    for (int k = 0; k < 24; ++k) {  // x(t) is monotonic: bisection always converges
+      float xt = bez(a.x, c1x, c2x, b.x, t);
+      if (std::fabs(xt - x) < 1e-6f) break;
+      if (xt < x) lo = t; else hi = t;
+      t = 0.5f * (lo + hi);
+    }
+    return std::clamp(bez(a.y, c1y, c2y, b.y, t), 0.f, 1.f);
+  }
   float t = (x - a.x) / w;
   if (a.c != 0) t = std::pow(t, std::exp2(3.f * a.c));
   return a.y + (b.y - a.y) * t;
@@ -550,6 +570,7 @@ Json Modulation::saveShapes() const {
       for (const auto& p : c.pts) {
         Json pj = Json::array();
         pj.push(p.x); pj.push(p.y); pj.push(p.c); pj.push(p.hold ? 1 : 0);
+        if (p.handles) { pj.push(p.ox); pj.push(p.oy); pj.push(p.ix); pj.push(p.iy); pj.push(p.corner ? 1 : 0); }
         pts.push(pj);
       }
       cj["points"] = pts;
@@ -577,6 +598,14 @@ void Modulation::loadShapes(const Json& j, std::vector<std::string>* warnings) {
         p.y = std::clamp(static_cast<float>(pj[1].number()), 0.f, 1.f);
         p.c = std::clamp(static_cast<float>(pj[2].number()), -1.f, 1.f);
         p.hold = pj[3].number() >= 0.5;
+        if (pj.size() >= 8) {
+          p.handles = true;
+          p.ox = std::clamp(static_cast<float>(pj[4].number()), 0.f, 1.f);
+          p.oy = std::clamp(static_cast<float>(pj[5].number()), -2.f, 2.f);
+          p.ix = std::clamp(static_cast<float>(pj[6].number()), -1.f, 0.f);
+          p.iy = std::clamp(static_cast<float>(pj[7].number()), -2.f, 2.f);
+          p.corner = pj[8].number() >= 0.5;
+        }
         c.pts.push_back(p);
       }
       std::stable_sort(c.pts.begin(), c.pts.end(), [](const ShapePoint& a, const ShapePoint& b2) { return a.x < b2.x; });

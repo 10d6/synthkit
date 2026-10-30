@@ -91,6 +91,47 @@ async function main() {
         await page.mouse.dblclick(mid.x, mid.y);
         const pts3 = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points.length);
         if (pts3 !== pts) fail(`double-clicking a point left ${pts3} points (expected ${pts})`); else pass("double-clicking a point removes it");
+        // Handles: select the middle point of a fresh 3-point curve, drag its
+        // out handle; the in handle mirrors it. Alt-drag breaks the pair.
+        await page.evaluate(() => {
+          const m = window.synthkit.model, sh = m.shapes();
+          sh[0].curves[0] = { points: [[0, 0, 0, 0, 0, 0, 0, 0, 0], [0.5, 0.5, 0, 0, 0, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0, 0, 0, 0]] };
+          m.setShapes(sh);
+        });
+        const geo = await page.evaluate(() => {
+          const ed = document.querySelector(".shape-svg").getBoundingClientRect();
+          return { x: ed.x, y: ed.y, w: ed.width, h: ed.height };
+        });
+        const ptX = geo.x + 10 + 0.5 * (geo.w - 20), ptY = geo.y + 10 + 0.5 * (geo.h - 20);
+        await page.mouse.click(ptX, ptY);
+        await page.waitForTimeout(450);  // not a double-click
+        const knobs = await page.evaluate(() => [...document.querySelectorAll(".handle-knob")].map((k) => { const r = k.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }));
+        if (knobs.length !== 2) fail(`selecting a point showed ${knobs.length} handles`);
+        else {
+          const outK = knobs.reduce((a, k) => (k.x > a.x ? k : a));
+          await page.mouse.move(outK.x, outK.y);
+          await page.mouse.down();
+          await page.mouse.move(outK.x + 30, outK.y - 40, { steps: 4 });
+          await page.mouse.up();
+          const p = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points[1]);
+          const mirrored = p[5] > 0 && p[7] < 0 && Math.abs(p[5] / p[4] - p[7] / p[6]) < 0.05;
+          if (!(p[4] > 0) || !mirrored) fail(`handle drag gave ${JSON.stringify(p)}`); else pass("dragging a handle curves the line; its partner mirrors it");
+          await page.waitForTimeout(450);
+          const k2 = await page.evaluate(() => [...document.querySelectorAll(".handle-knob")].map((k) => { const r = k.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }));
+          const inK = k2.reduce((a, k) => (k.x < a.x ? k : a));
+          await page.keyboard.down("Alt");
+          await page.mouse.move(inK.x, inK.y);
+          await page.mouse.down();
+          await page.mouse.move(inK.x, inK.y + 30, { steps: 3 });
+          await page.mouse.up();
+          await page.keyboard.up("Alt");
+          const q = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points[1]);
+          if (q[8] !== 1 || Math.abs(q[5] - p[5]) > 1e-6) fail(`Alt-drag gave ${JSON.stringify(q)}`); else pass("Alt-drag moves one handle on its own");
+        }
+        // The page's curve maths matches the engine's (S-curve, see core tests).
+        const sv = await page.evaluate(() => window.synthkit.evalCurve([[0, 0, 0, 0, 1 / 3, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0, -1 / 3, 0, 0]], 0.25));
+        if (Math.abs(sv - 0.15625) > 0.002) fail(`page curve maths gave ${sv} (engine: 0.15625)`); else pass("page and engine curve maths agree");
+
         // With nothing playing, live displays rest.
         await page.evaluate(() => window.synthkit.app.audio.send({ t: "panic" }));
         await page.waitForTimeout(400);

@@ -321,7 +321,8 @@ button, input, select { font: inherit; color: inherit; }
 .shape-point { fill: var(--panel); stroke: var(--accent); stroke-width: 2; cursor: grab; }
 .shape-point.is-step { fill: var(--accent); }
 .shape-point.is-sel { stroke: var(--ink); stroke-width: 2.5; }
-.shape-handle { fill: var(--panel); stroke: var(--ink-soft); stroke-width: 1.5; cursor: ns-resize; }
+.handle-arm { stroke: var(--ink-soft); stroke-width: 1.2; }
+.handle-knob { fill: var(--ink); stroke: var(--panel); stroke-width: 1.5; cursor: move; }
 .shape-release line { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 4 3; }
 .release-grip { fill: var(--ink); cursor: ew-resize; }
 .shape-head { stroke: var(--ink); stroke-width: 1.5; opacity: 0.7; }

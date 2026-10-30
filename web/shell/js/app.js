@@ -341,6 +341,7 @@ class App {
     window.synthkit = {
       app,
       model,
+      evalCurve: skEvalCurve,
       renderOffline: (opts = {}) => Audio.renderOffline(bytes, {
         patch: JSON.stringify(model.savePatch()), custom: model.customSnapshot(), ...opts }),
     };

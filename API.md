@@ -554,18 +554,34 @@ automatable, and rate, offset and depth are modulatable too:
 
 - The curves are stored in the patch under `"shapes"`, one entry per shape:
   ```json
-  "shapes": [ { "curves": [ { "points": [[0, 1, -0.5, 0], [0.5, 0.2, 0, 1], [1, 0, 0, 0]], "release": 0.5 } ] } ]
+  "shapes": [ { "curves": [ { "points": [[0, 0, 0, 0,  0.2, 0, 0, 0, 0], [0.5, 1, 0, 1], [1, 0, 0, 0,  0, 0, -0.1, 0.3, 1]], "release": 0.5 } ] } ]
   ```
-  Each point is `[x 0…1, y 0…1, curvature −1…1, step 0|1]`. Curvature bends
-  the segment that starts at the point. Step holds the point's level until the
-  next point. Curves always span 0…1 (missing ends are added), with up to 64
-  points.
+  Each point is `[x 0…1, y 0…1, curvature, step, outX, outY, inX, inY, corner]`:
+  - **Handles** (`outX, outY` / `inX, inY`) are offsets from the point. The out
+    handle shapes the segment after the point, and the in handle the one
+    before it. A segment with a handle at either end is a cubic Bezier. Each
+    handle reaches at most half the segment's width, so a curve can never bend
+    back in time. `corner` 1 means the two handles move independently in the
+    editor.
+  - **Step** holds the point's level until the next point.
+  - Points with only the first four entries use the older **curvature** model
+    (−1…1 bends the segment that starts at the point). They still load and play
+    unchanged. The editor converts a curve to handles the first time it's
+    edited.
+
+  Curves always span 0…1 (missing ends are added) and hold up to 64 points.
 - The editor (`{ "kit": "shape1" }` in the layout) draws a grid from the length
-  and time signature and snaps to sixteenths. Drag points; double-click to add
-  or remove one; drag a diamond to bend a segment; right-click a point to make
-  it a step. The **Steps** tool paints step levels, and **Curves…** has ready-made
-  shapes, random steps and the release point. A playhead shows the most recent
-  voice's position.
+  and time signature and snaps to sixteenths (Shift places freely):
+  - **Points:** click a point to show its handles and drag them to curve the
+    lines on either side. Smooth points' handles move together; Alt/Option-drag
+    moves one alone. Double-click (or double-tap) adds or removes a point.
+    Right-click a point for smooth, corner, straight lines, step or delete.
+    Keys: `,` and `.` select, arrows move, `S` smooths, `H` makes a step,
+    Delete removes.
+  - **Steps:** paints step levels.
+  - **Curves…:** ready-made shapes, random steps and the release point.
+
+  A playhead shows the most recent voice's position while notes are sounding.
 - `processEvents` can start a shape itself: `ctx.trigger(n)` restarts shape `n`
   (1-based) now, for its global instance and every held voice. This is the way
   to decide in code which notes fire it.
