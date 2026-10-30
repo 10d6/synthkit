@@ -22,6 +22,9 @@ std::string gStr;
 std::vector<sk::MidiEvent> gEvents;
 std::vector<float> gL, gR;
 float gStats[8] = {};
+// Mod meters, sized once in sk_init so reading them on the audio thread doesn't allocate.
+std::vector<float> gMeters;
+std::size_t gMeterSources = 0, gMeterParams = 0;
 
 const char* ret(std::string s) {
   gStr = std::move(s);
@@ -58,6 +61,9 @@ SK_EXPORT(sk_init) int sk_init() {
   sk::setErrorHandler(onError);
   gEngine = sk::makeEngine();
   gEvents.reserve(1024);
+  gMeterSources = gEngine->modSources().size();
+  gMeterParams = static_cast<std::size_t>(gEngine->params().size());
+  gMeters.assign(gMeterSources + gMeterParams + static_cast<std::size_t>(gEngine->shapeCount()) * 2, 0.f);
   return 1;
 }
 
@@ -97,6 +103,21 @@ SK_EXPORT(sk_info) const char* sk_info() {
   }
   j["presets"] = presets;
   j["custom"] = sk::Json(gEngine->customIds());
+  sk::Json mod = sk::Json::object();
+  sk::Json srcs = sk::Json::array();
+  for (const auto& d : gEngine->modSources()) {
+    sk::Json sj = sk::Json::object();
+    sj["id"] = d.id;
+    sj["name"] = d.name;
+    sj["perVoice"] = d.perVoice;
+    sj["bipolar"] = d.bipolar;
+    srcs.push(sj);
+  }
+  mod["sources"] = srcs;
+  mod["slots"] = gEngine->modSlots();
+  mod["lfos"] = gEngine->lfoCount();
+  mod["shapes"] = gEngine->shapeCount();
+  j["mod"] = mod;
   return ret(j.dump(0));
 }
 
@@ -181,6 +202,26 @@ SK_EXPORT(sk_stats) float* sk_stats() {
   gStats[4] = static_cast<float>(s.steals);
   return gStats;
 }
+
+SK_EXPORT(sk_get_mod) const char* sk_get_mod() { return ret(gEngine->modMatrix().dump(0)); }
+SK_EXPORT(sk_set_mod) const char* sk_set_mod(const char* json) {
+  sk::Json v;
+  if (!sk::Json::tryParse(json, v)) return ret("[\"not valid JSON\"]");
+  return ret(sk::Json(gEngine->setModMatrix(v)).dump(0));
+}
+SK_EXPORT(sk_get_shapes) const char* sk_get_shapes() { return ret(gEngine->shapes().dump(0)); }
+SK_EXPORT(sk_set_shapes) const char* sk_set_shapes(const char* json) {
+  sk::Json v;
+  if (!sk::Json::tryParse(json, v)) return ret("[\"not valid JSON\"]");
+  return ret(sk::Json(gEngine->setShapes(v)).dump(0));
+}
+
+// Mod meters: [sources…, params… (NaN = unmodulated), (phase, value) per shape].
+SK_EXPORT(sk_mod_meters) float* sk_mod_meters() {
+  gEngine->readModMeters(gMeters.data(), gMeters.data() + gMeterSources, gMeters.data() + gMeterSources + gMeterParams);
+  return gMeters.data();
+}
+SK_EXPORT(sk_mod_meter_count) int sk_mod_meter_count() { return static_cast<int>(gMeters.size()); }
 
 SK_EXPORT(sk_all_notes_off) void sk_all_notes_off() { gEngine->allNotesOff(); }
 SK_EXPORT(sk_panic) void sk_panic() { gEngine->panic(); }

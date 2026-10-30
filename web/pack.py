@@ -19,7 +19,7 @@ SHELL = os.path.join(HERE, "shell")
 
 # Page scripts, concatenated in this order into one module script.
 PAGE_JS = ["wasi.js", "model.js", "audio.js", "controls.js", "panels.js",
-           "presets.js", "keyboard.js", "midi.js", "app.js"]
+           "modulation.js", "presets.js", "keyboard.js", "midi.js", "clock.js", "app.js"]
 
 
 def read(path):

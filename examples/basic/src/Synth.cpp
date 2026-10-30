@@ -44,20 +44,20 @@ struct Basic : Synth {
     wave2 = b.add("osc2.wave").name("Osc 2 Wave").choices(waves).group("Oscillators");
     semi2 = b.add("osc2.semi").name("Osc 2 Semitones").range(-24, 24).integer().def(0).unit("st").group("Oscillators");
     fine2 = b.add("osc2.fine").name("Osc 2 Fine").range(-50, 50).def(7).unit("ct").group("Oscillators");
-    level2 = b.add("osc2.level").name("Osc 2 Level").range(0, 1).def(0.5).group("Oscillators");
-    subLevel = b.add("sub.level").name("Sub Level").range(0, 1).def(0).group("Oscillators");
-    noiseLevel = b.add("noise.level").name("Noise").range(0, 1).def(0).group("Oscillators");
+    level2 = b.add("osc2.level").name("Osc 2 Level").range(0, 1).def(0.5).modulatable().group("Oscillators");
+    subLevel = b.add("sub.level").name("Sub Level").range(0, 1).def(0).modulatable().group("Oscillators");
+    noiseLevel = b.add("noise.level").name("Noise").range(0, 1).def(0).modulatable().group("Oscillators");
     drift = b.add("drift").name("Drift").range(0, 1).def(0.2).group("Oscillators");
 
     filterType = b.add("filter.type").name("Filter Type").choices({"Ladder", "SVF Low", "SVF High", "SVF Band"}).group("Filter");
     cutoff = b.add("filter.cutoff").name("Cutoff").range(20, 20000).log().def(2400).unit("Hz").modulatable().group("Filter");
     reso = b.add("filter.reso").name("Resonance").range(0, 1).def(0.25).modulatable().group("Filter");
-    drive = b.add("filter.drive").name("Drive").range(0, 24).def(0).unit("dB").group("Filter");
+    drive = b.add("filter.drive").name("Drive").range(0, 24).def(0).unit("dB").modulatable().group("Filter");
     keytrack = b.add("filter.keytrack").name("Key Track").range(0, 1).def(0.5).group("Filter");
     envAmount = b.add("filter.env").name("Env Amount").range(-1, 1).def(0.35).modulatable().group("Filter");
     filterVel = b.add("filter.velocity").name("Velocity").range(0, 1).def(0.3).group("Filter");
 
-    delayMix = b.add("delay.mix").name("Delay Mix").range(0, 1).def(0.15).group("Delay");
+    delayMix = b.add("delay.mix").name("Delay Mix").range(0, 1).def(0.15).modulatable().group("Delay");
     delayTime = b.add("delay.time").name("Delay Time").choices({"1/4", "1/8.", "1/8", "1/8T", "1/16"}).def(1).group("Delay");
     delayFeedback = b.add("delay.feedback").name("Feedback").range(0, 0.9).def(0.35).group("Delay");
     delayTone = b.add("delay.tone").name("Delay Tone").range(500, 16000).log().def(4000).unit("Hz").group("Delay");

@@ -47,13 +47,17 @@ class MidiInput {
     for (const i of inputs) this.select.append(h("option", { value: i.id, text: i.name || i.id }));
     if (![...this.select.options].some((o) => o.value === this.choice)) this.choice = "all";
     this.select.value = this.choice;
-    for (const i of inputs) i.onmidimessage = (e) => { if (this.choice === "all" || this.choice === i.id) this.message(e.data); };
+    for (const i of inputs) i.onmidimessage = (e) => { if (this.choice === "all" || this.choice === i.id) this.message(e.data, e.timeStamp); };
   }
   choose(id) { this.choice = id; skStore.set("synthkit:midi:input", id); }
 
-  message(d) {
+  message(d, time) {
     const st = d[0];
-    if (st >= 0xf0) return;  // clock, sensing, sysex: ignored for now (MIDI clock: phase 4)
+    if (st >= 0xf0) {
+      // Clock and transport messages, when following MIDI clock.
+      if (this.app.clockSource === "midi" && (st === 0xf8 || st === 0xfa || st === 0xfb || st === 0xfc || st === 0xf2)) this.app.clock.message(d, time || performance.now());
+      return;
+    }
     this.dot.classList.remove("is-flash");
     void this.dot.offsetWidth;
     this.dot.classList.add("is-flash");

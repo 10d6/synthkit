@@ -1,0 +1,186 @@
+{
+  "synthkit": 1,
+  "synth": "sk-basic",
+  "patchVersion": 1,
+  "name": "Tempo Gate",
+  "author": "synthkit",
+  "tags": [
+    "pad",
+    "rhythmic",
+    "tempo"
+  ],
+  "params": {
+    "unison": 2,
+    "unisonDetune": 14,
+    "osc2.fine": 8,
+    "osc2.level": 0.7,
+    "filter.cutoff": 2600,
+    "filter.reso": 0.3,
+    "filter.env": 0.1,
+    "env1.attack": 0.02,
+    "env1.sustain": 1,
+    "env1.release": 0.4,
+    "shape1.trigger": 2,
+    "shape1.length": 4,
+    "shape1.loop": 1,
+    "shape1.smooth": 0.04,
+    "shape2.trigger": 2,
+    "shape2.length": 3,
+    "shape2.loop": 1,
+    "sk.level": 0,
+    "delay.mix": 0.2,
+    "delay.time": 2,
+    "delay.feedback": 0.3,
+    "master": -2
+  },
+  "mod": [
+    {
+      "src": "shape1",
+      "dst": "sk.level",
+      "amt": 1
+    },
+    {
+      "src": "shape2",
+      "dst": "filter.cutoff",
+      "amt": 0.15
+    }
+  ],
+  "shapes": [
+    {
+      "curves": [
+        {
+          "points": [
+            [
+              0.0,
+              1,
+              0,
+              1
+            ],
+            [
+              0.0625,
+              0,
+              0,
+              1
+            ],
+            [
+              0.125,
+              1,
+              0,
+              1
+            ],
+            [
+              0.1875,
+              1,
+              0,
+              1
+            ],
+            [
+              0.25,
+              0,
+              0,
+              1
+            ],
+            [
+              0.3125,
+              1,
+              0,
+              1
+            ],
+            [
+              0.375,
+              0,
+              0,
+              1
+            ],
+            [
+              0.4375,
+              1,
+              0,
+              1
+            ],
+            [
+              0.5,
+              1,
+              0,
+              1
+            ],
+            [
+              0.5625,
+              0,
+              0,
+              1
+            ],
+            [
+              0.625,
+              1,
+              0,
+              1
+            ],
+            [
+              0.6875,
+              0,
+              0,
+              1
+            ],
+            [
+              0.75,
+              1,
+              0,
+              1
+            ],
+            [
+              0.8125,
+              1,
+              0,
+              1
+            ],
+            [
+              0.875,
+              0,
+              0,
+              1
+            ],
+            [
+              0.9375,
+              1,
+              0,
+              1
+            ],
+            [
+              1,
+              1,
+              0,
+              0
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "curves": [
+        {
+          "points": [
+            [
+              0,
+              0,
+              0.4,
+              0
+            ],
+            [
+              0.5,
+              1,
+              -0.4,
+              0
+            ],
+            [
+              1,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

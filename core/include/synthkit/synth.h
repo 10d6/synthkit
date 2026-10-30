@@ -11,6 +11,7 @@
 #include "synthkit/dsp.h"
 #include "synthkit/json.h"
 #include "synthkit/midi.h"
+#include "synthkit/modulation.h"
 #include "synthkit/params.h"
 #include "synthkit/patch.h"
 #include "synthkit/transport.h"
@@ -71,6 +72,12 @@ class VoiceContext {
   float cc(int n) const;                // last value of any CC, 0…1
   Beats noteAge() const;                // beats since the note started
 
+  // Modulation (API.md §6). Values are this voice's, for this block.
+  float lfo(int n) const;               // standard LFO n (1-based), -1…1 × depth
+  float shape(int n) const;             // shape n (1-based), 0…1 × depth
+  float source(ModSource s) const;      // a custom source
+  void setSource(ModSource s, float v); // per-voice custom source, used from the next block
+
   const Transport& transport() const;
   double sampleRate() const;
   int frames() const { return frames_; }
@@ -94,6 +101,9 @@ class GlobalContext {
   float modwheel() const;
   float cc(int n) const;
   int activeVoices() const;
+  float lfo(int n) const;               // global LFO value (per-voice LFOs read 0 here)
+  float shape(int n) const;
+  void setSource(ModSource s, float v); // global value of a custom source
   const Transport& transport() const;
   double sampleRate() const;
   int frames() const { return frames_; }
@@ -143,6 +153,8 @@ class EventContext {
   float get(Param p) const;
   double sampleRate() const;
   int pending() const;                                  // queued events
+  void trigger(int shape);                              // restart shape n (1-based) now
+  void setSource(ModSource s, float v);                 // global value of a custom source
 
  private:
   friend struct detail::Core;
@@ -198,6 +210,7 @@ class Synth {
 
   virtual void defineParams(ParamBuilder& b) = 0;
   virtual void defineCustom(CustomBuilder&) {}
+  virtual void defineModSources(ModSourceBuilder&) {}
   virtual std::unique_ptr<Voice> makeVoice() = 0;
 
   virtual void prepare(const PrepareInfo&) {}

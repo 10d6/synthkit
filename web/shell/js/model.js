@@ -21,7 +21,11 @@ class Model {
     this.listeners = new Map();   // index -> Set(fn)
     this.anyListeners = new Set();
     this.customListeners = new Map();
-    this.sink = null;             // audio forwarding: {param(i, v), patch(json), custom(id, json)}
+    this.sink = null;             // audio forwarding: {param(i, v), patch(json), custom(id, json), mod(json), shapes(json)}
+    this.mod = this.info.mod || { sources: [], slots: 0, lfos: 0, shapes: 0 };
+    this.sourceIndex = new Map(this.mod.sources.map((s, i) => [s.id, i]));
+    this.modListeners = new Set();
+    this.shapeListeners = new Set();
     this.dirty = false;
   }
 
@@ -79,8 +83,35 @@ class Model {
     this.dirty = false;
     this.emitAll();
     for (const id of this.info.custom) this.emitCustom(id);
+    this.emitMod();
+    this.emitShapes();
     return res;
   }
+
+  // Modulation -------------------------------------------------------------
+  routes() { return this.mod.slots ? this.w.json(this.x.sk_get_mod()) : []; }
+  setRoutes(routes) {
+    const warnings = this.w.json(this.w.withStrings([JSON.stringify(routes)], (p) => this.x.sk_set_mod(p)));
+    this.dirty = true;
+    if (this.sink) this.sink.mod(JSON.stringify(this.routes()));
+    this.emitMod();
+    for (const fn of this.anyListeners) fn(-1, 0, "mod");
+    return warnings;
+  }
+  onMod(fn) { this.modListeners.add(fn); return () => this.modListeners.delete(fn); }
+  emitMod() { const r = this.routes(); for (const fn of this.modListeners) fn(r); }
+  modulatable() { return this.params.filter((p) => p.modulatable); }
+
+  shapes() { return this.mod.shapes ? this.w.json(this.x.sk_get_shapes()) : []; }
+  setShapes(shapes, quiet) {
+    this.w.withStrings([JSON.stringify(shapes)], (p) => this.x.sk_set_shapes(p));
+    this.dirty = true;
+    if (this.sink) this.sink.shapes(JSON.stringify(shapes));
+    if (!quiet) this.emitShapes();
+    for (const fn of this.anyListeners) fn(-1, 0, "shapes");
+  }
+  onShapes(fn) { this.shapeListeners.add(fn); return () => this.shapeListeners.delete(fn); }
+  emitShapes() { const s = this.shapes(); for (const fn of this.shapeListeners) fn(s); }
 
   // Custom state -----------------------------------------------------------
   custom(id) { return this.w.json(this.w.withStrings([id], (p) => this.x.sk_get_custom(p))); }

@@ -62,7 +62,7 @@ deployment → Deploy from a branch → `gh-pages` / root.
 | 1 ✓ | `API.md`, `CLAUDE.md` | review the contract |
 | 2 ✓ | core library, DSP blocks, example synth, render tool, Linux CI | listen to rendered WAVs on the PR |
 | 3 ✓ | browser build (one HTML file), UI from layout.json, Web MIDI, presets, previews | play the example synth in the browser |
-| 4 | mod matrix, tempo-synced LFOs, MIDI clock | build richer patches |
+| 4 ✓ | mod matrix, LFOs, drawn tempo-locked shapes, musical-time sources, MIDI clock | build richer, tempo-aware patches |
 | 5 | JUCE plugin adapter, Windows/macOS CI, pluginval, releases | load it in Live / GarageBand |
 | 6 | synth template + scaffold script | start a new synth in one step |
 

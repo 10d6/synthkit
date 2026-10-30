@@ -64,6 +64,93 @@ async function main() {
       const name2 = await page.evaluate(() => window.synthkit.model.patchName);
       if (name2 !== "Pluck") fail(`session restore gave "${name2}"`); else pass("session is restored after reload");
       await page.screenshot({ path: path.join(outDir, "ui-desktop-dark.png"), fullPage: false });
+
+      if (await page.evaluate(() => window.synthkit.model.mod.slots > 0)) {
+        // Modulate a knob from its menu.
+        const before = await page.evaluate(() => window.synthkit.model.routes().length);
+        await page.click('[data-param="filter.cutoff"] .knob-dial', { button: "right" });
+        await page.click('.menu-item:has-text("Modulate")');
+        await page.click('.menu-item:has-text("LFO 1")');
+        const after = await page.evaluate(() => window.synthkit.model.routes());
+        if (after.length !== before + 1 || after[after.length - 1].dst !== "filter.cutoff") fail("Modulate… didn't add an LFO 1 → cutoff route");
+        else pass("right-click → Modulate adds a route");
+        // Add a point in the first shape editor.
+        const pts = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points.length);
+        await page.evaluate(() => document.querySelector(".shape-svg").scrollIntoView({ block: "center" }));
+        const box = await page.locator(".shape-svg").first().boundingBox();
+        await page.mouse.dblclick(box.x + box.width * 0.37, box.y + box.height * 0.3);
+        const pts2 = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points.length);
+        if (pts2 !== pts + 1) fail(`double-click in the shape editor gave ${pts2} points (had ${pts})`); else pass("shape editor adds points");
+        // Double-click the new point to remove it again.
+        const added = await page.evaluate(() => {
+          const ed = document.querySelector(".shape-svg");
+          const c = [...ed.querySelectorAll(".shape-point")].map((e) => e.getBoundingClientRect());
+          return c.map((r) => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 }));
+        });
+        const mid = added[1];
+        await page.mouse.dblclick(mid.x, mid.y);
+        const pts3 = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points.length);
+        if (pts3 !== pts) fail(`double-clicking a point left ${pts3} points (expected ${pts})`); else pass("double-clicking a point removes it");
+        // Handles: select the middle point of a fresh 3-point curve, drag its
+        // out handle; the in handle mirrors it. Alt-drag breaks the pair.
+        await page.evaluate(() => {
+          const m = window.synthkit.model, sh = m.shapes();
+          sh[0].curves[0] = { points: [[0, 0, 0, 0, 0, 0, 0, 0, 0], [0.5, 0.5, 0, 0, 0, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0, 0, 0, 0]] };
+          m.setShapes(sh);
+        });
+        const geo = await page.evaluate(() => {
+          const ed = document.querySelector(".shape-svg").getBoundingClientRect();
+          return { x: ed.x, y: ed.y, w: ed.width, h: ed.height };
+        });
+        const ptX = geo.x + 10 + 0.5 * (geo.w - 20), ptY = geo.y + 10 + 0.5 * (geo.h - 20);
+        await page.mouse.click(ptX, ptY);
+        await page.waitForTimeout(450);  // not a double-click
+        const knobs = await page.evaluate(() => [...document.querySelectorAll(".handle-knob")].map((k) => { const r = k.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }));
+        if (knobs.length !== 2) fail(`selecting a point showed ${knobs.length} handles`);
+        else {
+          const outK = knobs.reduce((a, k) => (k.x > a.x ? k : a));
+          await page.mouse.move(outK.x, outK.y);
+          await page.mouse.down();
+          await page.mouse.move(outK.x + 30, outK.y - 40, { steps: 4 });
+          await page.mouse.up();
+          const p = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points[1]);
+          const mirrored = p[5] > 0 && p[7] < 0 && Math.abs(p[5] / p[4] - p[7] / p[6]) < 0.05;
+          if (!(p[4] > 0) || !mirrored) fail(`handle drag gave ${JSON.stringify(p)}`); else pass("dragging a handle curves the line; its partner mirrors it");
+          await page.waitForTimeout(450);
+          const k2 = await page.evaluate(() => [...document.querySelectorAll(".handle-knob")].map((k) => { const r = k.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }));
+          const inK = k2.reduce((a, k) => (k.x < a.x ? k : a));
+          await page.keyboard.down("Alt");
+          await page.mouse.move(inK.x, inK.y);
+          await page.mouse.down();
+          await page.mouse.move(inK.x, inK.y + 30, { steps: 3 });
+          await page.mouse.up();
+          await page.keyboard.up("Alt");
+          const q = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points[1]);
+          if (q[8] !== 1 || Math.abs(q[5] - p[5]) > 1e-6) fail(`Alt-drag gave ${JSON.stringify(q)}`); else pass("Alt-drag moves one handle on its own");
+        }
+        // The page's curve maths matches the engine's (S-curve, see core tests).
+        const sv = await page.evaluate(() => window.synthkit.evalCurve([[0, 0, 0, 0, 1 / 3, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0, -1 / 3, 0, 0]], 0.25));
+        if (Math.abs(sv - 0.15625) > 0.002) fail(`page curve maths gave ${sv} (engine: 0.15625)`); else pass("page and engine curve maths agree");
+
+        // With nothing playing, live displays rest.
+        await page.evaluate(() => window.synthkit.app.audio.send({ t: "panic" }));
+        await page.waitForTimeout(400);
+        const idle = await page.evaluate(() => ({
+          rings: document.querySelectorAll(".ctl.is-modulated").length,
+          dots: [...document.querySelectorAll(".lfo-dot")].filter((d) => d.getAttribute("visibility") !== "hidden").length,
+          heads: [...document.querySelectorAll(".shape-head")].filter((d) => d.getAttribute("visibility") !== "hidden").length,
+        }));
+        if (idle.rings || idle.dots || idle.heads) fail(`live displays still moving with nothing playing: ${JSON.stringify(idle)}`); else pass("nothing animates while nothing plays");
+        // Follow MIDI clock: start + 48 ticks at 120 BPM.
+        const clock = await page.evaluate(() => {
+          const app = window.synthkit.app;
+          app.clockSource = "midi";
+          app.clock.message([0xfa], 0);
+          for (let i = 1; i <= 48; i++) app.clock.message([0xf8], i * (500 / 24));
+          return { bpm: app.transport.bpm, playing: app.transport.playing };
+        });
+        if (!clock.playing || Math.abs(clock.bpm - 120) > 1) fail(`MIDI clock follow gave ${JSON.stringify(clock)}`); else pass(`follows MIDI clock (${clock.bpm} BPM)`);
+      }
     }
     if (errors.length) fail(`${name}: console errors: ${errors.join(" | ")}`); else pass(`${name}: boots with no console errors`);
     await page.close();

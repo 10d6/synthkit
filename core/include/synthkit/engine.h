@@ -67,6 +67,21 @@ class Engine {
   bool setCustomState(const std::string& id, const Json& value);
   std::vector<std::string> customIds() const;
 
+  // Modulation, for UIs. Sources in matrix order; the matrix and shapes as
+  // their patch JSON ("mod" / "shapes").
+  std::vector<ModSourceDesc> modSources() const;
+  int modSlots() const;
+  int lfoCount() const;
+  int shapeCount() const;
+  Json modMatrix() const;
+  std::vector<std::string> setModMatrix(const Json& routes);  // returns warnings
+  Json shapes() const;
+  std::vector<std::string> setShapes(const Json& shapes);
+  // Latest values from the audio thread: one per source, one per parameter
+  // (NaN when not modulated), and (phase or -1, value) per shape. Values are
+  // for the most recently started voice, or global when none is sounding.
+  void readModMeters(float* sources, float* params, float* shapes) const;
+
   EngineStats takeStats();
   const Transport& transport() const;
 

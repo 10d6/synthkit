@@ -28,6 +28,8 @@ struct Reg { Reg(const char* n, std::function<void()> f) { registry().emplace_ba
 struct Log {
   struct Start { int note; Beats beat; double pitch; bool legato; };
   std::vector<Start> starts;
+  struct Mod { Beats beat; float value; int key; double pitch; };
+  std::vector<Mod> mods;  // ctx.get(mod) each block, per voice
 };
 static Log gLog;
 
@@ -49,12 +51,19 @@ struct TestVoice : Voice {
 struct Table { std::array<float, 128> cents{}; };
 
 struct TestSynth : Synth {
-  Param gain;
+  Param gain, modp;
+  ModSource custom;
+  float setCustomTo = -1;
   Custom<Table> table;
   bool scheduleFifth = false;
+  bool triggerShapeOnNote = false;
   int jumps = 0;
 
-  void defineParams(ParamBuilder& b) override { gain = b.add("gain").range(0, 1).def(0.5); }
+  void defineParams(ParamBuilder& b) override {
+    gain = b.add("gain").range(0, 1).def(0.5);
+    modp = b.add("mod").range(0, 1).def(0).modulatable();
+  }
+  void defineModSources(ModSourceBuilder& b) override { custom = b.add("test.src").name("Test").perVoice(); }
   void defineCustom(CustomBuilder& b) override {
     table = b.add<Table>("table", {
         .save = [](const Table& t, Json& j) { j["cents"] = t.cents; },
@@ -66,6 +75,7 @@ struct TestSynth : Synth {
   void processEvents(EventContext& ctx) override {
     for (auto& e : ctx.in()) {
       ctx.out(e);
+      if (triggerShapeOnNote && e.isNoteOn() && e.note == 72) ctx.trigger(1);
       if (scheduleFifth && e.isNoteOn()) {
         Beats at = ctx.quantize(e.beat, Division::Eighth) + 0.5;
         ctx.schedule(at, NoteOn{e.note + 7, e.vel}, 1);
@@ -89,6 +99,8 @@ struct TestSynth : Synth {
 
 void TestVoice::render(VoiceContext& ctx, Buffer& out) {
   if (pendingLog) { gLog.starts.push_back({ctx.key(), ctx.transport().beat, ctx.pitch(), wasLegato}); pendingLog = false; }
+  if (gLog.mods.size() < gLog.mods.capacity()) gLog.mods.push_back({ctx.transport().beat, ctx.get(synth.modp), ctx.key(), ctx.pitch()});
+  if (synth.setCustomTo >= 0) ctx.setSource(synth.custom, synth.setCustomTo);
   double inc = ctx.pitchHz() / ctx.sampleRate();
   float g = ctx.get(synth.gain);
   for (int i = 0; i < out.frames; ++i) {
@@ -118,6 +130,8 @@ struct Harness {
     ht.valid = true;
     ht.bpm = 120;
     gLog.starts.clear();
+    gLog.mods.clear();
+    gLog.mods.reserve(200000);
   }
   int param(const char* id) { return eng->params().find(id); }
   // Render n samples in blocks, delivering `events` at absolute sample times.
@@ -358,6 +372,216 @@ TEST(synth_json_validation) {
   CHECK_THROWS(SynthInfo::fromJson(Json::parse(R"({"id":"x","features":{"voiceModes":["chord"]}})")));
   auto i = SynthInfo::fromJson(Json::parse(R"({"id":"x"})"));
   CHECK(i.features.voices == 8 && i.features.ampEnv);
+}
+
+
+// ------------------------------------------------------------ modulation
+
+static const char* kMod = R"(,"standardLfos":2,"modSlots":8,"shapes":2)";
+
+// Value of ctx.get(mod) logged nearest to a beat (first voice only).
+static float modAt(Beats b, int key = -1) {
+  float v = NAN;
+  double best = 1e9;
+  for (auto& m : gLog.mods)
+    if ((key < 0 || m.key == key) && std::fabs(m.beat - b) < best) { best = std::fabs(m.beat - b); v = m.value; }
+  return v;
+}
+
+static void loadMod(Harness& h, const char* json) {
+  Json p = h.eng->savePatch();
+  Json extra = Json::parse(json);
+  for (auto& m : extra.members()) p[m.first] = m.second;
+  auto r = h.eng->loadPatch(p);
+  CHECK(r.ok);
+  for (auto& w : r.warnings) std::printf("    warning: %s\n", w.c_str());
+}
+
+TEST(matrix_routes_and_via) {
+  Harness h(256, kMod);
+  loadMod(h, R"({"mod":[{"src":"const","dst":"mod","amt":0.25},{"src":"const","dst":"mod","amt":0.5,"via":"modwheel"}]})");
+  MidiEvent mw = CC{1, 0.5f};
+  h.run(4800, {{0, on(60)}});
+  CHECK_NEAR(gLog.mods.back().value, 0.25, 1e-4);
+  h.run(4800, {{h.pos, mw}});
+  CHECK_NEAR(gLog.mods.back().value, 0.5, 1e-4);  // 0.25 + 0.5 * 0.5
+  // Meters report the modulated value for the sounding voice.
+  std::vector<float> src(h.eng->modSources().size()), par(static_cast<std::size_t>(h.eng->params().size())), sh(4);
+  h.eng->readModMeters(src.data(), par.data(), sh.data());
+  CHECK_NEAR(par[static_cast<std::size_t>(h.param("mod"))], 0.5, 1e-4);
+  CHECK(std::isnan(par[static_cast<std::size_t>(h.param("gain"))]));
+}
+
+TEST(synced_lfo_is_locked_to_the_beat) {
+  Harness h(256, kMod);
+  auto& ps = h.eng->params();
+  ps.set(h.param("lfo1.shape"), 4);     // square
+  ps.set(h.param("lfo1.sync"), 1);
+  ps.set(h.param("lfo1.division"), 6);  // 1/4
+  loadMod(h, R"({"mod":[{"src":"lfo1","dst":"mod","amt":0.5}]})");
+  ps.set(h.param("mod"), 0.5);
+  // Start the note off the beat: a global synced LFO doesn't care.
+  h.run(96000, {{3000, on(60)}});
+  CHECK_NEAR(modAt(1.2), 1.0, 1e-3);   // first half of each beat: +1
+  CHECK_NEAR(modAt(1.7), 0.0, 1e-3);   // second half: -1
+  CHECK_NEAR(modAt(3.25), 1.0, 1e-3);
+}
+
+TEST(per_voice_lfo_and_fade) {
+  Harness h(256, kMod);
+  auto& ps = h.eng->params();
+  ps.set(h.param("lfo1.shape"), 4);
+  ps.set(h.param("lfo1.mode"), 1);      // per voice: restarts with each note
+  ps.set(h.param("lfo1.rate"), 1);      // 1 Hz = 1 cycle per 2 beats at 120 bpm
+  ps.set(h.param("lfo1.fade"), 1);      // fades in over a second
+  loadMod(h, R"({"mod":[{"src":"lfo1","dst":"mod","amt":1}]})");
+  h.run(96000, {{12000, on(60)}});       // note at beat 0.5
+  // 1 Hz square from the note (beat 0.5): +1 for beats 0.5–1.5, -1 for 1.5–2.5, …
+  CHECK(modAt(0.6) < 0.1);               // just started: faded right down
+  CHECK_NEAR(modAt(1.45), 0.475, 0.03);  // 0.475 s in: fade at 47.5%
+  CHECK_NEAR(modAt(2.4), 0.0, 1e-3);     // negative half (clamped at 0)
+  CHECK_NEAR(modAt(2.75), 1.0, 1e-3);    // positive again, fully faded in
+}
+
+TEST(note_shape_quantised_start_and_ramp) {
+  Harness h(256, kMod);
+  auto& ps = h.eng->params();
+  ps.set(h.param("shape1.length"), 7);   // 1/4 = one beat
+  ps.set(h.param("shape1.start"), 3);    // wait for the next beat
+  loadMod(h, R"({"mod":[{"src":"shape1","dst":"mod","amt":1}],
+                 "shapes":[{"curves":[{"points":[[0,0,0,0],[1,1,0,0]]}]}]})");
+  h.run(96000, {{6000, on(60)}});        // note at beat 0.25
+  CHECK_NEAR(modAt(0.6), 0.0, 1e-3);     // waiting for beat 1
+  CHECK_NEAR(modAt(1.5), 0.5, 0.02);     // half way through the ramp
+  CHECK_NEAR(modAt(3.0), 1.0, 1e-3);     // "once": holds the end
+}
+
+TEST(shape_release_segment) {
+  Harness h(256, kMod);
+  auto& ps = h.eng->params();
+  ps.set(h.param("shape1.length"), 7);   // one beat
+  ps.set(h.param("shape1.loop"), 4);     // release
+  ps.set(h.param("env1.release"), 2);    // keep the voice alive after key up
+  loadMod(h, R"({"mod":[{"src":"shape1","dst":"mod","amt":1}],
+                 "shapes":[{"curves":[{"points":[[0,0,0,0],[0.5,1,0,0],[1,0,0,0]],"release":0.5}]}]})");
+  h.run(72000, {{0, on(60)}, {48000, off(60)}});  // key up at beat 2
+  CHECK_NEAR(modAt(1.5), 1.0, 1e-3);      // holding at the release point
+  CHECK_NEAR(modAt(2.25), 0.5, 0.03);     // released: half way down the tail
+  CHECK_NEAR(modAt(2.9), 0.0, 1e-3);
+}
+
+TEST(shape_curves_with_handles) {
+  Harness h(256, kMod);
+  auto& ps = h.eng->params();
+  ps.set(h.param("shape1.length"), 7);  // one beat
+  // S-curve: flat handles a third of the way in from each end. x(t) = t here,
+  // so y(0.25) = 3(0.75)(0.25^2) + 0.25^3 = 0.15625.
+  loadMod(h, R"({"mod":[{"src":"shape1","dst":"mod","amt":1}],
+                 "shapes":[{"curves":[{"points":[[0,0,0,0, 0.3333333,0,0,0,0],[1,1,0,0, 0,0,-0.3333333,0,0]]}]}]})");
+  h.run(48000, {{0, on(60)}});
+  CHECK_NEAR(modAt(0.25), 0.15625, 0.01);
+  CHECK_NEAR(modAt(0.5), 0.5, 0.01);
+  CHECK_NEAR(modAt(0.75), 0.84375, 0.01);
+  // Handles are kept through save and load.
+  Json saved = h.eng->savePatch();
+  CHECK(saved["shapes"][0]["curves"][0]["points"][0].size() == 9);
+  Harness h2(256, kMod);
+  CHECK(h2.eng->loadPatch(saved).ok);
+  CHECK(h2.eng->savePatch() == saved);
+  // A handle reaching past half the segment is limited, so the curve can't
+  // bend back in time: still increasing everywhere.
+  Harness h3(256, kMod);
+  h3.eng->params().set(h3.param("shape1.length"), 7);
+  loadMod(h3, R"({"mod":[{"src":"shape1","dst":"mod","amt":1}],
+                  "shapes":[{"curves":[{"points":[[0,0,0,0, 0.9,0.5,0,0,1],[1,1,0,0, 0,0,-0.9,-0.5,1]]}]}]})");
+  h3.run(24000, {{0, on(60)}});
+  float last = -1;
+  bool monotonic = true;
+  for (auto& m : gLog.mods) { if (m.value < last - 1e-4f) monotonic = false; last = m.value; }
+  CHECK(monotonic);
+}
+
+TEST(bar_shape_follows_the_bar) {
+  Harness h(256, kMod);
+  h.ht.timeSigNum = 3;
+  auto& ps = h.eng->params();
+  ps.set(h.param("shape1.trigger"), 2);  // bar
+  ps.set(h.param("shape1.length"), 4);   // 1 bar
+  loadMod(h, R"({"mod":[{"src":"shape1","dst":"mod","amt":1}],
+                 "shapes":[{"curves":[{"points":[[0,0,0,0],[1,1,0,0]]}]}]})");
+  h.run(192000, {{100, on(60)}});        // 4 s = 8 beats = bars of 3
+  CHECK_NEAR(modAt(1.5), 0.5, 0.02);
+  CHECK_NEAR(modAt(4.5), 0.5, 0.02);     // second bar starts at beat 3
+  CHECK_NEAR(modAt(6.3), 0.1, 0.02);
+}
+
+TEST(custom_source_from_the_voice) {
+  Harness h(256, kMod);
+  loadMod(h, R"({"mod":[{"src":"test.src","dst":"mod","amt":1}]})");
+  h.synth->setCustomTo = 0.4f;
+  h.run(4800, {{0, on(60)}});
+  CHECK_NEAR(gLog.mods.back().value, 0.4, 1e-4);
+}
+
+TEST(pitch_and_level_destinations) {
+  Harness h(256, kMod);
+  loadMod(h, R"({"mod":[{"src":"const","dst":"sk.pitch","amt":0.25}]})");
+  h.run(2400, {{0, on(60)}});
+  CHECK_NEAR(gLog.mods.back().pitch, 66.0, 1e-3);  // +0.25 of ±12 st = +6
+  Harness q(256, kMod);
+  loadMod(q, R"({"mod":[{"src":"const","dst":"sk.level","amt":-1}]})");
+  auto out = q.run(9600, {{0, on(60)}});
+  float peak = 0;
+  for (float x : out) peak = std::max(peak, std::fabs(x));
+  CHECK(peak < 1e-6);  // voice level pulled to zero
+}
+
+TEST(mod_patch_round_trip_and_warnings) {
+  Harness h(256, kMod);
+  Json p = h.eng->savePatch();
+  p["mod"] = Json::parse(R"([{"src":"lfo2","dst":"mod","amt":-0.3,"via":"velocity"},{"src":"nope","dst":"mod","amt":1},{"src":"lfo1","dst":"gain","amt":1}])");
+  p["shapes"] = Json::parse(R"([{"curves":[{"points":[[0.2,0.5,0.3,1],[0.8,1,0,0]],"release":0.4}]}])");
+  auto r = h.eng->loadPatch(p);
+  CHECK(r.ok);
+  CHECK(r.warnings.size() == 2);  // unknown source; gain isn't modulatable
+  Json saved = h.eng->savePatch();
+  CHECK(saved["mod"].size() == 1);
+  CHECK(saved["mod"][0]["via"].string() == "velocity");
+  // Curves are completed to span 0…1.
+  CHECK(saved["shapes"][0]["curves"][0]["points"].size() == 4);
+  Harness h2(256, kMod);
+  CHECK(h2.eng->loadPatch(saved).ok);
+  CHECK(h2.eng->savePatch() == saved);
+}
+
+TEST(manual_trigger_from_events) {
+  // Covered via the event stage: trigger restarts a shape for held voices.
+  Harness h(256, kMod);
+  auto& ps = h.eng->params();
+  ps.set(h.param("shape1.trigger"), 5);  // manual
+  ps.set(h.param("shape1.length"), 7);
+  loadMod(h, R"({"mod":[{"src":"shape1","dst":"mod","amt":1}],
+                 "shapes":[{"curves":[{"points":[[0,0,0,0],[1,1,0,0]]}]}]})");
+  h.synth->triggerShapeOnNote = true;
+  h.run(48000, {{0, on(60)}});
+  CHECK_NEAR(modAt(1.5, 60), 0.0, 1e-3);     // nothing has triggered it yet
+  h.run(48000, {{h.pos, on(72)}});           // key 72 triggers it (beat 2) for held voices
+  CHECK_NEAR(modAt(2.5, 60), 0.5, 0.03);
+}
+
+TEST(first_note_shape_and_key_range) {
+  Harness h(256, kMod);
+  auto& ps = h.eng->params();
+  ps.set(h.param("shape1.trigger"), 1);  // first note of a phrase
+  ps.set(h.param("shape1.length"), 7);
+  ps.set(h.param("shape2.length"), 7);
+  ps.set(h.param("shape2.keyLow"), 64);  // shape 2 ignores keys below E4
+  loadMod(h, R"({"mod":[{"src":"shape1","dst":"mod","amt":0.5},{"src":"shape2","dst":"mod","amt":0.5}],
+                 "shapes":[{"curves":[{"points":[[0,0,0,0],[1,1,0,0]]}]},{"curves":[{"points":[[0,1,0,1],[1,1,0,0]]}]}]})");
+  // 60 starts the phrase at beat 0; 64 joins at beat 0.5 without restarting shape 1.
+  h.run(48000, {{0, on(60)}, {12000, on(64)}});
+  CHECK_NEAR(modAt(0.75, 60), 0.375, 0.02);  // shape1 at 0.75, shape2 inactive for key 60
+  CHECK_NEAR(modAt(0.75, 64), 0.875, 0.02);  // same shape1, plus shape2 (1.0 × 0.5) for key 64
 }
 
 int main() {
