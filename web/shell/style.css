@@ -351,3 +351,6 @@ button, input, select { font: inherit; color: inherit; }
   .amt-track { width: 110px; }
   .shape-hint { display: none; }
 }
+
+/* Dragging controls must never start a text selection. */
+.shape-area, .amt, .knob-dial, .slider-track, .wheel, .xy-pad, .keys, .seg { -webkit-user-select: none; user-select: none; }

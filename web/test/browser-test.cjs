@@ -128,6 +128,78 @@ async function main() {
           const q = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points[1]);
           if (q[8] !== 1 || Math.abs(q[5] - p[5]) > 1e-6) fail(`Alt-drag gave ${JSON.stringify(q)}`); else pass("Alt-drag moves one handle on its own");
         }
+        // A handle can still be grabbed after text on the page got selected
+        // (selected text used to hijack the next drag).
+        {
+          await page.evaluate(() => {
+            const m = window.synthkit.model, sh = m.shapes();
+            sh[0].curves[0] = { points: [[0, 0, 0, 0, 0, 0, 0, 0, 0], [0.5, 0.5, 0, 0, 0, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0, 0, 0, 0]] };
+            m.setShapes(sh);
+            const hint = document.querySelector(".shape-hint");
+            const r = document.createRange(); r.selectNodeContents(hint);
+            const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+          });
+          await page.mouse.click(ptX, ptY);
+          await page.waitForTimeout(450);
+          await page.evaluate(() => {  // select the hint again, as a stray drag would
+            const r = document.createRange(); r.selectNodeContents(document.querySelector(".shape-hint"));
+            const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+          });
+          const k3 = await page.evaluate(() => [...document.querySelectorAll(".handle-knob")].map((k) => { const r = k.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }));
+          const o3 = k3.reduce((a, k) => (k.x > a.x ? k : a));
+          // Drag the handle and drift up out of the editor, across the hint text.
+          const hintBox = await page.locator(".shape-hint").first().boundingBox();
+          await page.mouse.move(o3.x, o3.y);
+          await page.mouse.down();
+          await page.mouse.move(o3.x + 20, o3.y - 35, { steps: 5 });
+          await page.mouse.move(hintBox.x + 40, hintBox.y + hintBox.height / 2, { steps: 6 });
+          await page.mouse.move(o3.x + 20, o3.y - 35, { steps: 6 });
+          await page.mouse.up();
+          const p3 = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points[1]);
+          const selText = await page.evaluate(() => String(window.getSelection()));
+          if (!(p3[5] > 0.05)) fail(`couldn't drag a handle with text selected (point ${JSON.stringify(p3)})`); else pass("handles can be dragged even with text selected");
+          if (selText) fail("dragging in the editor left text selected");
+        }
+
+        // The modulation amount follows a full drag (the matrix used to rebuild
+        // its rows mid-drag, ending the drag after the first few percent).
+        {
+          await page.evaluate(() => document.querySelector(".matrix-panel").scrollIntoView({ block: "center" }));
+          const routes0 = await page.evaluate(() => window.synthkit.model.routes());
+          const idx = routes0.length - 1;
+          const tr = await page.evaluate((i) => { const r = document.querySelectorAll(".amt-track")[i].getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }, idx);
+          const startX = tr.x + tr.w / 2, y0 = tr.y + tr.h / 2;
+          await page.mouse.move(startX, y0);
+          await page.mouse.down();
+          // Drift vertically as a real hand would.
+          for (let k = 1; k <= 10; k++) await page.mouse.move(startX + k * 6, y0 + (k % 3) * 9);
+          await page.mouse.up();
+          const a1 = await page.evaluate((i) => window.synthkit.model.routes()[i].amt, idx);
+          const expected = routes0[idx].amt + (60 / tr.w) * 2;
+          if (Math.abs(a1 - Math.min(1, expected)) > 0.05) fail(`amount drag moved ${routes0[idx].amt.toFixed(2)} → ${a1.toFixed(2)} (expected ≈ ${Math.min(1, expected).toFixed(2)})`);
+          else pass(`modulation amount follows the whole drag (${(routes0[idx].amt * 100).toFixed(0)}% → ${(a1 * 100).toFixed(0)}%)`);
+        }
+
+        // Editing one shape never undoes another shape's edits.
+        {
+          const eds = await page.evaluate(() => [...document.querySelectorAll(".shape-svg")].map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
+          if (eds.length >= 2) {
+            const addAt = async (i, fx, fy) => {
+              await page.evaluate((i) => document.querySelectorAll(".shape-svg")[i].scrollIntoView({ block: "center" }), i);
+              const r = await page.evaluate((i) => { const e = document.querySelectorAll(".shape-svg")[i].getBoundingClientRect(); return { x: e.x, y: e.y, w: e.width, h: e.height }; }, i);
+              await page.waitForTimeout(450);
+              await page.mouse.dblclick(r.x + 10 + fx * (r.w - 20), r.y + 10 + (1 - fy) * (r.h - 20));
+            };
+            const before = await page.evaluate(() => window.synthkit.model.shapes().map((s) => s.curves[0].points.length));
+            await addAt(0, 0.3125, 0.3);
+            await addAt(1, 0.4375, 0.6);
+            await addAt(0, 0.8125, 0.4);
+            const after = await page.evaluate(() => window.synthkit.model.shapes().map((s) => s.curves[0].points.length));
+            if (after[0] !== before[0] + 2 || after[1] !== before[1] + 1) fail(`editing shapes in turn: points ${JSON.stringify(before)} → ${JSON.stringify(after)}`);
+            else pass("editing one shape keeps the other shape's edits");
+          }
+        }
+
         // The page's curve maths matches the engine's (S-curve, see core tests).
         const sv = await page.evaluate(() => window.synthkit.evalCurve([[0, 0, 0, 0, 1 / 3, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0, -1 / 3, 0, 0]], 0.25));
         if (Math.abs(sv - 0.15625) > 0.002) fail(`page curve maths gave ${sv} (engine: 0.15625)`); else pass("page and engine curve maths agree");

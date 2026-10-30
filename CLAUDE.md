@@ -101,9 +101,11 @@ so it can be licensed independently. No license chosen yet.
 
 ## CI
 
-The repo is private for now: run Linux build + tests on every PR; Windows and
-macOS plugin builds are `workflow_dispatch` (manual) to save Actions minutes.
-Switch them to automatic when the repo goes public.
+The repo is public, with GitHub Pages serving the `gh-pages` branch: CI
+publishes `main` at https://10d6.github.io/synthkit/ and each PR at
+`/pr/<number>/`, and comments the link on the PR. Linux build + tests, the
+browser build and the browser-vs-native comparison run on every PR. Plugin
+builds (phase 5) should run on every PR too, now that Actions minutes are free.
 
 ## Status
 

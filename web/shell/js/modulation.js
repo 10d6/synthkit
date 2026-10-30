@@ -284,7 +284,13 @@ class ShapeEditor {
     p.sort((a, b) => a[0] - b[0]);
     p[0][0] = 0;
     p[p.length - 1][0] = 1;
-    this.m.setShapes(this.all, true);
+    // Write only this shape's curve into the current data: other shape
+    // editors may have changed theirs since this one loaded.
+    const fresh = this.m.shapes();
+    const mine = this.all[this.n - 1];
+    fresh[this.n - 1] = mine;
+    this.all = fresh;
+    this.m.setShapes(fresh, true);
     this.draw();
   }
   lengthBeats() {
@@ -468,6 +474,10 @@ class ShapeEditor {
     let lastDown = { t: 0, x: 0, y: 0 };
     this.svg.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
+      // Without this the browser starts selecting text as the drag drifts out
+      // of the editor, and a selection over the editor hijacks the next press.
+      e.preventDefault();
+      window.getSelection().removeAllRanges();
       this.area.focus({ preventScroll: true });
       const now = performance.now();
       const isDouble = now - lastDown.t < 400 && Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) < 8;
@@ -685,13 +695,20 @@ class AmountSlider {
     this.label = h("button", { type: "button", class: "ctl-value amt-value", title: "Type an amount" });
     this.root = h("div", { class: "amt" }, this.track, this.label);
     let start = null;
-    this.track.addEventListener("pointerdown", (e) => { this.track.setPointerCapture(e.pointerId); start = { x: e.clientX, v: this.v }; });
+    this.track.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      this.track.focus({ preventScroll: true });
+      this.track.setPointerCapture(e.pointerId);
+      start = { x: e.clientX, v: this.v };
+    });
     this.track.addEventListener("pointermove", (e) => {
       if (!start) return;
       const w = this.track.clientWidth || 120;
       this.set(start.v + ((e.clientX - start.x) / w) * 2 * (e.shiftKey ? 0.1 : 1));
     });
     this.track.addEventListener("pointerup", () => { start = null; });
+    this.track.addEventListener("pointercancel", () => { start = null; });
     this.track.addEventListener("dblclick", () => this.set(0));
     this.track.addEventListener("keydown", (e) => {
       const s = e.shiftKey ? 0.002 : 0.02;
@@ -740,7 +757,9 @@ class MatrixPanel {
     this.add = h("button", { type: "button", class: "btn", onclick: () => this.addRoute() }, "Add route");
     root.append(this.list, h("div", { class: "matrix-foot" }, this.add, this.count));
     this.root = root;
-    this.m.onMod(() => this.build());
+    // Rows edit the matrix themselves; rebuilding them mid-drag would end the
+    // drag, so only rebuild for changes made elsewhere (presets, Modulate…).
+    this.m.onMod(() => { if (!this.editing) this.build(); });
     app.modMeters.on((mm) => this.meter(mm));
     this.build();
   }
@@ -755,6 +774,12 @@ class MatrixPanel {
     const dsts = this.m.modulatable();
     routes.forEach((r, i) => {
       const update = (patch) => { const next = this.m.routes(); Object.assign(next[i], patch); if (patch.via === "") delete next[i].via; this.m.setRoutes(next); };
+      const setAmt = (v) => {
+        const next = this.m.routes();
+        next[i].amt = v;
+        this.editing = true;
+        try { this.m.setRoutes(next); } finally { this.editing = false; }
+      };
       const src = skSourceSelect(this.m, r.src, (v) => update({ src: v }));
       src.setAttribute("aria-label", `Route ${i + 1} source`);
       const dst = h("select", { class: "menu-select", "aria-label": `Route ${i + 1} destination`, onchange: () => update({ dst: dst.value }) });
@@ -766,7 +791,7 @@ class MatrixPanel {
       }
       for (const og of groups.values()) dst.append(og);
       dst.value = r.dst;
-      const amt = new AmountSlider(r.amt, (v) => { const next = this.m.routes(); next[i].amt = v; this.m.setRoutes(next); });
+      const amt = new AmountSlider(r.amt, setAmt);
       const via = skSourceSelect(this.m, r.via, (v) => update({ via: v }), true);
       via.setAttribute("aria-label", `Route ${i + 1} scaled by`);
       const meter = h("span", { class: "route-meter" }, h("span", { class: "route-meter-fill" }));
