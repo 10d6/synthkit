@@ -50,6 +50,8 @@ core/src/                engine.cpp (voices, events, transport), modulation.cpp
 cmake/                   synthkit_add_synth() + preset embedding
 tools/render/            <synth>_render: scenarios, generic checks, WAV output
 examples/basic/          subtractive synth exercising the whole API
+examples/reed/           pump organ with its own page (ui/page.*), messages
+                         (treadles) and sk::wa blocks
 tests/core_tests.cpp     kit unit tests (no framework; TEST/CHECK macros)
 tests/webaudio/          sk::wa parity scenarios; tools/wa_parity renders them
                          natively, web/test/webaudio-parity.cjs in Chromium
@@ -57,9 +59,11 @@ web/wasm/                C API exported to JavaScript
 web/shell/               the page: template, style, js/ (model, audio, host
                          (plugin bridge), controls, panels, modulation, presets,
                          keyboard, midi, clock, app), worklet.js
-web/pack.py              inlines everything into one <synth>.html
-web/test/                headless Chromium tests (page; page's plugin mode) +
-                         browser-vs-native compare
+web/pack.py              inlines everything into one <synth>.html (and joins a
+                         synth's ui/page.js modules into one scope)
+web/test/                headless Chromium tests (page; page's plugin mode; a
+                         synth's own page, page-test.cjs) + browser-vs-native
+                         compare + sk::wa parity
 plugin/                  JUCE adapter: Processor (engine, params, state,
                          transport), Editor (web view + page bridge), Settings
                          (shared store), test/PluginCheck (DAW-style check)
@@ -135,6 +139,16 @@ and add a case to `tests/webaudio/parity.json` for anything new. The blocks
 follow Chromium's code (BSD; notice in `core/include/synthkit/webaudio.h`), so
 when they disagree, read Chromium's `third_party/blink/renderer/platform/audio`
 and `modules/webaudio` rather than tuning numbers.
+
+A synth's own page (API.md §9a) and messages (§9b), with examples/reed:
+
+```
+./build/examples/reed/reed_render --check examples/reed
+node web/test/page-test.cjs build-web/web/reed.html build-web/test-reed
+node web/test/browser-test.cjs build-web/web/reed.html build-web/test-reed examples/reed/tests/pump.json
+./build/examples/reed/reed_render examples/reed/tests/pump.json --block 128 --out build-web/test-reed/native.wav
+python3 web/test/compare.py build-web/test-reed/web-render.f32 build-web/test-reed/native.wav
+```
 
 Plugins (needs the page built first; `tools/ci/deps.sh plugin`):
 

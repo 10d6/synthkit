@@ -12,7 +12,8 @@ patches and presets, modulation routing, tempo sync, the UI controls, testing
 and the builds.
 
 **Start here:** [`API.md`](API.md) describes what a synth looks like to write.
-[`examples/basic`](examples/basic) is a complete synth built on it.
+[`examples/basic`](examples/basic) is a complete synth built on it, and
+[`examples/reed`](examples/reed) one with its own page.
 
 ```
 cmake -S . -B build && cmake --build build
@@ -90,7 +91,7 @@ on the computer.
 | 6 ✓ | synth template + scaffold script (`tools/new-synth.py`), shared CI scripts | start a new synth in one step |
 | 7 ✓ | the first real synth, [10d6/aleatory](https://github.com/10d6/aleatory), ported from its browser sketch using only `API.md` | play it in the browser and in Live |
 | 8 ✓ | `sk::wa`: Web Audio's nodes (biquad, compressor, convolver, periodic-wave oscillator, wave shaper, panner, delay, AudioParam automation) as DSP blocks, checked sample for sample against Chromium | port a browser sketch by translation |
+| 9 ✓ | a synth's own page (`ui/page.js`) using the kit's parts where it wants them; messages between page and engine; `ui/style.css`; [`examples/reed`](examples/reed) | keep an instrument's own look in the browser and the DAW |
 
-Next, from what the reed organ ([10d6/reedorgan](https://github.com/10d6/reedorgan),
-a Web Audio instrument with its own page) needs: a way for a synth to bring its
-own page and talk to its engine with messages that aren't saved.
+Next: port the reed organ ([10d6/reedorgan](https://github.com/10d6/reedorgan))
+onto the kit, using `sk::wa` for its sound and its own page for its cabinet.

@@ -166,6 +166,18 @@ async function main() {
   check(await page.evaluate(() => [...document.querySelectorAll(".toast")].some((t) => t.textContent === "Saved Bass.json")),
     "messages from the plugin show as toasts", "plugin message didn't show");
 
+  // 13. Synth messages (API.md §9b) go to the plugin by index, and come back.
+  await clear();
+  await page.locator(".ctl-custom button", { hasText: "Clear echoes" }).click();
+  const msgs = await sent("msg");
+  const clearIndex = await page.evaluate(() => window.synthkit.model.info.messages.indexOf("delay.clear"));
+  check(msgs.length === 1 && msgs[0].i === clearIndex && Array.isArray(msgs[0].v),
+    "a synth message goes to the plugin", `sent ${JSON.stringify(msgs)}`);
+  const clearedIndex = await page.evaluate(() => window.synthkit.model.info.messages.indexOf("delay.cleared"));
+  await page.evaluate((i) => window.__deliver({ t: "msgs", list: [[i, [4]]] }), clearedIndex);
+  check(await page.evaluate(() => document.querySelector(".clear-note").textContent === "Cleared"),
+    "the synth's answer reaches the page", "delay.cleared from the plugin didn't show");
+
   await page.screenshot({ path: path.join(outDir, "ui-plugin.png") });
   check(errors.length === 0, "no console errors in plugin mode", `console errors: ${errors.join(" | ")}`);
   await browser.close();

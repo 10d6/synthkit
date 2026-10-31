@@ -41,7 +41,7 @@ async function main() {
       await page.waitForFunction(() => window.synthkit.app.audio.running, null, { timeout: 10000 });
       for (const k of ["a", "d", "g"]) await page.keyboard.down(k);
       await page.waitForTimeout(500);
-      const voices = await page.evaluate(() => document.querySelector(".voice-count").textContent);
+      const voices = await page.evaluate(() => window.synthkit.app.voices.textContent);
       if (!/^[1-9]/.test(voices)) fail(`keyboard didn't start voices (meter says "${voices}")`); else pass(`computer keyboard plays (${voices})`);
       for (const k of ["a", "d", "g"]) await page.keyboard.up(k);
       if (kitUi) {
@@ -277,6 +277,15 @@ async function main() {
           return { bpm: app.transport.bpm, playing: app.transport.playing };
         });
         if (!clock.playing || Math.abs(clock.bpm - 120) > 1) fail(`MIDI clock follow gave ${JSON.stringify(clock)}`); else pass(`follows MIDI clock (${clock.bpm} BPM)`);
+        await page.evaluate(() => { const app = window.synthkit.app; app.clockSource = "internal"; });
+
+        // Messages (API.md §9b): the "Clear echoes" widget sends delay.clear,
+        // and the synth's delay.cleared answer shows up in the widget.
+        await page.locator(".ctl-custom button", { hasText: "Clear echoes" }).click();
+        try {
+          await page.waitForFunction(() => document.querySelector(".clear-note").textContent === "Cleared", null, { timeout: 3000 });
+          pass("a message reaches the synth and its answer comes back");
+        } catch { fail("Clear echoes: no delay.cleared message came back"); }
       }
       }  // kitUi
     }
@@ -306,11 +315,13 @@ async function main() {
       for (const [k, v] of Object.entries(sc.params || {})) sk.model.set(k, v);
       const bpm = (sc.transport || {}).bpm || 120;
       const toSec = (e) => (e.beat !== undefined ? (e.beat * 60) / bpm : e.t);
-      const events = sc.events.map((e) => ({
-        t: toSec(e),
-        d: e.on !== undefined ? [0x90, e.on, e.vel ?? 100] : e.off !== undefined ? [0x80, e.off, 64]
-          : e.cc !== undefined ? [0xb0, e.cc, e.value] : [0xe0, 0, 64],
-      }));
+      const events = sc.events.map((e) => (e.msg !== undefined
+        ? { t: toSec(e), m: [sk.model.info.messages.indexOf(e.msg), e.values || []] }
+        : {
+          t: toSec(e),
+          d: e.on !== undefined ? [0x90, e.on, e.vel ?? 100] : e.off !== undefined ? [0x80, e.off, 64]
+            : e.cc !== undefined ? [0xb0, e.cc, e.value] : [0xe0, 0, 64],
+        }));
       const seconds = sc.lengthBeats ? (sc.lengthBeats * 60) / bpm : sc.length;
       const tr = sc.transport || {};
       const r = await sk.renderOffline({ events, seconds, sampleRate: 48000,
