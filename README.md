@@ -41,6 +41,15 @@ cmake --build build-web        # → build-web/web/basic.html
 links it on the PR. It needs one setting: Settings → Pages → Build and
 deployment → Deploy from a branch → `gh-pages` / root.
 
+## Starting a new synth
+
+```
+python3 tools/new-synth.py ../my-synth --name "Glass Rain"
+```
+
+makes a synth repo that builds, passes every check and has CI ready: browser
+previews and plugin zips on every PR. See [`API.md`](API.md) §1.
+
 ## Using it in your DAW
 
 Every PR's CI run also has a plugin zip per system: **synthkit-basic-windows**,
@@ -78,7 +87,8 @@ on the computer.
 | 3 ✓ | browser build (one HTML file), UI from layout.json, Web MIDI, presets, previews | play the example synth in the browser |
 | 4 ✓ | mod matrix, LFOs, drawn tempo-locked shapes, musical-time sources, MIDI clock | build richer, tempo-aware patches |
 | 5 ✓ | JUCE plugin adapter (VST3, AU, Standalone; the page as its window), Windows/macOS/Linux CI, pluginval, releases | load it in Live / GarageBand |
-| 6 | synth template + scaffold script | start a new synth in one step |
+| 6 ✓ | synth template + scaffold script (`tools/new-synth.py`), shared CI scripts | start a new synth in one step |
 
-After phase 6: port the aleatoric synth into its own repo using only `API.md`,
-as the real test of the kit.
+Next: the aleatoric synth, ported into its own repo
+([10d6/aleatory](https://github.com/10d6/aleatory)) using only `API.md`, as the
+real test of the kit.

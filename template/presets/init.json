@@ -1,0 +1,7 @@
+{
+  "synthkit": 1,
+  "synth": "{{ID}}",
+  "patchVersion": 1,
+  "name": "Init",
+  "params": {}
+}

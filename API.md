@@ -14,9 +14,22 @@ Include `<synthkit/synth.h>`; everything is in namespace `sk` (DSP blocks in
 
 ## 1. What a synth repo contains ✓
 
+Start one with the scaffold, in an empty folder or a freshly cloned empty repo:
+
+```
+git clone https://github.com/10d6/synthkit /tmp/synthkit
+python3 /tmp/synthkit/tools/new-synth.py my-synth --name "Glass Rain" [--plugin-code Glra] [--id glass-rain]
+```
+
+It copies `template/` (a small working synth: one oscillator, a filter, the
+kit's envelope, LFO, mod matrix and voice modes), fills in the identity, checks
+the permanent codes (§2), and adds synthkit as a submodule pinned to the
+commit it came from. The result builds, passes every check, and has CI ready
+(below). Run it with `--help` for the options.
+
 ```
 my-synth/
-  synthkit/            git submodule, pinned to a tag
+  synthkit/            git submodule, pinned to a commit
   synth.json           identity + feature flags
   src/Synth.cpp        params, voice, optional hooks
   ui/layout.json       which controls go where (§9)
@@ -24,6 +37,8 @@ my-synth/
   presets/*.json       factory patches (embedded into the build)
   tests/*.json         render scenarios run in CI
   CMakeLists.txt
+  .github/workflows/ci.yml
+  README.md, CLAUDE.md
 ```
 
 ```cmake
@@ -45,6 +60,17 @@ also builds the plugins (§12).
 
 Everything else (MIDI, voices, patches, mod matrix, UI binding, automation,
 web build, plugin builds) comes from synthkit.
+
+**CI** (the template's `ci.yml`) runs on every PR: native checks (§10), the
+browser page in Chromium compared with the native render (the scenario in the
+workflow's `SCENARIO`), a GitHub Pages preview linked on the PR, and plugin
+builds for Windows, macOS and Linux with a zip per OS (§12). A `v*` tag
+publishes a release. The steps are scripts in `synthkit/tools/ci/`, so they
+move with the submodule.
+
+**Updating synthkit** in a synth repo: `git -C synthkit fetch && git -C
+synthkit checkout <commit>`, commit the new submodule pointer, and let CI
+check the synth against it.
 
 ## 2. `synth.json`: identity ✓
 
@@ -613,22 +639,28 @@ and `d.name()` convert to and from text.
 
 ## 8. DSP building blocks ✓
 
-All in `sk::dsp`, header-only, allocation-free after `prepare`.
+All in `sk::dsp` (`#include <synthkit/synth.h>` brings them in), header-only,
+allocation-free after `prepare`. Every block has `prepare(sampleRate)` (call it
+from the voice's or synth's `prepare`) and processes one sample per call.
 
-| Block | Notes |
+| Block | How to use it |
 |---|---|
-| `Osc` | sine, saw, square/pulse (`setPulseWidth`), triangle. Band-limited (PolyBLEP/BLAMP): aliasing ≤ −46 dBc at 3 kHz. `reset(phase)` |
-| `Noise` | `white()`, `pink()`; `seed()` it from `rng()` so voices differ |
-| `Svf` | state-variable filter (LP/HP/BP/notch), stable under fast modulation; `set(hz, res)` per sample is fine |
-| `Ladder` | 4-pole low-pass, `set(hz, res, drive)`; self-oscillates at res 1 |
-| `OnePole` | one-pole low/high-pass for tone controls and DC blocking |
-| `Adsr` | linear attack from the current level (no clicks on retrigger); decay/release exponential (straight lines in dB) |
-| `Lfo` | sine/tri/saw/square/S&H; `setRate(hz)` + `advance(n)`, or `syncTo(beat, periodBeats)` |
-| `Smoother` | one-pole smoothing: `next()` per sample or `advance(n)` per block |
-| `Delay` | fractional delay line with cubic interpolation; size in `prepare` |
-| `Rng` | seedable: `uniform()`, `uniform(a,b)`, `bipolar()`, `integer(lo,hi)`, `chance(p)`, `normal()`, `pick({weights})` |
+| `Osc` | `setWave(Osc::Wave::Sine / Saw / Square / Triangle)`, `setFreq(hz)` (per block is fine), `setPulseWidth(0.02…0.98)` for Square, `next()` per sample, `reset(phase)`, `phase()`. Band-limited (PolyBLEP/BLAMP): aliasing ≤ −46 dBc at 3 kHz. |
+| `Noise` | `white()`, `pink()`; `seed(n)` it from `rng()` so voices differ |
+| `Svf` | `setMode(Svf::Mode::LowPass / HighPass / BandPass / Notch)`, `set(hz, res 0…1)` (per sample is fine; res 1 ≈ Q 20), `process(x)`, `reset()`. Stable under fast modulation. |
+| `Ladder` | 4-pole low-pass: `set(hz, res 0…1, drive = 1)`, `process(x)`, `reset()`; self-oscillates at res 1 |
+| `OnePole` | `set(hz)`, then `lowpass(x)` or `highpass(x)`; `reset()`. Tone controls, DC blocking. |
+| `Adsr` | `set(attack s, decay s, sustain 0…1, release s)`, `gate(true/false)`, `next()` per sample, `level()`, `idle()`, `stage()`, `reset()`. Linear attack from the current level (no clicks on retrigger); decay and release exponential (straight lines in dB). The kit's `envN` already cover the usual case. |
+| `Lfo` | `setShape(Lfo::Shape::Sine / Triangle / Saw / Square / SampleHold)`, `setRate(hz)` + `advance(samples)`, or `syncTo(beat, periodBeats, offset)`; `value()` (or `value(rng)` for S&H), `phase()`, `reset(phase)` |
+| `Smoother` | `prepare(sampleRate, ms)`, `setTarget(v)`, `next()` per sample or `advance(n)` per block, `reset(v)`, `value()` |
+| `Delay` | `prepare(sampleRate, maxSeconds)`, `write(x)` once per sample, `read(samplesAgo)` or `readSeconds(s)` (fractional, cubic interpolation), `reset()` |
+| `Rng` | `Rng(seed)` / `seed(n)`; `uniform()` [0, 1), `uniform(a, b)`, `bipolar()` [−1, 1), `integer(lo, hi)` inclusive, `chance(p)`, `normal()`, `pick({w0, w1, …})` → index by weight |
 | `Limiter` | the kit already applies one before output |
-| `softclip`, `mtof`, `ftom`, `dbToGain`, `gainToDb`, `panGains`, `hashSeed` | helpers |
+
+Helpers: `mtof(note, a4 = 440)`, `ftom(hz)`, `dbToGain(db)`, `gainToDb(g)`,
+`lerp(a, b, t)`, `clamp(x, lo, hi)`, `softclip(x)` (bounded to ±1),
+`panGains(p −1…1, l, r)` (equal power), `hashSeed(a, b, c)` (mix numbers into
+a seed for `Rng`), `flushDenormal(x)`, `kPi`, `kTwoPi`.
 
 New blocks are added to the kit when a second synth needs them; until then they
 live in the synth repo.
