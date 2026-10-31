@@ -1,8 +1,7 @@
 # synthkit API
 
-> **Status: v0.4.** Sections marked **✓** are implemented (phases 2–5). The
-> rest are the agreed contract for later phases (see README → Roadmap) and may
-> still be refined when they're built.
+> **Status: v0.5.** Every section marked **✓** is implemented and used by
+> [examples/basic](examples/basic) and [10d6/aleatory](https://github.com/10d6/aleatory).
 
 This page is everything you need to build a synth on synthkit. A synth should
 not need to read synthkit's source; if it does, this page is missing something.
@@ -76,8 +75,8 @@ check the synth against it.
 
 ```json
 {
-  "id": "aleatoric",
-  "name": "Aleatoric",
+  "id": "aleatory",
+  "name": "Aleatory",
   "vendor": "10d6",
   "version": "0.1.0",
   "pluginCode": "Alea",
@@ -426,7 +425,7 @@ old patches.
 ```json
 {
   "synthkit": 1,
-  "synth": "aleatoric",
+  "synth": "aleatory",
   "patchVersion": 1,
   "name": "Glass Rain",
   "author": "",

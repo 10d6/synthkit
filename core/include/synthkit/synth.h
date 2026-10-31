@@ -52,7 +52,7 @@ struct Ramp {
 // What a voice sees while rendering one control block.
 class VoiceContext {
  public:
-  float get(Param p) const { return values_[p.index]; }   // smoothed (+ modulation, phase 4)
+  float get(Param p) const { return values_[p.index]; }   // smoothed, plus this voice's modulation
   int choice(Param p) const { return static_cast<int>(values_[p.index] + 0.5f); }
   bool on(Param p) const { return values_[p.index] >= 0.5f; }
   Ramp ramp(Param p) const { return Ramp{prev_[p.index], values_[p.index], frames_}; }
