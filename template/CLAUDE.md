@@ -23,6 +23,21 @@ from CI at milestones.
 6. Escape hatches and custom state (API.md §4, §5a) are the way to do unusual
    things. A feature moves into the kit when a second synth needs it.
 
+## Fresh workspace
+
+A new session starts without the toolchains. Install them first (Ubuntu; the
+same script CI uses):
+
+```
+git submodule update --init
+synthkit/tools/ci/deps.sh native && synthkit/tools/ci/deps.sh web && synthkit/tools/ci/deps.sh plugin
+```
+
+Playwright/Chromium for the browser test: usually preinstalled (try
+`NODE_PATH=$(npm root -g)`), else `npm install --no-save playwright@1.48.2 &&
+npx playwright install --with-deps chromium`. synthkit's CLAUDE.md has more
+(pluginval, a local JUCE checkout).
+
 ## Commands
 
 ```

@@ -67,6 +67,40 @@ tools/ci/                deps.sh, plugin.sh: CI steps shared by synthkit and
                          every synth repo (pinned with the submodule)
 ```
 
+## Fresh workspace
+
+A new session's workspace has none of the toolchains. Install them first
+(Ubuntu; the same script CI uses, safe to re-run):
+
+```
+tools/ci/deps.sh native && tools/ci/deps.sh web && tools/ci/deps.sh plugin
+```
+
+Chromium and Playwright are usually preinstalled in the cloud workspace
+(`NODE_PATH=$(npm root -g) node …` if `require("playwright")` fails); if not,
+`npm install --no-save playwright@1.48.2 && npx playwright install --with-deps chromium`.
+pluginval: download `pluginval_Linux.zip` from
+https://github.com/Tracktion/pluginval/releases. JUCE is fetched by CMake (or
+`git clone --depth 1 --branch 9.0.4 https://github.com/juce-framework/JUCE
+/tmp/juce9` once and pass `-DFETCHCONTENT_SOURCE_DIR_JUCE=/tmp/juce9` to save
+time). The browser build is Linux-only (Ubuntu's wasm32 packages).
+
+## Starting a new synth (in a new conversation)
+
+The owner creates an empty GitHub repo and gives the session access to it and
+to synthkit, plus the synth's design (an earlier chat, a sketch, a description).
+Then:
+
+1. Clone synthkit and the new repo; set up the workspace (above).
+2. `python3 synthkit/tools/new-synth.py <new repo> --name "…" --plugin-code Xxxx`
+   (run `--help`; the codes are permanent, so choose them with the owner if
+   unsure). Commit the untouched scaffold to `main` so PRs have a base.
+3. Build the synth on a branch, working from `API.md` only, and open a PR.
+   Anything API.md lacks goes into a synthkit PR (doc fix or kit change), and
+   the synth's submodule moves to it.
+4. Remind the owner to turn on Pages (Settings → Pages → `gh-pages` / root)
+   for the preview link.
+
 ## Commands
 
 ```
@@ -76,8 +110,7 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/examples/basic/basic_render examples/basic/tests/chord.json --out x.wav
 ```
 
-Browser build (needs `clang-18 lld-18 wasi-libc libc++-18-dev-wasm32
-libclang-rt-18-dev-wasm32`, already installed if this workspace did phase 3):
+Browser build (`tools/ci/deps.sh web`):
 
 ```
 cmake -S . -B build-web -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/wasm32-wasi.cmake && cmake --build build-web
@@ -86,9 +119,7 @@ node web/test/browser-test.cjs build-web/web/basic.html build-web/test examples/
 python3 web/test/compare.py build-web/test/web-render.f32 build-web/test/native.wav
 ```
 
-Plugins (needs the page built first; JUCE's Linux deps from its
-docs/Linux Dependencies.md, plus xvfb; already installed if this workspace did
-phase 5; `/tmp/juce9` may hold a JUCE checkout):
+Plugins (needs the page built first; `tools/ci/deps.sh plugin`):
 
 ```
 node web/test/plugin-ui-test.cjs build-web/web/basic.html build-web/test   # page <-> plugin messages
