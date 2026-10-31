@@ -16,6 +16,8 @@
 # bundles ad hoc, runs <target>_plugin_check and pluginval (strictness 10;
 # plus auval on macOS), and zips the plugins with INSTALL.md.
 set -euo pipefail
+# Say where it failed, as a GitHub annotation (visible without the full log).
+trap 'echo "::error title=plugin.sh::failed at line $LINENO: $BASH_COMMAND"' ERR
 src="${1:?cmake source dir}"; target="${2:?target}"; synth="${3:?synth dir}"; page="${4:?page dir}"
 out="${5:-plugin.zip}"
 kit="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -53,10 +55,12 @@ if [ "$os" = macOS ]; then
   for b in "$vst3" "$art/AU/$product.component" "$art/Standalone/$product.app"; do codesign --force --deep --sign - "$b"; done
 fi
 
-run=(); [ "$os" = Linux ] && run=(xvfb-run -a)
+# Linux has no display on CI: run GUI-capable tools under Xvfb. (A function,
+# not an array: macOS's bash 3.2 treats an empty array as unset under set -u.)
+run() { if [ "$os" = Linux ]; then xvfb-run -a "$@"; else "$@"; fi; }
 
 echo "::group::Plays like the engine, loaded the way a DAW loads it"
-"${run[@]}" "$check" "$vst3"
+run "$check" "$vst3"
 echo "::endgroup::"
 
 echo "::group::pluginval"
@@ -68,7 +72,7 @@ case "$os" in
 esac
 curl -sSL -o "$pv/pv.zip" "https://github.com/Tracktion/pluginval/releases/download/$PLUGINVAL_VERSION/$zip"
 (cd "$pv" && unzip -q pv.zip)
-"${run[@]}" "$bin" --strictness-level 10 --validate-in-process --timeout-ms 300000 "$vst3"
+run "$bin" --strictness-level 10 --validate-in-process --timeout-ms 300000 "$vst3"
 if [ "$os" = macOS ]; then
   mkdir -p ~/Library/Audio/Plug-Ins/Components
   cp -R "$art/AU/$product.component" ~/Library/Audio/Plug-Ins/Components/
