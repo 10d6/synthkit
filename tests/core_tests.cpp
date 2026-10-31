@@ -56,6 +56,7 @@ struct TestSynth : Synth {
   float setCustomTo = -1;
   Custom<Table> table;
   bool scheduleFifth = false;
+  bool swallowInput = false;  // only scheduled notes sound
   bool triggerShapeOnNote = false;
   int jumps = 0;
 
@@ -74,7 +75,7 @@ struct TestSynth : Synth {
   double tune(int note, const NoteContext&) override { return note + table.read().cents[static_cast<std::size_t>(note)] / 100.0; }
   void processEvents(EventContext& ctx) override {
     for (auto& e : ctx.in()) {
-      ctx.out(e);
+      if (!swallowInput) ctx.out(e);
       if (triggerShapeOnNote && e.isNoteOn() && e.note == 72) ctx.trigger(1);
       if (scheduleFifth && e.isNoteOn()) {
         Beats at = ctx.quantize(e.beat, Division::Eighth) + 0.5;
@@ -290,6 +291,25 @@ TEST(scheduled_events_land_on_the_beat) {
     CHECK(gLog.starts[1].note == 67);
     CHECK_NEAR(gLog.starts[1].beat, 1.0, 1.0 / 24000);
   }
+}
+
+// A note scheduled exactly on a sample lands on that sample whatever the
+// block sizes are (the beat clock's rounding used to move it by one).
+TEST(scheduled_events_ignore_block_boundaries) {
+  std::vector<long> onsets;
+  for (int block : {256, 37, 100, 129, 1000}) {
+    Harness h(block);
+    h.ht.playing = true;
+    h.synth->scheduleFifth = true;
+    h.synth->swallowInput = true;
+    auto out = h.run(48000, {{7200, on(60)}}, block);  // the fifth is due at beat 1.0 = sample 24000
+    long first = -1;
+    for (std::size_t i = 0; i < out.size(); ++i)
+      if (out[i] != 0.f) { first = static_cast<long>(i); break; }
+    onsets.push_back(first);
+  }
+  for (long o : onsets) CHECK(o == onsets[0]);
+  CHECK(onsets[0] >= 24000 && onsets[0] <= 24002);
 }
 
 TEST(polyphony_limit_and_stealing) {

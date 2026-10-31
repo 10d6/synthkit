@@ -522,7 +522,10 @@ struct Core {
     for (auto& q : queue) {
       if (!q.used || q.beat >= blockEnd) continue;
       MidiEvent e = q.e;
-      e.sample = std::clamp(static_cast<int>(std::floor((q.beat - blockStart) * spb)), 0, frames - 1);
+      // The tolerance absorbs rounding in the running beat clock, so an event
+      // exactly on a sample lands there whatever the block boundaries are
+      // (otherwise it could move by one sample between block sizes).
+      e.sample = std::clamp(static_cast<int>(std::floor((q.beat - blockStart) * spb + 1e-6)), 0, frames - 1);
       e.beat = q.beat;
       e.tag = q.tag;
       q.used = false;
