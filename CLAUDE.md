@@ -181,7 +181,9 @@ browser and Linux plugin checks.
 
 ## Status
 
-See README → Roadmap. Phases 1–6 are done (contract; core, DSP, render tool,
-example synth; browser build; modulation; plugins; template + scaffold). The
-first synth repo built from the template is `10d6/aleatory` (the aleatoric
-synth, ported using only `API.md`); gaps found there get fixed in API.md here.
+See README → Roadmap. Phases 1–7 are done (contract; core, DSP, render tool,
+example synth; browser build; modulation; plugins; template + scaffold; the
+first real synth). `10d6/aleatory` (the aleatoric synth) was ported from its
+browser sketch using only `API.md`; gaps found in synth repos get fixed in
+API.md here. The next stress test is `10d6/reedorgan`, a Web Audio reed organ
+with its own page.

@@ -19,9 +19,9 @@ struct SynthInfo {
     bool unison = false;
     int standardEnvelopes = 1;
     bool ampEnv = true;     // env1 shapes each voice's output
-    int standardLfos = 0;   // phase 4
-    int modSlots = 0;       // phase 4
-    int shapes = 0;         // phase 4
+    int standardLfos = 0;
+    int modSlots = 0;
+    int shapes = 0;
     int eventQueue = 256;
   } features;
 
