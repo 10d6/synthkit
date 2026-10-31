@@ -43,13 +43,16 @@ builds from CI artifacts at milestones.
 
 ```
 core/include/synthkit/   public headers: synth.h (what synths use), engine.h
-                         (what adapters use), params, json, custom, dsp/…
+                         (what adapters use), params, json, custom, dsp/…,
+                         webaudio/… (sk::wa: Web Audio's nodes, API.md §8a)
 core/src/                engine.cpp (voices, events, transport), modulation.cpp
                          (sources, matrix, LFOs, shapes), params, json
 cmake/                   synthkit_add_synth() + preset embedding
 tools/render/            <synth>_render: scenarios, generic checks, WAV output
 examples/basic/          subtractive synth exercising the whole API
 tests/core_tests.cpp     kit unit tests (no framework; TEST/CHECK macros)
+tests/webaudio/          sk::wa parity scenarios; tools/wa_parity renders them
+                         natively, web/test/webaudio-parity.cjs in Chromium
 web/wasm/                C API exported to JavaScript
 web/shell/               the page: template, style, js/ (model, audio, host
                          (plugin bridge), controls, panels, modulation, presets,
@@ -118,6 +121,20 @@ node web/test/browser-test.cjs build-web/web/basic.html build-web/test examples/
 ./build/examples/basic/basic_render examples/basic/tests/demo-pump.json --block 128 --out build-web/test/native.wav
 python3 web/test/compare.py build-web/test/web-render.f32 build-web/test/native.wav
 ```
+
+Web Audio blocks (`sk::wa`, API.md §8a) against Chromium's own nodes:
+
+```
+cmake --build build --target synthkit_wa_parity && mkdir -p build/wa
+./build/synthkit_wa_parity tests/webaudio/parity.json build/wa
+node web/test/webaudio-parity.cjs tests/webaudio/parity.json build/wa
+```
+
+Changing an `sk::wa` block means it must still match the browser: run these,
+and add a case to `tests/webaudio/parity.json` for anything new. The blocks
+follow Chromium's code (BSD; notice in `core/include/synthkit/webaudio.h`), so
+when they disagree, read Chromium's `third_party/blink/renderer/platform/audio`
+and `modules/webaudio` rather than tuning numbers.
 
 Plugins (needs the page built first; `tools/ci/deps.sh plugin`):
 

@@ -687,6 +687,51 @@ a seed for `Rng`), `flushDenormal(x)`, `kPi`, `kTwoPi`.
 New blocks are added to the kit when a second synth needs them; until then they
 live in the synth repo.
 
+## 8a. Web Audio blocks ✓
+
+Synths often start as a browser sketch built from Web Audio nodes. The blocks
+in `sk::wa` compute what those nodes compute, **sample for sample**, so a port
+is a translation that can be checked against the sketch by comparing renders,
+not a re-voicing by ear. They come with `<synthkit/synth.h>`.
+
+| Block | Web Audio node | How to use it |
+|---|---|---|
+| `wa::BiquadFilter` | `BiquadFilterNode` | `prepare(sr)`, `setType(Type::Lowpass / Highpass / Bandpass / Lowshelf / Highshelf / Peaking / Notch / Allpass)`, `set(frequency, Q, gainDb = 0, detuneCents = 0)` (cheap to call every sample; recomputes only on change), `process(x)`, `flush()` once per block, `magnitude(hz)` / `phase(hz)` (`getFrequencyResponse`). Q is in dB for lowpass and highpass, as in Web Audio. One per channel. |
+| `wa::DynamicsCompressor` | `DynamicsCompressorNode` | `prepare(sr)`, `set(thresholdDb, kneeDb, ratio, attack, release)` (defaults −24, 30, 12, 0.003, 0.25), `process(l, r)` in place (stereo, linked), `reduction()` (dB), `latency()` (the browsers' 6 ms look-ahead). |
+| `wa::Convolver` | `ConvolverNode` | `setImpulse(channels, numChannels 1–2, length, irSampleRate, normalize = true)` (**allocates**: call it in `prepare` or before audio starts), then `process(l, r)` or `processMono(in, l, r)`. Zero latency, Web Audio's normalisation and channel routing. Costs a 64-tap direct head per sample plus FFT partitions; the most work in one sample is a few 8192-point FFTs. |
+| `wa::PeriodicWave`, `wa::Oscillator` | `createPeriodicWave`, `OscillatorNode` | `wave.build(sr, real, imag, count, disableNormalization = false)` or `wave.build(sr, PeriodicWave::Basic::Sawtooth)` (**allocates**; one wave can feed many oscillators). `osc.prepare(sr)`, `osc.setWave(&wave)`, `osc.reset(phase0to1)`, `osc.next(hz)` per sample, with detune folded in: `hz * exp2(cents / 1200)`. |
+| `wa::WaveShaper` | `WaveShaperNode` | `setCurve(curve, n)` (copies; **allocates**), `setOversample(Oversample::None / X2 / X4)`, `process(x)`. Oversampling uses the browsers' filters, so it has their latency (128 / 192 samples at 2× / 4×). |
+| `wa::StereoPanner` | `StereoPannerNode` | `StereoPanner::process(pan, l, r)` (stereo input) or `processMono(pan, in, l, r)`. |
+| `wa::Delay` | `DelayNode` | `prepare(sr, maxSeconds)`, `process(x, delaySeconds)` (write, then read; linear interpolation). |
+| `wa::Param` | `AudioParam` | `Param p(default, min, max)`; `setValueAtTime`, `linearRampToValueAtTime`, `exponentialRampToValueAtTime`, `setTargetAtTime`, `setValueCurveAtTime(curve, n, t, duration)`, `cancelScheduledValues`, `cancelAndHoldAtTime`, `setValue(v)`; `valueAt(t)` per sample (times only move forward) or `fill(t0, dt, out, n)`. Times are seconds on the synth's own clock (keep a `double now` the way the sketch used `ctx.currentTime`). Room for 32 events and 256 curve points; `reserve(events, points)` in `prepare` for more. A full Param refuses an event (returns false) instead of allocating. |
+
+Porting a node graph:
+
+- **Gain, ConstantSource, connections into AudioParams** are just arithmetic:
+  a gain node is a multiply, a `ConstantSourceNode` is a `wa::Param`, and a
+  connection into a param adds to its value (`osc.next(freq * exp2((detune +
+  wind) / 1200))`).
+- **Per voice or global.** A node created per note becomes a member of the
+  voice; one shared by all notes goes in the synth and runs in
+  `processGlobal`. A node's channel count carries over: process each channel
+  through its own block (biquads, shapers, delays), or use the stereo calls.
+- **Where it can differ.** The browser renders in blocks of 128 and reads
+  k-rate values once per block; these blocks read whatever you pass, when you
+  pass it. Pass values per sample for a-rate behaviour, or hold them for 128
+  samples where a sketch relied on k-rate timing. Chromium's x86 code steps
+  ramps in single precision, so a *modulated* `DelayNode` agrees to about
+  −58 dB rather than exactly.
+- **Checking a port.** Render the sketch's graph in an `OfflineAudioContext`
+  and the port with the same input, and compare. synthkit does this for every
+  block (`tests/webaudio/parity.json`, checked in CI against Chromium):
+
+  ```
+  ./build/synthkit_wa_parity tests/webaudio/parity.json build/wa
+  node web/test/webaudio-parity.cjs tests/webaudio/parity.json build/wa
+  ```
+
+  The two scripts are a template for a synth's own comparison with its sketch.
+
 ## 9. UI layout ✓
 
 `ui/layout.json` arranges the synth's panel. It's optional: without it, the

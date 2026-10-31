@@ -1,0 +1,46 @@
+{
+  "about": "Scenarios rendered both by Chromium's real Web Audio nodes (web/test/webaudio-parity.cjs) and by the sk::wa blocks (tools/wa_parity). Each is a source followed by a chain of nodes; 'limit' is the largest allowed difference, in dB relative to the browser's output level.",
+  "cases": [
+    { "name": "biquad-lowpass", "source": { "type": "noise", "seed": 1 }, "chain": [ { "node": "biquad", "type": "lowpass", "frequency": 1200, "Q": 6 } ], "limit": -90 },
+    { "name": "biquad-highpass", "source": { "type": "noise", "seed": 2 }, "chain": [ { "node": "biquad", "type": "highpass", "frequency": 80, "Q": -3.01 } ], "limit": -90 },
+    { "name": "biquad-bandpass", "source": { "type": "noise", "seed": 3 }, "chain": [ { "node": "biquad", "type": "bandpass", "frequency": 2600, "Q": 0.8 } ], "limit": -90 },
+    { "name": "biquad-lowshelf", "source": { "type": "noise", "seed": 4 }, "chain": [ { "node": "biquad", "type": "lowshelf", "frequency": 230, "gain": 4 } ], "limit": -90 },
+    { "name": "biquad-highshelf", "source": { "type": "noise", "seed": 5 }, "chain": [ { "node": "biquad", "type": "highshelf", "frequency": 6000, "gain": -6, "detune": 150 } ], "limit": -90 },
+    { "name": "biquad-peaking", "source": { "type": "noise", "seed": 6 }, "chain": [ { "node": "biquad", "type": "peaking", "frequency": 1100, "Q": 1.4, "gain": 3 } ], "limit": -90 },
+    { "name": "biquad-notch", "source": { "type": "noise", "seed": 7 }, "chain": [ { "node": "biquad", "type": "notch", "frequency": 440, "Q": 4 } ], "limit": -90 },
+    { "name": "biquad-allpass", "source": { "type": "noise", "seed": 8 }, "chain": [ { "node": "biquad", "type": "allpass", "frequency": 700, "Q": 0.7 } ], "limit": -90 },
+
+    { "name": "compressor-default", "source": { "type": "noise", "seed": 9, "gain": 0.9, "envelope": true }, "chain": [ { "node": "compressor" } ], "limit": -70 },
+    { "name": "compressor-organ", "source": { "type": "noise", "seed": 10, "gain": 0.8, "envelope": true }, "chain": [ { "node": "compressor", "threshold": -16, "ratio": 4, "attack": 0.01, "release": 0.2 } ], "limit": -70 },
+    { "name": "compressor-limiter", "source": { "type": "noise", "seed": 11, "gain": 1.0, "envelope": true }, "chain": [ { "node": "compressor", "threshold": -1, "knee": 0, "ratio": 20, "attack": 0.002, "release": 0.15 } ], "limit": -70 },
+
+    { "name": "convolver-mono-ir", "source": { "type": "noise", "seed": 12, "gain": 0.5 }, "chain": [ { "node": "convolver", "ir": { "seed": 100, "seconds": 0.2, "channels": 1, "decay": 3 } } ], "limit": -80 },
+    { "name": "convolver-stereo-ir", "source": { "type": "noise", "seed": 13, "gain": 0.5, "stereo": true }, "chain": [ { "node": "convolver", "ir": { "seed": 101, "seconds": 1.8, "channels": 2, "decay": 3 } } ], "length": 2.5, "limit": -80 },
+    { "name": "convolver-mono-in-stereo-ir", "source": { "type": "impulse" }, "chain": [ { "node": "convolver", "ir": { "seed": 102, "seconds": 0.5, "channels": 2, "decay": 2 } } ], "limit": -80 },
+    { "name": "convolver-no-normalize", "source": { "type": "noise", "seed": 14, "gain": 0.2 }, "chain": [ { "node": "convolver", "normalize": false, "ir": { "seed": 103, "seconds": 0.05, "channels": 2, "decay": 4 } } ], "limit": -80 },
+
+    { "name": "osc-sine", "source": { "type": "osc", "basic": "sine", "frequency": 440 }, "chain": [], "limit": -90 },
+    { "name": "osc-sawtooth", "source": { "type": "osc", "basic": "sawtooth", "frequency": 110 }, "chain": [], "limit": -90 },
+    { "name": "osc-square-high", "source": { "type": "osc", "basic": "square", "frequency": 3520 }, "chain": [], "limit": -90 },
+    { "name": "osc-triangle-low", "source": { "type": "osc", "basic": "triangle", "frequency": 2.5 }, "chain": [], "limit": -90 },
+    { "name": "osc-periodic-reed", "source": { "type": "osc", "wave": { "real": [0, 0.05, 0.02, 0.01, 0, 0.005], "imag": [0, 1, 0.6, 0.35, 0.2, 0.12, 0.08, 0.05, 0.03] }, "frequency": 196 }, "chain": [], "limit": -90 },
+    { "name": "osc-periodic-raw", "source": { "type": "osc", "wave": { "real": [0, 0], "imag": [0, 0.5, 0.25], "disableNormalization": true }, "frequency": 330 }, "chain": [], "limit": -90 },
+    { "name": "osc-frequency-sweep", "source": { "type": "osc", "basic": "sawtooth", "frequency": 50, "frequencyAuto": [ ["exponentialRampToValueAtTime", 8000, 0.9] ] }, "chain": [], "length": 1, "limit": -70 },
+    { "name": "osc-detune-vibrato", "source": { "type": "osc", "wave": { "real": [0, 0], "imag": [0, 1, 0.5, 0.3, 0.2] }, "frequency": 262, "detuneAuto": [ ["setValueAtTime", -200, 0], ["linearRampToValueAtTime", 0, 0.12], ["setTargetAtTime", 30, 0.2, 0.05], ["linearRampToValueAtTime", -30, 0.6] ] }, "chain": [], "length": 0.8, "limit": -70 },
+
+    { "name": "shaper-none", "source": { "type": "osc", "basic": "sine", "frequency": 330, "gain": 1.4 }, "chain": [ { "node": "shaper", "curve": { "softclip": 2049 } } ], "limit": -90 },
+    { "name": "shaper-2x", "source": { "type": "osc", "basic": "sine", "frequency": 1250, "gain": 1.4 }, "chain": [ { "node": "shaper", "oversample": "2x", "curve": { "softclip": 2049 } } ], "limit": -90 },
+    { "name": "shaper-4x", "source": { "type": "noise", "seed": 15, "gain": 1.2 }, "chain": [ { "node": "shaper", "oversample": "4x", "curve": { "softclip": 1025 } } ], "limit": -90 },
+
+    { "name": "panner-mono", "source": { "type": "noise", "seed": 16 }, "chain": [ { "node": "panner", "pan": -0.4 } ], "limit": -100 },
+    { "name": "panner-stereo", "source": { "type": "noise", "seed": 17, "stereo": true }, "chain": [ { "node": "panner", "pan": 0.7 } ], "limit": -100 },
+    { "name": "delay-fraction", "source": { "type": "noise", "seed": 18 }, "chain": [ { "node": "delay", "time": 0.00523 } ], "limit": -100 },
+    { "name": "delay-modulated", "note": "Chromium's x86 code steps ramps in float; last-bit differences in the delay time flip the float rounding of its read position (about -58 dB here). Constant delays match exactly.", "source": { "type": "noise", "seed": 19 }, "chain": [ { "node": "delay", "time": 0.004, "timeAuto": [ ["linearRampToValueAtTime", 0.009, 0.4], ["setTargetAtTime", 0.002, 0.45, 0.03] ] } ], "limit": -50 },
+
+    { "name": "param-ramps", "source": { "type": "constant", "offset": 0.2, "auto": [ ["setValueAtTime", 0.5, 0.01], ["linearRampToValueAtTime", 1, 0.1], ["exponentialRampToValueAtTime", 0.01, 0.25], ["setValueAtTime", -0.3, 0.3], ["linearRampToValueAtTime", 0.4, 0.31] ] }, "chain": [], "limit": -100 },
+    { "name": "param-target", "source": { "type": "constant", "offset": 0, "auto": [ ["setTargetAtTime", 1, 0.02, 0.03], ["setTargetAtTime", 0.25, 0.15, 0.08], ["setValueAtTime", 0.5, 0.4] ] }, "chain": [], "limit": -100 },
+    { "name": "param-curve", "source": { "type": "constant", "offset": 0, "auto": [ ["setValueCurveAtTime", [0, 1, 0.2, 0.8, -0.5, 0.3], 0.05, 0.3], ["linearRampToValueAtTime", 0, 0.45] ] }, "chain": [], "limit": -100 },
+    { "name": "param-target-then-ramp", "source": { "type": "constant", "offset": 1, "auto": [ ["setTargetAtTime", 0, 0.05, 0.1], ["linearRampToValueAtTime", 0.8, 0.3] ] }, "chain": [], "limit": -100 },
+    { "name": "param-cancel", "source": { "type": "constant", "offset": 0, "auto": [ ["linearRampToValueAtTime", 1, 0.4], ["cancelAndHoldAtTime", 0.2], ["setValueAtTime", 0.1, 0.3], ["exponentialRampToValueAtTime", 0.9, 0.4], ["cancelScheduledValues", 0.35] ] }, "chain": [], "limit": -100 }
+  ]
+}
