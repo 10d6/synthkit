@@ -61,7 +61,10 @@ plugin/                  JUCE adapter: Processor (engine, params, state,
                          transport), Editor (web view + page bridge), Settings
                          (shared store), test/PluginCheck (DAW-style check)
 cmake/plugin.cmake       JUCE fetch (pinned) + <name>_plugin targets
-template/                phase 6
+template/                a new synth repo ({{PLACEHOLDERS}}); tools/new-synth.py
+                         copies it, fills it in and pins synthkit as a submodule
+tools/ci/                deps.sh, plugin.sh: CI steps shared by synthkit and
+                         every synth repo (pinned with the submodule)
 ```
 
 ## Commands
@@ -78,7 +81,7 @@ libclang-rt-18-dev-wasm32`, already installed if this workspace did phase 3):
 
 ```
 cmake -S . -B build-web -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/wasm32-wasi.cmake && cmake --build build-web
-node web/test/browser-test.cjs build-web/web/basic.html build-web/test examples/basic/tests/demo-pump.json
+node web/test/browser-test.cjs build-web/web/basic.html build-web/test examples/basic/tests/demo-pump.json --kit-ui
 ./build/examples/basic/basic_render examples/basic/tests/demo-pump.json --block 128 --out build-web/test/native.wav
 python3 web/test/compare.py build-web/test/web-render.f32 build-web/test/native.wav
 ```
@@ -95,6 +98,16 @@ xvfb-run -a build-plugin/examples/basic/basic_plugin_check_artefacts/Release/bas
   "build-plugin/examples/basic/basic_plugin_artefacts/Release/VST3/synthkit Basic.vst3"
 xvfb-run -a pluginval --strictness-level 10 --validate-in-process "<same .vst3>"
 ```
+
+New synth repo from the template (`--link-synthkit` symlinks instead of a
+submodule, for testing the template against this checkout):
+
+```
+python3 tools/new-synth.py /tmp/newsynth --name "Glass Rain" --link-synthkit .
+```
+
+The template is checked in CI (the "Template synth" job). Template changes are
+API changes for synth repos: keep API.md §1 in step.
 
 The standalone runs under Xvfb (`~/.asoundrc` with `pcm.!default { type null }`
 gives it an audio device); screenshot with ImageMagick `import -window root`.
@@ -131,11 +144,13 @@ builds run on every PR too: Windows, macOS (universal + AU) and Linux, each
 with `<name>_plugin_check` and pluginval (auval on macOS), uploading a zip per
 OS (`synthkit-basic-<os>`) for the owner to install. A `v*` tag makes a
 GitHub release from those zips. The Windows job gets the WebView2 SDK from
-NuGet.
+NuGet. The plugin steps live in `tools/ci/` so synth repos run the same ones.
+A "Template synth" job scaffolds a synth from `template/` and runs its native,
+browser and Linux plugin checks.
 
 ## Status
 
-See README → Roadmap. Phases 1–5 are done (contract; core, DSP, render tool,
-example synth; browser build; modulation; plugins). Next: **phase 6 — synth
-template + scaffold script**, then port the aleatoric synth using only
-`API.md`.
+See README → Roadmap. Phases 1–6 are done (contract; core, DSP, render tool,
+example synth; browser build; modulation; plugins; template + scaffold). The
+first synth repo built from the template is `10d6/aleatory` (the aleatoric
+synth, ported using only `API.md`); gaps found there get fixed in API.md here.

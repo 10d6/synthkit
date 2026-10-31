@@ -228,7 +228,15 @@ ParamDef ParamBuilder::addArray(std::string id, int n) {
   return ParamDef(this, first, n, true);
 }
 
+void ParamBuilder::kitDefault(std::string id, double value) { kitDefaults_.emplace_back(std::move(id), value); }
+
 std::vector<ParamSpec> ParamBuilder::finish() {
+  for (auto& [id, value] : kitDefaults_) {
+    auto it = std::find_if(specs_.begin(), specs_.end(), [&](const Pending& p) { return p.spec.id == id; });
+    if (it == specs_.end()) fail("kitDefault: no kit parameter '" + id + "'");
+    if (!it->spec.kit) fail("kitDefault: '" + id + "' is the synth's own parameter; set its def() instead");
+    it->spec.def = value;
+  }
   std::vector<ParamSpec> out;
   std::unordered_set<std::string> seen;
   for (auto& p : specs_) {

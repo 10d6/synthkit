@@ -56,6 +56,7 @@ struct TestSynth : Synth {
   float setCustomTo = -1;
   Custom<Table> table;
   bool scheduleFifth = false;
+  bool swallowInput = false;  // only scheduled notes sound
   bool triggerShapeOnNote = false;
   int jumps = 0;
 
@@ -74,7 +75,7 @@ struct TestSynth : Synth {
   double tune(int note, const NoteContext&) override { return note + table.read().cents[static_cast<std::size_t>(note)] / 100.0; }
   void processEvents(EventContext& ctx) override {
     for (auto& e : ctx.in()) {
-      ctx.out(e);
+      if (!swallowInput) ctx.out(e);
       if (triggerShapeOnNote && e.isNoteOn() && e.note == 72) ctx.trigger(1);
       if (scheduleFifth && e.isNoteOn()) {
         Beats at = ctx.quantize(e.beat, Division::Eighth) + 0.5;
@@ -122,6 +123,8 @@ struct Harness {
   double sr = 48000;
   HostTransport ht;
   long pos = 0;
+  bool accumulateBeats = false;  // add up the beat per block, as the browser does
+  double accBeat = 0;
   explicit Harness(int block = 256, const char* extra = "") {
     auto s = std::make_unique<TestSynth>();
     synth = s.get();
@@ -149,9 +152,10 @@ struct Harness {
         ev.push_back(e);
         ++ei;
       }
-      if (ht.playing) ht.beat = pos / sr * ht.bpm / 60.0;
+      if (ht.playing) ht.beat = accumulateBeats ? accBeat : pos / sr * ht.bpm / 60.0;
       float* o[2] = {l.data(), r.data()};
       eng->process(o, 2, b, ev.data(), static_cast<int>(ev.size()), ht);
+      accBeat += (b / sr) * (ht.bpm / 60.0);
       for (int i = 0; i < b; ++i) out.push_back(l[static_cast<std::size_t>(i)]);
       pos += b;
     }
@@ -223,6 +227,44 @@ TEST(param_id_rules) {
 
 // ------------------------------------------------------------ time
 
+// A synth can read kit parameters and give them its own defaults.
+struct SilentVoice : Voice {
+  void start(const NoteOn&, const StartInfo&) override {}
+  void render(VoiceContext&, Buffer&) override {}
+};
+struct KitParamSynth : Synth {
+  Param sustain, master;
+  void defineParams(ParamBuilder& b) override {
+    b.add("x").range(0, 1);
+    b.kitDefault("env1.attack", 0.08);
+    b.kitDefault("master", -6);
+  }
+  void prepare(const PrepareInfo& info) override {
+    sustain = info.param("env1.sustain");
+    master = info.param("master");
+  }
+  std::unique_ptr<Voice> makeVoice() override { return std::make_unique<SilentVoice>(); }
+};
+
+TEST(kit_params_reachable_and_defaults_overridable) {
+  auto s = std::make_unique<KitParamSynth>();
+  auto* synth = s.get();
+  Engine eng(std::move(s), testInfo());
+  eng.prepare(48000, 256);
+  auto& ps = eng.params();
+  CHECK(synth->sustain.valid() && ps.spec(synth->sustain.index).id == "env1.sustain");
+  CHECK(ps.spec(synth->master.index).id == "master");
+  CHECK(std::fabs(ps.spec(ps.find("env1.attack")).def - 0.08) < 1e-9);
+  CHECK(std::fabs(ps.get(ps.find("master")) + 6) < 1e-6);
+  ParamBuilder b;
+  b.add("own").range(0, 1);
+  b.kitDefault("own", 0.5);
+  CHECK_THROWS(b.finish());   // not a kit parameter
+  ParamBuilder b2;
+  b2.kitDefault("env9.attack", 0.1);
+  CHECK_THROWS(b2.finish());  // no such parameter
+}
+
 TEST(divisions) {
   Division d;
   CHECK(Division::parse("1/8T", d) && std::fabs(d.beats - 1.0 / 3.0) < 1e-12);
@@ -252,6 +294,30 @@ TEST(scheduled_events_land_on_the_beat) {
     CHECK(gLog.starts[1].note == 67);
     CHECK_NEAR(gLog.starts[1].beat, 1.0, 1.0 / 24000);
   }
+}
+
+// A note scheduled exactly on a sample lands on that sample whatever the
+// block sizes are (the beat clock's rounding used to move it by one).
+TEST(scheduled_events_ignore_block_boundaries) {
+  std::vector<long> onsets;
+  for (int block : {256, 37, 100, 129, 1000, 96, 128, 160})
+  for (bool accumulate : {false, true}) {
+    Harness h(block);
+    h.ht.playing = true;
+    h.ht.bpm = 96;  // 30000 samples per beat
+    h.accumulateBeats = accumulate;
+    h.synth->scheduleFifth = true;
+    h.synth->swallowInput = true;
+    // Key at beat 7.3: the fifth is due at beat 8.0 = sample 240000, after
+    // enough blocks for the beat clock's rounding to build up.
+    auto out = h.run(250000, {{219000, on(60)}}, block);
+    long first = -1;
+    for (std::size_t i = 0; i < out.size(); ++i)
+      if (out[i] != 0.f) { first = static_cast<long>(i); break; }
+    onsets.push_back(first);
+  }
+  for (long o : onsets) CHECK(o == onsets[0]);
+  CHECK(onsets[0] >= 240000 && onsets[0] <= 240002);
 }
 
 TEST(polyphony_limit_and_stealing) {

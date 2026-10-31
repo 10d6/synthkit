@@ -117,7 +117,7 @@ function(_synthkit_add_plugin name dir)
     juce::juce_recommended_config_flags)
 
   # Loads the built VST3 like a DAW and checks it against the engine.
-  juce_add_console_app(${name}_plugin_check PRODUCT_NAME "${name}_plugin_check")
+  juce_add_console_app(${name}_plugin_check PRODUCT_NAME "${name}_plugin_check" VERSION "${_sk_version}")
   target_sources(${name}_plugin_check PRIVATE "${SYNTHKIT_ROOT}/plugin/test/PluginCheck.cpp")
   target_compile_definitions(${name}_plugin_check PRIVATE
     JUCE_PLUGINHOST_VST3=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_MODAL_LOOPS_PERMITTED=0)

@@ -25,6 +25,11 @@ inline constexpr int kControlBlock = 32;  // samples per control-rate step
 struct PrepareInfo {
   double sampleRate = 48000;
   int maxBlock = 512;
+  const ParamStore* params = nullptr;
+
+  // Any parameter by ID, including the kit's (env1.sustain, master, …), for
+  // use with ctx.get(). Reports an unknown ID with sk::fail.
+  Param param(std::string_view id) const;
 };
 
 // Stereo scratch buffer a voice ADDS into. At most kControlBlock frames.
@@ -151,6 +156,8 @@ class EventContext {
   dsp::Rng rng(const MidiEvent& e, bool perKey = false);  // perKey: same stream every time
   const Transport& transport() const;
   float get(Param p) const;
+  int choice(Param p) const { return static_cast<int>(get(p) + 0.5f); }
+  bool on(Param p) const { return get(p) >= 0.5f; }
   double sampleRate() const;
   int pending() const;                                  // queued events
   void trigger(int shape);                              // restart shape n (1-based) now

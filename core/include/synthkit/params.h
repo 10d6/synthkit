@@ -95,6 +95,11 @@ class ParamBuilder {
   // Used by the kit for its own parameters (bypasses the reserved-ID check).
   ParamDef addKit(std::string id);
 
+  // A different default for one of the kit's parameters (env1.attack,
+  // master, …), applied once the kit has added them. Unknown or non-kit IDs
+  // are reported by finish().
+  void kitDefault(std::string id, double value);
+
   std::vector<ParamSpec> finish();  // validates; throws std::invalid_argument
   int count() const { return static_cast<int>(specs_.size()); }
 
@@ -106,6 +111,7 @@ class ParamBuilder {
     int arrayIndex = 0;
   };
   std::deque<Pending> specs_;
+  std::vector<std::pair<std::string, double>> kitDefaults_;
   bool allowReserved_ = false;
 };
 

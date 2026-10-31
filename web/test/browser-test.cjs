@@ -1,5 +1,5 @@
 // Headless-Chromium checks for a packed synth page:
-//   node web/test/browser-test.cjs <synth.html> <out dir> [scenario.json]
+//   node web/test/browser-test.cjs <synth.html> <out dir> [scenario.json] [--kit-ui]
 // - the page boots with no console errors, at desktop and phone width
 //   (screenshots written to <out dir>)
 // - playing from the computer keyboard starts voices
@@ -10,7 +10,11 @@ const fs = require("fs");
 const path = require("path");
 
 async function main() {
-  const [html, outDir, scenarioPath] = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  // --kit-ui: also run the kit's UI tests, which use the example synth's
+  // controls and presets (synthkit's own CI). Synth repos run the rest.
+  const kitUi = args.includes("--kit-ui");
+  const [html, outDir, scenarioPath] = args.filter((a) => !a.startsWith("--"));
   fs.mkdirSync(outDir, { recursive: true });
   const url = "file://" + path.resolve(html);
   const browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
@@ -40,6 +44,7 @@ async function main() {
       const voices = await page.evaluate(() => document.querySelector(".voice-count").textContent);
       if (!/^[1-9]/.test(voices)) fail(`keyboard didn't start voices (meter says "${voices}")`); else pass(`computer keyboard plays (${voices})`);
       for (const k of ["a", "d", "g"]) await page.keyboard.up(k);
+      if (kitUi) {
       // Knob via keyboard focus + arrows changes the model and the readout.
       const cut = page.locator('[data-param="filter.cutoff"] .knob-dial');
       const before = await page.evaluate(() => window.synthkit.model.get("filter.cutoff"));
@@ -273,6 +278,7 @@ async function main() {
         });
         if (!clock.playing || Math.abs(clock.bpm - 120) > 1) fail(`MIDI clock follow gave ${JSON.stringify(clock)}`); else pass(`follows MIDI clock (${clock.bpm} BPM)`);
       }
+      }  // kitUi
     }
     if (errors.length) fail(`${name}: console errors: ${errors.join(" | ")}`); else pass(`${name}: boots with no console errors`);
     await page.close();

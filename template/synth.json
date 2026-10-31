@@ -1,0 +1,16 @@
+{
+  "id": "{{ID}}",
+  "name": "{{NAME}}",
+  "vendor": "{{VENDOR}}",
+  "version": "0.1.0",
+  "pluginCode": "{{PLUGIN_CODE}}",
+  "vendorCode": "{{VENDOR_CODE}}",
+  "patchVersion": 1,
+  "features": {
+    "voices": 16,
+    "voiceModes": ["poly", "mono", "legato"],
+    "standardEnvelopes": 1,
+    "standardLfos": 1,
+    "modSlots": 4
+  }
+}
