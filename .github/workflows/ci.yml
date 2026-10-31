@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]          # a version tag also publishes a release
   pull_request:
 
 # Jobs only read the repo unless they ask for more (pages does).
@@ -72,6 +73,8 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Check the page in Chromium
         run: node web/test/browser-test.cjs build-web/web/basic.html web-test examples/basic/tests/demo-pump.json
+      - name: Check the page's plugin mode (page <-> plugin messages)
+        run: node web/test/plugin-ui-test.cjs build-web/web/basic.html web-test
       - name: Browser output matches the native engine
         run: |
           ./build/examples/basic/basic_render examples/basic/tests/demo-pump.json --block 128 --out web-test/native.wav
@@ -88,6 +91,135 @@ jobs:
             web-test/native.wav
           if-no-files-found: ignore
           retention-days: 30
+
+  # VST3 (+ AU on macOS) and Standalone builds. The plugin window is the page
+  # built by the web job, so these wait for it.
+  plugin:
+    name: Plugin (${{ matrix.name }})
+    needs: web
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-2022
+            slug: windows
+          - name: macOS
+            os: macos-15
+            slug: macos
+          - name: Linux
+            os: ubuntu-24.04
+            slug: linux
+    env:
+      ART: build/examples/basic/basic_plugin_artefacts/Release
+      CHECK: build/examples/basic/basic_plugin_check_artefacts/Release/basic_plugin_check
+      PRODUCT: synthkit Basic
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-basic
+          path: page
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build xvfb libasound2-dev libjack-jackd2-dev ladspa-sdk libcurl4-openssl-dev \
+            libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev \
+            libxrandr-dev libxrender-dev libxi-dev libwebkit2gtk-4.1-dev libegl-dev libglu1-mesa-dev mesa-common-dev
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+      - name: Get the WebView2 SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: nuget install Microsoft.Web.WebView2 -OutputDirectory "$RUNNER_TEMP/nuget" -NonInteractive
+      - name: Configure
+        shell: bash
+        run: |
+          args=(-DCMAKE_BUILD_TYPE=Release -DSYNTHKIT_PLUGIN=ON -DSYNTHKIT_BUILD_TESTS=OFF -DSYNTHKIT_WEB_UI_DIR="$PWD/page/build-web/web")
+          case "$RUNNER_OS" in
+            Windows) args+=(-DJUCE_WEBVIEW2_PACKAGE_LOCATION="$RUNNER_TEMP/nuget") ;;
+            macOS)   args+=(-G Ninja "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0) ;;
+            Linux)   args+=(-G Ninja) ;;
+          esac
+          cmake -S . -B build "${args[@]}"
+      - name: Build
+        shell: bash
+        run: |
+          targets=(basic_plugin_VST3 basic_plugin_Standalone basic_plugin_check)
+          [ "$RUNNER_OS" = macOS ] && targets+=(basic_plugin_AU)
+          cmake --build build --config Release --parallel --target "${targets[@]}"
+      - name: Sign for local use (macOS, ad hoc)
+        if: runner.os == 'macOS'
+        run: |
+          for b in "$ART/VST3/$PRODUCT.vst3" "$ART/AU/$PRODUCT.component" "$ART/Standalone/$PRODUCT.app"; do
+            codesign --force --deep --sign - "$b"
+          done
+      - name: Plays like the engine, as a DAW loads it
+        shell: bash
+        run: |
+          run=(); [ "$RUNNER_OS" = Linux ] && run=(xvfb-run -a)
+          "${run[@]}" "$CHECK" "$ART/VST3/$PRODUCT.vst3"
+      - name: pluginval
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) zip=pluginval_Windows.zip; bin=./pluginval.exe ;;
+            macOS)   zip=pluginval_macOS.zip;   bin=./pluginval.app/Contents/MacOS/pluginval ;;
+            Linux)   zip=pluginval_Linux.zip;   bin=./pluginval ;;
+          esac
+          curl -sSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/$zip"
+          unzip -q pv.zip
+          run=(); [ "$RUNNER_OS" = Linux ] && run=(xvfb-run -a)
+          "${run[@]}" $bin --strictness-level 10 --validate-in-process --timeout-ms 300000 "$ART/VST3/$PRODUCT.vst3"
+          if [ "$RUNNER_OS" = macOS ]; then
+            mkdir -p ~/Library/Audio/Plug-Ins/Components
+            cp -R "$ART/AU/$PRODUCT.component" ~/Library/Audio/Plug-Ins/Components/
+            killall -9 AudioComponentRegistrar 2>/dev/null || true
+            auval -a > /dev/null
+            auval -strict -v aumu Skba Tend
+            $bin --strictness-level 10 --validate-in-process --timeout-ms 300000 ~/Library/Audio/Plug-Ins/Components/"$PRODUCT.component"
+          fi
+      - name: Package
+        shell: bash
+        run: |
+          out="pkg/$PRODUCT"
+          mkdir -p "$out"
+          cp -R "$ART/VST3/$PRODUCT.vst3" "$out/"
+          [ -d "$ART/AU" ] && cp -R "$ART/AU/$PRODUCT.component" "$out/"
+          cp -R "$ART/Standalone/"* "$out/"
+          cp plugin/INSTALL.md "$out/INSTALL.md"
+          cd pkg
+          if [ "$RUNNER_OS" = Windows ]; then 7z a -tzip -bd ../plugin.zip "$PRODUCT" > /dev/null; else zip -qry ../plugin.zip "$PRODUCT"; fi
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthkit-basic-${{ matrix.slug }}
+          path: plugin.zip
+          retention-days: 30
+
+  # On a version tag (v0.2.0 …): a GitHub release with the plugin zips.
+  release:
+    name: Release
+    needs: plugin
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: synthkit-basic-*
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for os in windows macos linux; do mv "synthkit-basic-$os/plugin.zip" "synthkit-Basic-$TAG-$os.zip"; done
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "synthkit Basic $TAG" \
+            --notes "Install: unzip, then follow INSTALL.md inside." synthkit-Basic-*.zip
 
   # Publishes the page with GitHub Pages: main at the site root, each PR under
   # pr/<number>/. Runs only once the repo is public (free-plan Pages needs

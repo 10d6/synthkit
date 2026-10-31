@@ -40,6 +40,7 @@ function attachDrag(target, ctl, axis = "y") {
     e.preventDefault();
     target.setPointerCapture(e.pointerId);
     start = { x: e.clientX, y: e.clientY, n: ctl.norm(), moved: false };
+    ctl.model.gesture(ctl.p.index, true);
     ctl.root.classList.add("is-active");
     ctl.focus();
   });
@@ -50,7 +51,11 @@ function attachDrag(target, ctl, axis = "y") {
     if (Math.abs(d) > 2) start.moved = true;
     ctl.setNorm(start.n + d / range);
   });
-  const end = () => { start = null; ctl.root.classList.remove("is-active"); };
+  const end = () => {
+    if (start) ctl.model.gesture(ctl.p.index, false);
+    start = null;
+    ctl.root.classList.remove("is-active");
+  };
   target.addEventListener("pointerup", end);
   target.addEventListener("pointercancel", end);
   target.addEventListener("dblclick", () => ctl.reset());
@@ -256,9 +261,18 @@ class XYPad {
       this.model.setNorm(px.index, (e.clientX - r.left) / r.width, "ui");
       this.model.setNorm(py.index, 1 - (e.clientY - r.top) / r.height, "ui");
     };
-    this.pad.addEventListener("pointerdown", (e) => { this.pad.setPointerCapture(e.pointerId); this.dragging = true; move(e); });
+    this.pad.addEventListener("pointerdown", (e) => {
+      this.pad.setPointerCapture(e.pointerId); this.dragging = true;
+      this.model.gesture(px.index, true); this.model.gesture(py.index, true);
+      move(e);
+    });
     this.pad.addEventListener("pointermove", (e) => { if (this.dragging) move(e); });
-    this.pad.addEventListener("pointerup", () => { this.dragging = false; });
+    const up = () => {
+      if (this.dragging) { this.model.gesture(px.index, false); this.model.gesture(py.index, false); }
+      this.dragging = false;
+    };
+    this.pad.addEventListener("pointerup", up);
+    this.pad.addEventListener("pointercancel", up);
     this.pad.addEventListener("dblclick", () => { this.model.reset(px.index); this.model.reset(py.index); });
     this.pad.addEventListener("keydown", (e) => {
       const s = e.shiftKey ? 0.002 : 0.02;

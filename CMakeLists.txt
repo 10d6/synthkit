@@ -7,6 +7,7 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
 endif()
 option(SYNTHKIT_BUILD_EXAMPLES "Build the example synths" ${SYNTHKIT_TOP_LEVEL})
 option(SYNTHKIT_BUILD_TESTS "Build synthkit's own tests" ${SYNTHKIT_TOP_LEVEL})
+option(SYNTHKIT_PLUGIN "Build plugins (VST3/AU/Standalone) with JUCE" OFF)
 if(SYNTHKIT_WASM)
   set(SYNTHKIT_BUILD_TESTS OFF)  # the tests run natively; the browser build is checked in Chromium
 endif()
@@ -30,6 +31,16 @@ else()
 endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/synthkit.cmake")
+
+if(SYNTHKIT_PLUGIN)
+  # JUCE also compiles C (and Objective-C++ on macOS). A synth repo that
+  # builds plugins enables these in its own top-level CMakeLists.txt.
+  enable_language(C)
+  if(APPLE)
+    enable_language(OBJC OBJCXX)
+  endif()
+  include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/plugin.cmake")
+endif()
 
 if(SYNTHKIT_BUILD_TESTS OR SYNTHKIT_BUILD_EXAMPLES)
   include(CTest)

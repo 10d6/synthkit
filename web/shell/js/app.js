@@ -6,7 +6,8 @@ class App {
     this.model = model;
     this.wasm = wasmBytes;
     this.layout = layout || {};
-    this.audio = new Audio(wasmBytes);
+    this.host = skHost;          // set when running inside the plugin
+    this.audio = skHost ? new HostAudio() : new Audio(wasmBytes);
     this.controls = [];
     this.widgets = new Map();
     this.transport = skStore.get("synthkit:transport", { bpm: 120, playing: false, num: 4, den: 4 });
@@ -50,6 +51,12 @@ class App {
     this.keyboard.layout();
 
     this.presets.restoreSession();
+    if (this.host) {
+      // The plugin makes the sound: changes go straight to it.
+      this.model.sink = this.audio.sink();
+      this.banner.hidden = true;
+      this.audio.onHost = (msg) => this.hostMessage(msg);
+    }
     this.refreshLearned();
     // Live modulation rings on knobs.
     const ringed = this.controls.filter((c) => c.modulated);
@@ -62,9 +69,9 @@ class App {
     document.addEventListener("keydown", kick, { once: true, capture: true });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") { this.midi.cancelLearn(); this.closeMenu(); } });
 
-    if (this.clockSource === "midi") this.setClockSource("midi");
+    if (this.clockSource === "midi" && !this.host) this.setClockSource("midi");
     this.audio.onMeter = (mtr) => this.meter(mtr);
-    this.audio.onLog = (msg) => this.toast(msg, "error");
+    this.audio.onLog = (msg, kind) => this.toast(msg, kind || "error");
     for (const l of m.logs) this.toast(l, "error");
   }
 
@@ -81,6 +88,14 @@ class App {
       console.error(err);
       this.toast(`Audio couldn't start: ${err.message}`, "error");
     }
+  }
+
+  // Messages from the plugin (see host.js).
+  hostMessage(m) {
+    if (m.t === "params") { for (const [i, v] of m.changes || []) this.model.applyHost(i, v); }
+    else if (m.t === "state") this.presets.applyHostState(m.patch, m.ui);
+    else if (m.t === "store") skStore.external(m.key, m.value);
+    else if (m.t === "imported") this.presets.importText(m.text, m.file);
   }
 
   sendMidi(bytes) {
@@ -111,6 +126,7 @@ class App {
     this.sig.value = `${t.num}/${t.den}`;
     this.play = h("button", { type: "button", class: "btn play-btn", "aria-pressed": "false", title: "Start the tempo clock (space)", onclick: () => this.togglePlay() }, "Play");
     document.addEventListener("keydown", (e) => {
+      if (this.host) return;   // the DAW's transport
       if (e.code === "Space" && !/INPUT|SELECT|TEXTAREA|BUTTON/.test(e.target.tagName)) { e.preventDefault(); this.togglePlay(); }
     });
     this.beats = h("div", { class: "beats", "aria-hidden": "true" });
@@ -126,10 +142,16 @@ class App {
                 svg("path", { d: "M8 1.75 A6.25 6.25 0 0 1 8 14.25 Z", fill: "currentColor" }));
     const themeBtn = h("button", { type: "button", class: "btn btn-quiet btn-icon theme-btn", title: "Switch light / dark", "aria-label": "Switch light or dark theme", onclick: () => this.cycleTheme() }, icon);
 
-    // Playing controls (tempo, MIDI) live with the keyboard.
-    this.keyboard.addToBar(
-      h("div", { class: "tempo" }, this.play, h("label", { class: "bpm" }, this.bpm, h("span", { text: "BPM" })), this.sig, this.clockSel, this.beats),
-      this.midi.root);
+    // Playing controls (tempo, MIDI) live with the keyboard. In the plugin the
+    // DAW sets the tempo, so they become a readout.
+    this.tempoReadout = h("span", { class: "tempo-readout", text: "" });
+    if (this.host) {
+      this.keyboard.addToBar(h("div", { class: "tempo is-host", title: "Tempo and time signature come from your DAW" }, this.tempoReadout, this.beats));
+    } else {
+      this.keyboard.addToBar(
+        h("div", { class: "tempo" }, this.play, h("label", { class: "bpm" }, this.bpm, h("span", { text: "BPM" })), this.sig, this.clockSel, this.beats),
+        this.midi.root);
+    }
     return h("header", { class: "top" },
       h("div", { class: "brand" },
         h("h1", { class: "synth-name", text: info.name }),
@@ -199,6 +221,7 @@ class App {
   }
 
   meter(mtr) {
+    if (this.host) this.followHost(mtr);
     this.modMeters.update(mtr.mod, mtr.voices > 0);
     this.voices.textContent = `${mtr.voices} ${mtr.voices === 1 ? "voice" : "voices"}`;
     const db = mtr.peak > 0 ? 20 * Math.log10(mtr.peak) : -100;
@@ -210,6 +233,17 @@ class App {
     const idx = mtr.playing ? Math.floor(mtr.beat / per) % this.transport.num : -1;
     beats.forEach((b, i) => b.classList.toggle("is-on", i === idx));
     this.drawScope(mtr.scope);
+  }
+
+  // The DAW's tempo and time signature, as the plugin last saw them.
+  followHost(mtr) {
+    const t = this.transport;
+    const bpm = Math.round(mtr.bpm * 100) / 100;
+    const sigChanged = mtr.num !== t.num || mtr.den !== t.den;
+    t.bpm = bpm; t.playing = mtr.playing; t.num = mtr.num; t.den = mtr.den;
+    const text = `${bpm} BPM · ${t.num}/${t.den}`;
+    if (this.tempoReadout.textContent !== text) this.tempoReadout.textContent = text;
+    if (sigChanged) { this.buildBeats(); for (const fn of this.transportSubs) fn(t); }
   }
 
   drawScope(data) {
@@ -242,8 +276,9 @@ class App {
     this.menu(x, y, [
       { label: `Reset to ${this.model.format(ctl.p.index, ctl.p.def)}`, run: () => ctl.reset() },
       canMod ? { label: "Modulate…", run: () => this.modulateMenu(ctl, x, y) } : null,
-      learning ? { label: "Stop MIDI learn", run: () => this.midi.cancelLearn() } : { label: "MIDI learn", run: () => this.midi.learn(ctl) },
-      cc !== null ? { label: `Forget CC ${cc}`, run: () => this.midi.forget(ctl.p.id) } : null,
+      // In the plugin, map controllers with the DAW's own MIDI mapping instead.
+      this.host ? null : learning ? { label: "Stop MIDI learn", run: () => this.midi.cancelLearn() } : { label: "MIDI learn", run: () => this.midi.learn(ctl) },
+      !this.host && cc !== null ? { label: `Forget CC ${cc}`, run: () => this.midi.forget(ctl.p.id) } : null,
     ].filter(Boolean));
   }
 

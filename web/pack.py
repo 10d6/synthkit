@@ -18,7 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SHELL = os.path.join(HERE, "shell")
 
 # Page scripts, concatenated in this order into one module script.
-PAGE_JS = ["wasi.js", "model.js", "audio.js", "controls.js", "panels.js",
+PAGE_JS = ["wasi.js", "model.js", "audio.js", "host.js", "controls.js", "panels.js",
            "modulation.js", "presets.js", "keyboard.js", "midi.js", "clock.js", "app.js"]
 
 
@@ -30,6 +30,24 @@ def read(path):
 def safe(text):
     """Make text safe to place inside a <script> element."""
     return re.sub(r"</(script)", r"<\\/\1", text, flags=re.IGNORECASE)
+
+
+# The page is kept pure ASCII: some web views (WebKitGTK serving the plugin's
+# page) ignore the declared charset and would garble anything else.
+def ascii_js(text):
+    """Escape non-ASCII as \\uXXXX (valid in JS strings, regexes, templates and comments)."""
+    def esc(m):
+        b = m.group(0).encode("utf-16-be")
+        return "".join("\\u%04x" % int.from_bytes(b[i:i + 2], "big") for i in range(0, len(b), 2))
+    return re.sub(r"[^\x00-\x7f]", esc, text)
+
+
+def ascii_css(text):
+    return re.sub(r"[^\x00-\x7f]", lambda m: "\\%06x" % ord(m.group(0)), text)
+
+
+def ascii_html(text):
+    return re.sub(r"[^\x00-\x7f]", lambda m: "&#x%x;" % ord(m.group(0)), text)
 
 
 def custom_js(path):
@@ -60,18 +78,20 @@ def main():
 
     page = read(os.path.join(SHELL, "template.html"))
     for key, value in {
-        "TITLE": synth.get("name", synth.get("id", "synth")),
-        "STYLE": read(os.path.join(SHELL, "style.css")),
+        "TITLE": ascii_html(synth.get("name", synth.get("id", "synth"))),
+        "STYLE": ascii_css(read(os.path.join(SHELL, "style.css"))),
         "DATA": safe(json.dumps(data)),
-        "WORKLET": safe(worklet),
-        "CUSTOM": safe(custom_js(os.path.join(a.synth_dir, "ui", "custom.js"))),
-        "SCRIPT": safe(js),
+        "WORKLET": safe(ascii_js(worklet)),
+        "CUSTOM": safe(ascii_js(custom_js(os.path.join(a.synth_dir, "ui", "custom.js")))),
+        "SCRIPT": safe(ascii_js(js)),
     }.items():
         marker = "{{%s}}" % key
         if marker not in page:
             sys.exit("template.html is missing " + marker)
         page = page.replace(marker, value)
 
+    if not page.isascii():
+        sys.exit("pack.py: the page still has non-ASCII characters (template.html?)")
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w", encoding="utf-8") as f:
         f.write(page)

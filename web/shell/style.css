@@ -113,6 +113,7 @@ button, input, select { font: inherit; color: inherit; }
 }
 
 .tempo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tempo-readout { font-variant-numeric: tabular-nums; color: var(--ink-soft); font-size: 13px; white-space: nowrap; }
 .play-btn { min-width: 58px; }
 .play-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 .bpm { display: flex; align-items: center; gap: 5px; color: var(--ink-soft); }

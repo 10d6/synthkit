@@ -8,6 +8,8 @@
 #   a CTest test   "<name>_check" running every test scenario + generic checks
 # With the browser toolchain (cmake/wasm32-wasi.cmake) it instead creates:
 #   <name>_web     web/<name>.html: the whole synth in one self-contained page
+# With -DSYNTHKIT_PLUGIN=ON it also creates (see cmake/plugin.cmake):
+#   <name>_plugin  VST3, AU (macOS) and Standalone builds, via JUCE
 
 set(SYNTHKIT_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." CACHE INTERNAL "")
 
@@ -44,6 +46,10 @@ function(synthkit_add_synth name)
 
   if(BUILD_TESTING)
     add_test(NAME ${name}_check COMMAND ${name}_render --check "${SK_DIR}")
+  endif()
+
+  if(SYNTHKIT_PLUGIN)
+    _synthkit_add_plugin(${name} "${SK_DIR}")
   endif()
 endfunction()
 

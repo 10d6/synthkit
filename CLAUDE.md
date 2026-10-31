@@ -15,7 +15,8 @@ builds from CI artifacts at milestones.
    same PR. If you catch yourself reading kit source to build a synth, the doc
    is missing something — fix the doc.
 2. **`core/` has no dependencies on JUCE or the browser.** Plain C++20 and the
-   standard library only. Platform code lives in `web/` and `plugin/`.
+   standard library only. Platform code lives in `web/` and `plugin/`. The
+   plugin window is the web page, so UI work happens once, in `web/shell/`.
 3. **Real-time safety.** No allocation, locks, I/O or exceptions on the audio
    thread (`start`, `release`, `render`, `processGlobal`, `processEvents`). Allocate in
    `prepare`. Core and synth code never `throw`/`catch` at all (the browser
@@ -50,12 +51,17 @@ tools/render/            <synth>_render: scenarios, generic checks, WAV output
 examples/basic/          subtractive synth exercising the whole API
 tests/core_tests.cpp     kit unit tests (no framework; TEST/CHECK macros)
 web/wasm/                C API exported to JavaScript
-web/shell/               the page: template, style, js/ (model, audio, controls,
-                         panels, modulation, presets, keyboard, midi, clock, app),
-                         worklet.js
+web/shell/               the page: template, style, js/ (model, audio, host
+                         (plugin bridge), controls, panels, modulation, presets,
+                         keyboard, midi, clock, app), worklet.js
 web/pack.py              inlines everything into one <synth>.html
-web/test/                headless Chromium test + browser-vs-native compare
-plugin/, template/       phases 5, 6
+web/test/                headless Chromium tests (page; page's plugin mode) +
+                         browser-vs-native compare
+plugin/                  JUCE adapter: Processor (engine, params, state,
+                         transport), Editor (web view + page bridge), Settings
+                         (shared store), test/PluginCheck (DAW-style check)
+cmake/plugin.cmake       JUCE fetch (pinned) + <name>_plugin targets
+template/                phase 6
 ```
 
 ## Commands
@@ -76,6 +82,22 @@ node web/test/browser-test.cjs build-web/web/basic.html build-web/test examples/
 ./build/examples/basic/basic_render examples/basic/tests/demo-pump.json --block 128 --out build-web/test/native.wav
 python3 web/test/compare.py build-web/test/web-render.f32 build-web/test/native.wav
 ```
+
+Plugins (needs the page built first; JUCE's Linux deps from its
+docs/Linux Dependencies.md, plus xvfb; already installed if this workspace did
+phase 5; `/tmp/juce9` may hold a JUCE checkout):
+
+```
+node web/test/plugin-ui-test.cjs build-web/web/basic.html build-web/test   # page <-> plugin messages
+cmake -S . -B build-plugin -G Ninja -DSYNTHKIT_PLUGIN=ON -DSYNTHKIT_WEB_UI_DIR=$PWD/build-web/web \
+  [-DFETCHCONTENT_SOURCE_DIR_JUCE=/tmp/juce9] && cmake --build build-plugin
+xvfb-run -a build-plugin/examples/basic/basic_plugin_check_artefacts/Release/basic_plugin_check \
+  "build-plugin/examples/basic/basic_plugin_artefacts/Release/VST3/synthkit Basic.vst3"
+xvfb-run -a pluginval --strictness-level 10 --validate-in-process "<same .vst3>"
+```
+
+The standalone runs under Xvfb (`~/.asoundrc` with `pcm.!default { type null }`
+gives it an audio device); screenshot with ImageMagick `import -window root`.
 
 The browser test writes screenshots (desktop, phone, dark) to `build-web/test/`.
 Look at them after any UI change. Emscripten can't be installed here (its
@@ -105,10 +127,15 @@ The repo is public, with GitHub Pages serving the `gh-pages` branch: CI
 publishes `main` at https://10d6.github.io/synthkit/ and each PR at
 `/pr/<number>/`, and comments the link on the PR. Linux build + tests, the
 browser build and the browser-vs-native comparison run on every PR. Plugin
-builds (phase 5) should run on every PR too, now that Actions minutes are free.
+builds run on every PR too: Windows, macOS (universal + AU) and Linux, each
+with `<name>_plugin_check` and pluginval (auval on macOS), uploading a zip per
+OS (`synthkit-basic-<os>`) for the owner to install. A `v*` tag makes a
+GitHub release from those zips. The Windows job gets the WebView2 SDK from
+NuGet.
 
 ## Status
 
-See README → Roadmap. Phases 1–4 are done (contract; core, DSP, render tool,
-example synth; browser build; modulation). Next: **phase 5 — JUCE plugin
-adapter (VST3 for Live on Windows first, AU for GarageBand)**.
+See README → Roadmap. Phases 1–5 are done (contract; core, DSP, render tool,
+example synth; browser build; modulation; plugins). Next: **phase 6 — synth
+template + scaffold script**, then port the aleatoric synth using only
+`API.md`.
