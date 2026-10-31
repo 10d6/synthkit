@@ -21,7 +21,7 @@ class Model {
     this.listeners = new Map();   // index -> Set(fn)
     this.anyListeners = new Set();
     this.customListeners = new Map();
-    this.sink = null;             // audio forwarding: {param(i, v), patch(json), custom(id, json), mod(json), shapes(json)}
+    this.sink = null;             // audio forwarding: {param(i, v), gesture?(i, on), patch(json), custom(id, json), mod(json), shapes(json)}
     this.mod = this.info.mod || { sources: [], slots: 0, lfos: 0, shapes: 0 };
     this.sourceIndex = new Map(this.mod.sources.map((s, i) => [s.id, i]));
     this.modListeners = new Set();
@@ -53,6 +53,18 @@ class Model {
     this.emit(p.index, now, source);
   }
   setNorm(id, n, source) { this.set(id, this.fromNorm(id, Math.min(1, Math.max(0, n))), source); }
+  // A value that changed in the plugin (automation, the host's own controls):
+  // update the page without sending it back.
+  applyHost(i, v) {
+    const p = this.param(i);
+    if (!p) return;
+    const before = this.get(p.index);
+    this.x.sk_set_param(p.index, v);
+    const now = this.get(p.index);
+    if (now !== before) { this.dirty = true; this.emit(p.index, now, "host"); }
+  }
+  // Start/end of a drag, so a DAW records the change as one gesture.
+  gesture(id, on) { const p = this.param(id); if (p && this.sink && this.sink.gesture) this.sink.gesture(p.index, on); }
   reset(id) { const p = this.param(id); this.set(p.index, p.def); }
 
   on(id, fn) {
@@ -74,12 +86,13 @@ class Model {
   get patchName() { return this.savePatch().name; }
   setName(name) { this.w.withStrings([name], (p) => this.x.sk_set_name(p)); }
 
-  loadPatch(patch) {
+  // fromHost: the plugin already has this patch, so don't send it back.
+  loadPatch(patch, { fromHost = false } = {}) {
     const text = typeof patch === "string" ? patch : JSON.stringify(patch);
     const res = this.w.json(this.w.withStrings([text], (p) => this.x.sk_load_patch(p)));
     if (!res.ok) return res;
     const saved = JSON.stringify(this.savePatch());
-    if (this.sink) this.sink.patch(saved);
+    if (this.sink && !fromHost) this.sink.patch(saved);
     this.dirty = false;
     this.emitAll();
     for (const id of this.info.custom) this.emitCustom(id);

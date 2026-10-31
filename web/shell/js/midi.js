@@ -17,6 +17,7 @@ class MidiInput {
     this.select = h("select", { class: "midi-select", "aria-label": "MIDI input", hidden: true, onchange: () => this.choose(this.select.value) });
     this.dot = h("span", { class: "midi-dot", "aria-hidden": "true" });
     this.root = h("div", { class: "midi" }, this.dot, this.btn, this.select);
+    if (skHost) return;   // the plugin gets MIDI from the DAW
     if (!navigator.requestMIDIAccess) {
       this.btn.disabled = true;
       this.btn.textContent = "No MIDI in this browser";

@@ -2,12 +2,31 @@
 // (kept in this browser), import/export as files, and the session (the
 // current sound is restored when you come back).
 
+// Settings that outlive the page: the browser's local storage, or in the
+// plugin a file shared by every instance (the plugin passes its contents in
+// and is told about each change).
 const skStore = {
+  subs: new Map(),
   get(key, fallback) {
+    if (skHost) { const v = (skHost.store || {})[key]; return v === undefined || v === null ? fallback : JSON.parse(JSON.stringify(v)); }
     try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch { return fallback; }
   },
   set(key, value) {
+    if (skHost) {
+      (skHost.store = skHost.store || {})[key] = JSON.parse(JSON.stringify(value));
+      window.__JUCE__.backend.emitEvent("sk", { t: "store", key, value });
+      return true;
+    }
     try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
+  },
+  // Another plugin window changed a setting.
+  external(key, value) {
+    if (skHost) (skHost.store = skHost.store || {})[key] = value;
+    for (const fn of this.subs.get(key) || []) fn(value);
+  },
+  on(key, fn) {
+    if (!this.subs.has(key)) this.subs.set(key, new Set());
+    this.subs.get(key).add(fn);
   },
 };
 
@@ -20,6 +39,7 @@ class PresetBar {
       .filter((p) => p.patch)
       .map((p) => ({ name: p.patch.name || p.path, patch: p.patch, file: p.path }));
     this.user = skStore.get(this.key("presets"), {});
+    skStore.on(this.key("presets"), () => { this.user = skStore.get(this.key("presets"), {}); this.refresh(); });
     this.current = { kind: "factory", name: "Init" };
     this.build();
     this.model.onAny(() => this.changed());
@@ -72,10 +92,27 @@ class PresetBar {
   }
 
   saveSession() {
+    // In the plugin the DAW project keeps the sound; the plugin just notes
+    // which preset is showing.
+    if (skHost) { this.app.audio.send({ t: "meta", ui: { current: this.current, dirty: this.model.dirty } }); return; }
     skStore.set(this.key("session"), { patch: this.model.savePatch(), current: this.current, dirty: this.model.dirty });
   }
 
+  // The plugin's sound (on opening the window, or when the DAW loads a project).
+  applyHostState(patch, ui) {
+    const res = this.model.loadPatch(patch, { fromHost: true });
+    if (!res.ok) { this.app.toast(`Couldn't show the plugin's sound: ${res.error}`, "error"); return false; }
+    ui = ui || {};
+    const name = patch && patch.name;
+    const factory = this.factory.find((p) => p.name === name);
+    this.current = ui.current || (factory ? { kind: "factory", name } : { kind: "session", name: name || "Untitled" });
+    this.model.dirty = !!ui.dirty;
+    this.refresh();
+    return true;
+  }
+
   restoreSession() {
+    if (skHost) return this.applyHostState(skHost.state.patch, skHost.state.ui);
     const s = skStore.get(this.key("session"), null);
     if (s && s.patch && this.model.loadPatch(s.patch).ok) {
       this.current = s.current || { kind: "session", name: s.patch.name || "Untitled" };
@@ -174,6 +211,7 @@ class PresetBar {
 
   exportFile() {
     const patch = this.model.savePatch();
+    if (skHost) { this.app.audio.send({ t: "export", name: patch.name || "patch", json: JSON.stringify(patch, null, 2) }); return; }
     const blob = new Blob([JSON.stringify(patch, null, 2) + "\n"], { type: "application/json" });
     const a = h("a", { href: URL.createObjectURL(blob), download: (patch.name || "patch").replace(/[^\w\- ]+/g, "") + ".json" });
     document.body.append(a);
@@ -186,11 +224,17 @@ class PresetBar {
     const f = this.fileInput.files[0];
     this.fileInput.value = "";
     if (!f) return;
-    const text = await f.text();
+    this.importText(await f.text(), f.name);
+  }
+  startImport() {
+    if (skHost) this.app.audio.send({ t: "import" });   // the plugin shows a file dialog
+    else this.fileInput.click();
+  }
+  importText(text, fileName) {
     const res = this.model.loadPatch(text);
-    if (!res.ok) { this.app.toast(`Couldn't import ${f.name}: ${res.error}`, "error"); return; }
-    for (const w of res.warnings || []) this.app.toast(`${f.name}: ${w}`, "warn");
-    let name = this.model.patchName || f.name.replace(/\.json$/i, "");
+    if (!res.ok) { this.app.toast(`Couldn't import ${fileName}: ${res.error}`, "error"); return; }
+    for (const w of res.warnings || []) this.app.toast(`${fileName}: ${w}`, "warn");
+    let name = this.model.patchName || fileName.replace(/\.json$/i, "");
     for (let k = 2; this.user[name]; k++) name = `${this.model.patchName} ${k}`;
     this.store(name);
   }
@@ -204,7 +248,7 @@ class PresetBar {
       { label: "Delete", run: () => this.remove(), disabled: !user },
       null,
       { label: "Export to file", run: () => this.exportFile() },
-      { label: "Import from file…", run: () => this.fileInput.click() },
+      { label: "Import from file…", run: () => this.startImport() },
       null,
       { label: "Start from Init", run: () => this.init() },
     ]);

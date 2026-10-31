@@ -1,6 +1,6 @@
 # synthkit API
 
-> **Status: v0.3.** Sections marked **✓** are implemented (phases 2–4). The
+> **Status: v0.4.** Sections marked **✓** are implemented (phases 2–5). The
 > rest are the agreed contract for later phases (see README → Roadmap) and may
 > still be refined when they're built.
 
@@ -28,7 +28,10 @@ my-synth/
 
 ```cmake
 cmake_minimum_required(VERSION 3.22)
-project(my-synth CXX)
+project(my-synth LANGUAGES C CXX)   # C (and OBJC/OBJCXX on macOS) for the plugin build
+if(APPLE)
+  enable_language(OBJC OBJCXX)
+endif()
 add_subdirectory(synthkit)
 include(CTest)
 synthkit_add_synth(mysynth SOURCES src/Synth.cpp)
@@ -37,7 +40,8 @@ synthkit_add_synth(mysynth SOURCES src/Synth.cpp)
 `synthkit_add_synth` builds `mysynth_synth` (a library with the synth, its
 `synth.json` and presets embedded), `mysynth_render` (the render/check tool,
 §10) and a CTest test that runs every check. With the browser toolchain the
-same call builds `<name>.html` instead (§11). Phase 5 adds the plugin targets.
+same call builds `<name>.html` instead (§11), and with `-DSYNTHKIT_PLUGIN=ON` it
+also builds the plugins (§12).
 
 Everything else (MIDI, voices, patches, mod matrix, UI binding, automation,
 web build, plugin builds) comes from synthkit.
@@ -74,6 +78,10 @@ web build, plugin builds) comes from synthkit.
   at least one uppercase letter. `pluginCode` should be one uppercase letter
   followed by three lowercase (`Alea`), which GarageBand requires.
 - `patchVersion`: bump when a change needs migration (§5).
+- `name`, `vendor` and `version` are what DAWs show. `version` should go up
+  with each release you install.
+- `bundleId` (optional, default `com.<vendor>.<id>`): the macOS bundle
+  identifier. Also **permanent** once released.
 
 | Feature | Default | Meaning |
 |---|---|---|
@@ -789,11 +797,69 @@ floating-point noise.
 mistakes with `sk::fail("message")`, which throws in native builds and stops
 with the message in the browser.
 
-## 12. Targets
+## 12. Plugins ✓
+
+```
+cmake -S . -B build-plugin -DSYNTHKIT_PLUGIN=ON -DSYNTHKIT_WEB_UI_DIR=build-web/web
+cmake --build build-plugin --config Release --target mysynth_plugin_VST3
+```
+
+`synthkit_add_synth` then also builds, with JUCE (fetched at a pinned version;
+`-DFETCHCONTENT_SOURCE_DIR_JUCE=…` uses a local copy):
+
+| Target | What | For |
+|---|---|---|
+| `<name>_plugin_VST3` | `<Name>.vst3` | Ableton Live (Windows, Mac), Reaper |
+| `<name>_plugin_AU` (macOS) | `<Name>.component` | GarageBand, Logic |
+| `<name>_plugin_Standalone` | an app with its own audio/MIDI settings | playing without a DAW |
+| `<name>_plugin_check` | loads the VST3 like a DAW and checks it against the engine | CI |
+
+Nothing in the synth changes for the plugin:
+
+- **Parameters** are the host's automatable parameters, with the same IDs,
+  names, ranges and text. Parameters marked `hidden` aren't automatable.
+  Dragging a control in the plugin window is recorded as one automation gesture.
+- **The DAW project stores the patch** (§5), wrapped as
+  `{"format": "synthkit-plugin-state", "version": 1, "patch": {…}, "ui": {…}}`
+  (`ui` notes which preset the window shows). A bare patch JSON also loads.
+- **Tempo, play position and time signature** come from the host (§7). When
+  the host has no position (some hosts while stopped), the kit's own clock runs
+  at the host's tempo.
+- **MIDI** comes from the host track: notes, pitch bend, mod wheel, sustain and
+  other CCs, aftertouch. (For VST3 the host sends CCs as hidden parameters;
+  the plugin turns them back into MIDI.)
+- **A new instance** starts on `presets/init.json` when there is one.
+
+**The plugin window is the browser page** (§11) in a web view (WebView2 on
+Windows, WebKit on macOS and Linux). Build the page first and point
+`SYNTHKIT_WEB_UI_DIR` at it; without it the plugin gets JUCE's plain parameter
+list instead. Layout and custom widgets (§9) work unchanged. In the plugin:
+
+- the tempo area shows the DAW's tempo and time signature (no Play button, no
+  Web MIDI, no MIDI learn: map controllers with the DAW's own MIDI mapping);
+- your presets, theme and keyboard settings are shared by every instance of
+  the synth on the computer (`%APPDATA%\synthkit\<id>\settings.json`,
+  `~/Library/Application Support/synthkit/<id>/settings.json`), and Export /
+  Import use the system's file dialogs;
+- the on-screen keyboard plays through the plugin; meters and modulation rings
+  show the plugin's output.
+
+The page is packed as pure ASCII (non-ASCII is escaped), because some web
+views ignore the declared character set.
+
+CI builds the plugins for Windows, macOS (universal, with the AU) and Linux on
+every PR. It runs `<name>_plugin_check` and
+[pluginval](https://github.com/Tracktion/pluginval) at strictness 10 (and
+`auval` for the AU), and attaches a zip per OS with install notes. A version
+tag (`v0.2.0`) publishes the zips as a GitHub release. Builds aren't
+code-signed: macOS needs the one-time `xattr` step in the install notes.
+
+## 13. Targets
 
 | Target | Used in | Phase |
 |---|---|---|
 | Web (WASM + AudioWorklet, single HTML file) ✓ | development, quick play | 3 |
-| VST3 (Windows, macOS) | Ableton Live, Reaper | 5 |
-| AU (macOS) | GarageBand, Logic, Reaper | 5 |
+| VST3 (Windows, macOS, Linux) ✓ | Ableton Live, Reaper | 5 |
+| AU (macOS) ✓ | GarageBand, Logic, Reaper | 5 |
+| Standalone app ✓ | playing without a DAW | 5 |
 | CLAP | Reaper, Bitwig | optional, later |

@@ -41,6 +41,20 @@ cmake --build build-web        # → build-web/web/basic.html
 links it on the PR. It needs one setting: Settings → Pages → Build and
 deployment → Deploy from a branch → `gh-pages` / root.
 
+## Using it in your DAW
+
+Every PR's CI run also has a plugin zip per system: **synthkit-basic-windows**,
+**synthkit-basic-macos** (VST3 + AU, Intel and Apple Silicon) and
+**synthkit-basic-linux**. Each has the plugin, a standalone app and
+`INSTALL.md`. On Windows, copy the `.vst3` folder to
+`C:\Program Files\Common Files\VST3\` and rescan in Live. On a Mac, see
+`INSTALL.md` for the one Terminal command unsigned plugins need. Tagging a
+version (`v0.2.0`) publishes the zips as a GitHub release.
+
+The plugin window is the same page as the browser version. The sound is saved
+in your DAW project, and your own presets are shared by every copy of the synth
+on the computer.
+
 ## How it fits together
 
 ```
@@ -63,7 +77,7 @@ deployment → Deploy from a branch → `gh-pages` / root.
 | 2 ✓ | core library, DSP blocks, example synth, render tool, Linux CI | listen to rendered WAVs on the PR |
 | 3 ✓ | browser build (one HTML file), UI from layout.json, Web MIDI, presets, previews | play the example synth in the browser |
 | 4 ✓ | mod matrix, LFOs, drawn tempo-locked shapes, musical-time sources, MIDI clock | build richer, tempo-aware patches |
-| 5 | JUCE plugin adapter, Windows/macOS CI, pluginval, releases | load it in Live / GarageBand |
+| 5 ✓ | JUCE plugin adapter (VST3, AU, Standalone; the page as its window), Windows/macOS/Linux CI, pluginval, releases | load it in Live / GarageBand |
 | 6 | synth template + scaffold script | start a new synth in one step |
 
 After phase 6: port the aleatoric synth into its own repo using only `API.md`,
