@@ -161,6 +161,56 @@ async function main() {
           if (selText) fail("dragging in the editor left text selected");
         }
 
+        // Handles stay inside the editor: on every factory curve, on an old
+        // patch whose handle is far outside (shown pinned to the edge), and
+        // after dragging a handle well past the edge.
+        {
+          const inside = () => page.evaluate(() => {
+            const ed = document.querySelector(".shape-svg").getBoundingClientRect();
+            return [...document.querySelectorAll(".handle-knob")].every((k) => {
+              const r = k.getBoundingClientRect(), cy = r.y + r.height / 2, cx = r.x + r.width / 2;
+              return cy >= ed.y && cy <= ed.y + ed.height && cx >= ed.x && cx <= ed.x + ed.width;
+            });
+          });
+          const pointPos = (i) => page.evaluate((i) => { const r = document.querySelectorAll(".shape-svg")[0].querySelectorAll(".shape-point")[i].getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }, i);
+          const presets = ["Ramp down", "Ramp up", "Pump", "Swell", "Triangle", "Square"];
+          let bad = [];
+          for (const name of presets) {
+            // Factory curves are in the older format, so their handles come from the fit.
+            await page.locator(".shape-editor").first().locator('button:has-text("Curves")').click();
+            await page.click(`.menu-item:text-is("${name}")`);
+            const n = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points.length);
+            for (let i = 0; i < n; i++) {
+              const pp = await pointPos(i);
+              await page.mouse.click(pp.x, pp.y);
+              await page.waitForTimeout(420);
+              if (!(await inside())) bad.push(`${name} point ${i + 1}`);
+            }
+          }
+          if (bad.length) fail(`handles drawn outside the editor: ${bad.join(", ")}`); else pass("factory curves' handles are all inside the editor");
+
+          await page.evaluate(() => {
+            const m = window.synthkit.model, sh = m.shapes();
+            sh[0].curves[0] = { points: [[0, 1, 0, 0, 0.3, -1.5, 0, 0, 1], [1, 0, 0, 0, 0, 0, -0.3, 0, 1]] };
+            m.setShapes(sh);
+          });
+          const p0 = await pointPos(0);
+          await page.mouse.click(p0.x, p0.y);
+          await page.waitForTimeout(420);
+          const pinned = await page.evaluate(() => document.querySelectorAll(".handle-knob.is-pinned").length);
+          if (!(await inside()) || pinned !== 1) fail(`an outside handle wasn't pinned to the edge (pinned ${pinned})`);
+          else {
+            const k = await page.evaluate(() => { const r = document.querySelector(".handle-knob.is-pinned").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+            await page.mouse.move(k.x, k.y);
+            await page.mouse.down();
+            await page.mouse.move(k.x + 10, k.y + 200, { steps: 6 });   // well past the bottom
+            await page.mouse.up();
+            const q = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points[0]);
+            if (Math.abs(q[1] + q[5]) > 1e-6) fail(`dragging a pinned handle past the edge gave ${JSON.stringify(q)}`);
+            else pass("an outside handle shows on the edge, can be grabbed, and drags stop at the edge");
+          }
+        }
+
         // The modulation amount follows a full drag (the matrix used to rebuild
         // its rows mid-drag, ending the drag after the first few percent).
         {
