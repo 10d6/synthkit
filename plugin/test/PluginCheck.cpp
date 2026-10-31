@@ -23,9 +23,11 @@ void check(bool ok, const juce::String& good, const juce::String& bad) {
 
 struct FakeHead : juce::AudioPlayHead {
   double bpm = 128, ppq = 0;
+  int64_t samples = 0;
   bool playing = true;
   juce::Optional<PositionInfo> getPosition() const override {
     PositionInfo p;
+    p.setTimeInSamples(samples);
     p.setBpm(bpm);
     p.setTimeSignature(TimeSignature{3, 4});
     p.setIsPlaying(playing);
@@ -172,6 +174,7 @@ int main(int argc, char** argv) {
         energy += static_cast<double>(x) * x;
       }
     head.ppq += block / sr * head.bpm / 60.0;
+    head.samples += block;
   }
   check(finite && energy > 1.0, "plays sound (no NaN/inf)", "silent or non-finite output");
   check(maxDiff == 0, "plays exactly what the engine plays (tempo, notes, mod wheel, automation)",
