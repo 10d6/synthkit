@@ -123,6 +123,8 @@ struct Harness {
   double sr = 48000;
   HostTransport ht;
   long pos = 0;
+  bool accumulateBeats = false;  // add up the beat per block, as the browser does
+  double accBeat = 0;
   explicit Harness(int block = 256, const char* extra = "") {
     auto s = std::make_unique<TestSynth>();
     synth = s.get();
@@ -150,9 +152,10 @@ struct Harness {
         ev.push_back(e);
         ++ei;
       }
-      if (ht.playing) ht.beat = pos / sr * ht.bpm / 60.0;
+      if (ht.playing) ht.beat = accumulateBeats ? accBeat : pos / sr * ht.bpm / 60.0;
       float* o[2] = {l.data(), r.data()};
       eng->process(o, 2, b, ev.data(), static_cast<int>(ev.size()), ht);
+      accBeat += (b / sr) * (ht.bpm / 60.0);
       for (int i = 0; i < b; ++i) out.push_back(l[static_cast<std::size_t>(i)]);
       pos += b;
     }
@@ -297,19 +300,24 @@ TEST(scheduled_events_land_on_the_beat) {
 // block sizes are (the beat clock's rounding used to move it by one).
 TEST(scheduled_events_ignore_block_boundaries) {
   std::vector<long> onsets;
-  for (int block : {256, 37, 100, 129, 1000}) {
+  for (int block : {256, 37, 100, 129, 1000, 96, 128, 160})
+  for (bool accumulate : {false, true}) {
     Harness h(block);
     h.ht.playing = true;
+    h.ht.bpm = 96;  // 30000 samples per beat
+    h.accumulateBeats = accumulate;
     h.synth->scheduleFifth = true;
     h.synth->swallowInput = true;
-    auto out = h.run(48000, {{7200, on(60)}}, block);  // the fifth is due at beat 1.0 = sample 24000
+    // Key at beat 7.3: the fifth is due at beat 8.0 = sample 240000, after
+    // enough blocks for the beat clock's rounding to build up.
+    auto out = h.run(250000, {{219000, on(60)}}, block);
     long first = -1;
     for (std::size_t i = 0; i < out.size(); ++i)
       if (out[i] != 0.f) { first = static_cast<long>(i); break; }
     onsets.push_back(first);
   }
   for (long o : onsets) CHECK(o == onsets[0]);
-  CHECK(onsets[0] >= 24000 && onsets[0] <= 24002);
+  CHECK(onsets[0] >= 240000 && onsets[0] <= 240002);
 }
 
 TEST(polyphony_limit_and_stealing) {
