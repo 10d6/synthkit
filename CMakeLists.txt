@@ -50,6 +50,10 @@ if(SYNTHKIT_BUILD_TESTS)
   add_executable(synthkit_tests tests/core_tests.cpp)
   target_link_libraries(synthkit_tests PRIVATE synthkit_core)
   add_test(NAME synthkit_core_tests COMMAND synthkit_tests)
+  # Renders tests/webaudio/parity.json with the sk::wa blocks, for
+  # web/test/webaudio-parity.cjs to compare with Chromium's nodes.
+  add_executable(synthkit_wa_parity tools/wa_parity/main.cpp)
+  target_link_libraries(synthkit_wa_parity PRIVATE synthkit_core)
 endif()
 
 if(SYNTHKIT_BUILD_EXAMPLES)

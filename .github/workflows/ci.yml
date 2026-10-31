@@ -79,6 +79,12 @@ jobs:
         run: |
           ./build/examples/basic/basic_render examples/basic/tests/demo-pump.json --block 128 --out web-test/native.wav
           python3 web/test/compare.py web-test/web-render.f32 web-test/native.wav
+      - name: sk::wa blocks match Chromium's Web Audio nodes
+        run: |
+          cmake --build build --target synthkit_wa_parity
+          mkdir -p web-test/wa
+          ./build/synthkit_wa_parity tests/webaudio/parity.json web-test/wa
+          node web/test/webaudio-parity.cjs tests/webaudio/parity.json web-test/wa web-test/wa
       - name: Upload the page
         if: always()
         uses: actions/upload-artifact@v4

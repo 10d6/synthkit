@@ -89,9 +89,8 @@ on the computer.
 | 5 ✓ | JUCE plugin adapter (VST3, AU, Standalone; the page as its window), Windows/macOS/Linux CI, pluginval, releases | load it in Live / GarageBand |
 | 6 ✓ | synth template + scaffold script (`tools/new-synth.py`), shared CI scripts | start a new synth in one step |
 | 7 ✓ | the first real synth, [10d6/aleatory](https://github.com/10d6/aleatory), ported from its browser sketch using only `API.md` | play it in the browser and in Live |
+| 8 ✓ | `sk::wa`: Web Audio's nodes (biquad, compressor, convolver, periodic-wave oscillator, wave shaper, panner, delay, AudioParam automation) as DSP blocks, checked sample for sample against Chromium | port a browser sketch by translation |
 
-Next, from what aleatory and the reed organ
-([10d6/reedorgan](https://github.com/10d6/reedorgan), a Web Audio instrument)
-need: DSP blocks that behave exactly like Web Audio's nodes, so a browser
-sketch ports by translation, and a way for a synth to bring its own page and
-talk to its engine with messages that aren't saved.
+Next, from what the reed organ ([10d6/reedorgan](https://github.com/10d6/reedorgan),
+a Web Audio instrument with its own page) needs: a way for a synth to bring its
+own page and talk to its engine with messages that aren't saved.
