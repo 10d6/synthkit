@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Jobs only read the repo unless they ask for more (pages does).
+permissions:
+  contents: read
+
 jobs:
   linux:
     name: Linux (${{ matrix.name }})

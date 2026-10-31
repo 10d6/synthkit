@@ -921,7 +921,7 @@ float VoiceContext::pitchHz() const {
 }
 double VoiceContext::pitch() const {
   double p = slot_->glidePitch;
-  p += core_->bend * (core_->pBend >= 0 ? values_[core_->pBend] : 2.f);
+  p += static_cast<double>(core_->bend) * (core_->pBend >= 0 ? values_[core_->pBend] : 2.0);
   if (slot_->uniCount > 1 && core_->pUniDetune >= 0) {
     float t = 2.f * slot_->uniIndex / static_cast<float>(slot_->uniCount - 1) - 1.f;
     p += t * values_[core_->pUniDetune] / 100.0;
