@@ -2,7 +2,8 @@
 //   node web/test/browser-test.cjs <synth.html> <out dir> [scenario.json] [--kit-ui]
 // - the page boots with no console errors, at desktop and phone width
 //   (screenshots written to <out dir>)
-// - playing from the computer keyboard starts voices
+// - playing from the computer keyboard (or, on a synth's own page without
+//   the kit's keyboard, the page's note calls) starts voices
 // - a scenario rendered offline through the real AudioWorklet is written
 //   to <out dir>/web-render.f32 for comparison with the native renderer
 const { chromium } = require("playwright");
@@ -39,11 +40,18 @@ async function main() {
       // Start audio and play a chord from the computer keyboard.
       await page.mouse.click(5, 5);
       await page.waitForFunction(() => window.synthkit.app.audio.running, null, { timeout: 10000 });
-      for (const k of ["a", "d", "g"]) await page.keyboard.down(k);
+      // (A synth's own page may leave the kit's keyboard out, API.md §9a; then
+      // play the same chord through the page's note calls.)
+      const typing = await page.evaluate(() => window.synthkit.app.keyboard.typing);
+      if (typing) for (const k of ["a", "d", "g"]) await page.keyboard.down(k);
+      else await page.evaluate(() => { for (const n of [60, 64, 67]) window.synthkit.app.noteOn(n, 100); });
       await page.waitForTimeout(500);
       const voices = await page.evaluate(() => window.synthkit.app.voices.textContent);
-      if (!/^[1-9]/.test(voices)) fail(`keyboard didn't start voices (meter says "${voices}")`); else pass(`computer keyboard plays (${voices})`);
-      for (const k of ["a", "d", "g"]) await page.keyboard.up(k);
+      const how = typing ? "computer keyboard" : "page's note calls";
+      if (!/^[1-9]/.test(voices)) fail(`${how} didn't start voices (meter says "${voices}")`);
+      else pass(`${typing ? "computer keyboard plays" : "page's note calls play"} (${voices})`);
+      if (typing) for (const k of ["a", "d", "g"]) await page.keyboard.up(k);
+      else await page.evaluate(() => { for (const n of [60, 64, 67]) window.synthkit.app.noteOff(n); });
       if (kitUi) {
       // Knob via keyboard focus + arrows changes the model and the readout.
       const cut = page.locator('[data-param="filter.cutoff"] .knob-dial');

@@ -22,6 +22,11 @@ from CI at milestones.
    (or look at) the renders when the change is audible.
 6. Escape hatches and custom state (API.md §4, §5a) are the way to do unusual
    things. A feature moves into the kit when a second synth needs it.
+7. **Porting a browser sketch?** Use the Web Audio blocks (`sk::wa`, API.md
+   §8a), which match the browser's nodes sample for sample, and compare the
+   port's renders with the sketch's. Input from the page that isn't a
+   parameter is a message (§9b); a look of the synth's own is `ui/page.js`
+   (§9a), with `ui/style.css` for styling either page.
 
 ## Fresh workspace
 
