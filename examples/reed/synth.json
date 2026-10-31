@@ -1,0 +1,15 @@
+{
+  "id": "sk-reed",
+  "name": "synthkit Reed",
+  "vendor": "10d6",
+  "version": "0.1.0",
+  "pluginCode": "Skrd",
+  "vendorCode": "Tend",
+  "patchVersion": 1,
+  "features": {
+    "voices": 32,
+    "voiceModes": ["poly"],
+    "standardEnvelopes": 0,
+    "ampEnv": false
+  }
+}

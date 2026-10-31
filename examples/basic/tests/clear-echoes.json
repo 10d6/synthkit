@@ -1,0 +1,15 @@
+{
+  "patch": "init",
+  "params": { "delay.mix": 0.8, "delay.feedback": 0.85, "delay.time": 4, "env1.release": 0.01 },
+  "events": [
+    { "t": 0.0, "on": 60, "vel": 110 },
+    { "t": 0.1, "off": 60 },
+    { "t": 0.6, "msg": "delay.clear" }
+  ],
+  "length": 1.2,
+  "expect": {
+    "soundBy": 0.05,
+    "levelAt": [ { "t": 0.5, "above": -50 }, { "t": 0.7, "below": -90 } ],
+    "silentAfter": 0.62
+  }
+}

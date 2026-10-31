@@ -20,6 +20,7 @@ class Audio {
     this.node = null;
     this.onMeter = null;
     this.onLog = null;
+    this.onMessages = null;   // ([[index, values], …]) from the synth
     this.starting = null;
   }
 
@@ -45,6 +46,7 @@ class Audio {
       this.node.port.onmessage = (e) => {
         const m = e.data;
         if (m.t === "meter" && this.onMeter) this.onMeter(m);
+        else if (m.t === "msgs" && this.onMessages) this.onMessages(m.list);
         else if (m.t === "log") { console.error("[synth]", m.msg); if (this.onLog) this.onLog(m.msg); }
       };
       this.node.onprocessorerror = () => { if (this.onLog) this.onLog("The synth stopped with an error. Reload the page to restart it."); };
@@ -73,6 +75,7 @@ class Audio {
       custom: (id, json) => this.send({ t: "custom", id, json }),
       mod: (json) => this.send({ t: "mod", json }),
       shapes: (json) => this.send({ t: "shapes", json }),
+      message: (i, v) => this.send({ t: "msg", i, v }),
     };
   }
 
@@ -82,7 +85,10 @@ class Audio {
     const len = Math.ceil(seconds * sampleRate);
     const ctx = new OfflineAudioContext(2, len, sampleRate);
     await ctx.audioWorklet.addModule(skWorkletUrl());
-    const schedule = events.map((e) => ({ sample: Math.round(e.t * sampleRate), d: e.d })).sort((a, b) => a.sample - b.sample);
+    // events: {t, d: [MIDI bytes]} or {t, m: [message index, values]}; at the
+    // same time, messages go first (as in the native render tool).
+    const schedule = events.map((e) => (e.m ? { sample: Math.round(e.t * sampleRate), m: e.m } : { sample: Math.round(e.t * sampleRate), d: e.d }))
+      .sort((a, b) => a.sample - b.sample || (b.m ? 1 : 0) - (a.m ? 1 : 0));
     const node = new AudioWorkletNode(ctx, "synthkit", {
       numberOfInputs: 0,
       numberOfOutputs: 1,

@@ -61,7 +61,7 @@ function(_synthkit_add_web name dir)
   target_link_options(${name}_wasm PRIVATE -mexec-model=reactor -Wl,--strip-all -Wl,-z,stack-size=1048576)
 
   file(GLOB_RECURSE _shell CONFIGURE_DEPENDS "${SYNTHKIT_ROOT}/web/shell/*")
-  file(GLOB _ui CONFIGURE_DEPENDS "${dir}/ui/*")
+  file(GLOB_RECURSE _ui CONFIGURE_DEPENDS "${dir}/ui/*")
   set(_out "${CMAKE_BINARY_DIR}/web/${name}.html")
   add_custom_command(
     OUTPUT "${_out}"

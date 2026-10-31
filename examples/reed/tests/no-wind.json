@@ -1,0 +1,8 @@
+{
+  "about": "Keys without pumping (and no helper pump) make no sound.",
+  "patch": "init",
+  "params": { "wind.helper": 0 },
+  "events": [ { "t": 0.1, "on": 60 }, { "t": 0.8, "off": 60 } ],
+  "length": 1.0,
+  "expect": { "silentAfter": 0.0 }
+}

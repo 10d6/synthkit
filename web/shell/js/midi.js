@@ -62,6 +62,7 @@ class MidiInput {
     this.dot.classList.remove("is-flash");
     void this.dot.offsetWidth;
     this.dot.classList.add("is-flash");
+    if (this.app.tapMidi(d)) return;   // a synth's own page took it
     const type = st & 0xf0;
     if (type === 0xb0) {
       const cc = d[1], v = d[2];

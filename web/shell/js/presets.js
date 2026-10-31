@@ -41,6 +41,7 @@ class PresetBar {
     this.user = skStore.get(this.key("presets"), {});
     skStore.on(this.key("presets"), () => { this.user = skStore.get(this.key("presets"), {}); this.refresh(); });
     this.current = { kind: "factory", name: "Init" };
+    this.listeners = new Set();   // a synth's own page following the presets
     this.build();
     this.model.onAny(() => this.changed());
   }
@@ -83,10 +84,18 @@ class PresetBar {
     for (const g of Object.values(groups)) if (g.children.length) this.select.append(g);
     this.select.value = this.current.kind === "session" ? "session:" : this.value(this.current);
     this.dirtyDot.hidden = !this.model.dirty;
+    this.notify();
+  }
+
+  notify() {
+    const state = { ...this.current, dirty: !!this.model.dirty };
+    for (const fn of this.listeners) { try { fn(state); } catch (err) { console.error(err); } }
   }
 
   changed() {
+    const was = this.dirtyDot.hidden;
     this.dirtyDot.hidden = !this.model.dirty;
+    if (was !== this.dirtyDot.hidden) this.notify();
     clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => this.saveSession(), 400);
   }
@@ -178,18 +187,21 @@ class PresetBar {
     this.nameInput.hidden = true;
     this.select.hidden = false;
     if (!commit || !name) return;
-    if (mode === "rename" && this.current.kind === "user") {
-      const p = this.user[this.current.name];
-      delete this.user[this.current.name];
-      this.user[name] = { ...p, name };
-      this.current = { kind: "user", name };
-      skStore.set(this.key("presets"), this.user);
-      this.model.setName(name);
-      this.refresh();
-      this.saveSession();
-    } else {
-      this.store(name);
-    }
+    if (mode === "rename") this.renameTo(name);
+    else this.store(name);
+  }
+
+  renameTo(name) {
+    if (this.current.kind !== "user" || !name) return false;
+    const p = this.user[this.current.name];
+    delete this.user[this.current.name];
+    this.user[name] = { ...p, name };
+    this.current = { kind: "user", name };
+    skStore.set(this.key("presets"), this.user);
+    this.model.setName(name);
+    this.refresh();
+    this.saveSession();
+    return true;
   }
 
   remove() {
