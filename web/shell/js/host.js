@@ -11,6 +11,7 @@ class HostAudio {
     this.onMeter = null;
     this.onLog = null;
     this.onHost = null;      // (message) for params / state / store / imported
+    this.onMessages = null;  // ([[index, values], …]) from the synth
     this.node = true;        // App checks this before sending MIDI
     window.__JUCE__.backend.addEventListener("sk", (m) => this.receive(m));
   }
@@ -29,6 +30,7 @@ class HostAudio {
       custom: (id, json) => this.send({ t: "custom", id, json }),
       mod: (json) => this.send({ t: "mod", json }),
       shapes: (json) => this.send({ t: "shapes", json }),
+      message: (i, v) => this.send({ t: "msg", i, v }),
     };
   }
 
@@ -40,6 +42,8 @@ class HostAudio {
       if (this.onMeter) this.onMeter(m);
     } else if (m.t === "log") {
       if (this.onLog) this.onLog(m.msg, m.kind);
+    } else if (m.t === "msgs") {
+      if (this.onMessages) this.onMessages(m.list || []);
     } else if (this.onHost) {
       this.onHost(m);
     }

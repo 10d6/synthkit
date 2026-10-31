@@ -10,11 +10,13 @@
 #include "synthkit/custom.h"
 #include "synthkit/dsp.h"
 #include "synthkit/json.h"
+#include "synthkit/messages.h"
 #include "synthkit/midi.h"
 #include "synthkit/modulation.h"
 #include "synthkit/params.h"
 #include "synthkit/patch.h"
 #include "synthkit/transport.h"
+#include "synthkit/webaudio.h"
 
 namespace sk {
 
@@ -109,6 +111,8 @@ class GlobalContext {
   float lfo(int n) const;               // global LFO value (per-voice LFOs read 0 here)
   float shape(int n) const;
   void setSource(ModSource s, float v); // global value of a custom source
+  // Send a message to the page (API.md §9b). False if the queue is full.
+  bool post(MessageId m, std::initializer_list<float> values = {});
   const Transport& transport() const;
   double sampleRate() const;
   int frames() const { return frames_; }
@@ -162,6 +166,17 @@ class EventContext {
   int pending() const;                                  // queued events
   void trigger(int shape);                              // restart shape n (1-based) now
   void setSource(ModSource s, float v);                 // global value of a custom source
+
+  // Messages from the page that arrived since the last block (API.md §9b),
+  // and sending one back.
+  struct Messages {
+    const Message* b; const Message* e;
+    const Message* begin() const { return b; }
+    const Message* end() const { return e; }
+    std::size_t size() const { return static_cast<std::size_t>(e - b); }
+  };
+  Messages messages() const;
+  bool post(MessageId m, std::initializer_list<float> values = {});
 
  private:
   friend struct detail::Core;
@@ -218,6 +233,7 @@ class Synth {
   virtual void defineParams(ParamBuilder& b) = 0;
   virtual void defineCustom(CustomBuilder&) {}
   virtual void defineModSources(ModSourceBuilder&) {}
+  virtual void defineMessages(MessageBuilder&) {}
   virtual std::unique_ptr<Voice> makeVoice() = 0;
 
   virtual void prepare(const PrepareInfo&) {}

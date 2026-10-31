@@ -43,20 +43,30 @@ builds from CI artifacts at milestones.
 
 ```
 core/include/synthkit/   public headers: synth.h (what synths use), engine.h
-                         (what adapters use), params, json, custom, dsp/…
+                         (what adapters use), params, json, custom, messages
+                         (page <-> engine, API.md §9b), dsp/…, webaudio/…
+                         (sk::wa: Web Audio's nodes, API.md §8a)
 core/src/                engine.cpp (voices, events, transport), modulation.cpp
                          (sources, matrix, LFOs, shapes), params, json
 cmake/                   synthkit_add_synth() + preset embedding
 tools/render/            <synth>_render: scenarios, generic checks, WAV output
+tools/wa_parity/         synthkit_wa_parity: renders tests/webaudio with sk::wa
 examples/basic/          subtractive synth exercising the whole API
+examples/reed/           pump organ with its own page (ui/page.*), messages
+                         (treadles) and sk::wa blocks
 tests/core_tests.cpp     kit unit tests (no framework; TEST/CHECK macros)
+tests/webaudio/          sk::wa parity scenarios; tools/wa_parity renders them
+                         natively, web/test/webaudio-parity.cjs in Chromium
 web/wasm/                C API exported to JavaScript
 web/shell/               the page: template, style, js/ (model, audio, host
                          (plugin bridge), controls, panels, modulation, presets,
-                         keyboard, midi, clock, app), worklet.js
-web/pack.py              inlines everything into one <synth>.html
-web/test/                headless Chromium tests (page; page's plugin mode) +
-                         browser-vs-native compare
+                         keyboard, midi, clock, app; app.js also holds the
+                         bridge for a synth's own page), worklet.js
+web/pack.py              inlines everything into one <synth>.html (and joins a
+                         synth's ui/page.js modules into one scope)
+web/test/                headless Chromium tests (page; page's plugin mode; a
+                         synth's own page, page-test.cjs) + browser-vs-native
+                         compare + sk::wa parity
 plugin/                  JUCE adapter: Processor (engine, params, state,
                          transport), Editor (web view + page bridge), Settings
                          (shared store), test/PluginCheck (DAW-style check)
@@ -119,6 +129,30 @@ node web/test/browser-test.cjs build-web/web/basic.html build-web/test examples/
 python3 web/test/compare.py build-web/test/web-render.f32 build-web/test/native.wav
 ```
 
+Web Audio blocks (`sk::wa`, API.md §8a) against Chromium's own nodes:
+
+```
+cmake --build build --target synthkit_wa_parity && mkdir -p build/wa
+./build/synthkit_wa_parity tests/webaudio/parity.json build/wa
+node web/test/webaudio-parity.cjs tests/webaudio/parity.json build/wa
+```
+
+Changing an `sk::wa` block means it must still match the browser: run these,
+and add a case to `tests/webaudio/parity.json` for anything new. The blocks
+follow Chromium's code (BSD; notice in `core/include/synthkit/webaudio.h`), so
+when they disagree, read Chromium's `third_party/blink/renderer/platform/audio`
+and `modules/webaudio` rather than tuning numbers.
+
+A synth's own page (API.md §9a) and messages (§9b), with examples/reed:
+
+```
+./build/examples/reed/reed_render --check examples/reed
+node web/test/page-test.cjs build-web/web/reed.html build-web/test-reed
+node web/test/browser-test.cjs build-web/web/reed.html build-web/test-reed examples/reed/tests/pump.json
+./build/examples/reed/reed_render examples/reed/tests/pump.json --block 128 --out build-web/test-reed/native.wav
+python3 web/test/compare.py build-web/test-reed/web-render.f32 build-web/test-reed/native.wav
+```
+
 Plugins (needs the page built first; `tools/ci/deps.sh plugin`):
 
 ```
@@ -162,15 +196,21 @@ Run the native checks before every PR. For DSP changes, also look at the renders
 ## Licensing
 
 JUCE is used only in `plugin/` (free Starter tier while private; AGPLv3 or
-Starter once public). Everything else is our own code and must stay JUCE-free
-so it can be licensed independently. No license chosen yet.
+Starter once public). Everything else must stay JUCE-free so it can be
+licensed independently. It's our own code, except that the `sk::wa` blocks
+(`core/include/synthkit/webaudio/`) follow Chromium's Web Audio code, which is
+BSD-licensed: keep its notice in `webaudio.h`, and when a license is chosen
+the plugin zips and release notes need that notice too. No license chosen yet.
 
 ## CI
 
 The repo is public, with GitHub Pages serving the `gh-pages` branch: CI
 publishes `main` at https://10d6.github.io/synthkit/ and each PR at
-`/pr/<number>/`, and comments the link on the PR. Linux build + tests, the
-browser build and the browser-vs-native comparison run on every PR. Plugin
+`/pr/<number>/` (with examples/reed at `…/reed.html`), and comments the link
+on the PR. On every PR: Linux build + tests (release and sanitizers, both
+examples' `--check`), the browser build, the kit's page and plugin-mode tests,
+the reed's own-page test, browser-vs-native comparisons for both examples, and
+the `sk::wa` parity check against Chromium. Plugin
 builds run on every PR too: Windows, macOS (universal + AU) and Linux, each
 with `<name>_plugin_check` and pluginval (auval on macOS), uploading a zip per
 OS (`synthkit-basic-<os>`) for the owner to install. A `v*` tag makes a
@@ -181,9 +221,11 @@ browser and Linux plugin checks.
 
 ## Status
 
-See README → Roadmap. Phases 1–7 are done (contract; core, DSP, render tool,
+See README → Roadmap. Phases 1–9 are done (contract; core, DSP, render tool,
 example synth; browser build; modulation; plugins; template + scaffold; the
-first real synth). `10d6/aleatory` (the aleatoric synth) was ported from its
-browser sketch using only `API.md`; gaps found in synth repos get fixed in
-API.md here. The next stress test is `10d6/reedorgan`, a Web Audio reed organ
-with its own page.
+first real synth; `sk::wa`; own pages and messages). `10d6/aleatory` (the
+aleatoric synth) was ported from its browser sketch using only `API.md`; gaps
+found in synth repos get fixed in API.md here. Next: port `10d6/reedorgan`, a
+Web Audio reed organ with its own page, using `sk::wa` and §9a/§9b
+(`examples/reed` is the small version). Aleatory's hand-written band-pass and
+compressor can move to `wa::BiquadFilter` and `wa::DynamicsCompressor`.

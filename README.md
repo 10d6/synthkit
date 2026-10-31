@@ -7,12 +7,15 @@ places:
 - **as VST3 / AU plugins**, for use in a DAW (Ableton Live, Reaper, GarageBand).
 
 A synth built on synthkit provides only what's unique to it: its parameters,
-its sound engine and its control layout. synthkit handles MIDI, voices,
-patches and presets, modulation routing, tempo sync, the UI controls, testing
-and the builds.
+its sound engine and its control layout (or a page of its own). synthkit
+handles MIDI, voices, patches and presets, modulation routing, tempo sync, the
+UI controls, messages between the page and the engine, testing and the builds.
+For synths that start as Web Audio sketches, it has DSP blocks that match the
+browser's nodes sample for sample, so a sketch ports by translation.
 
 **Start here:** [`API.md`](API.md) describes what a synth looks like to write.
-[`examples/basic`](examples/basic) is a complete synth built on it.
+[`examples/basic`](examples/basic) is a complete synth built on it, and
+[`examples/reed`](examples/reed) one with its own page.
 
 ```
 cmake -S . -B build && cmake --build build
@@ -24,8 +27,8 @@ renders every test scenario and preset to `renders/` and runs the kit's checks.
 ## Playing it in the browser
 
 Every PR's CI run has a **web-basic** artifact: download it, unzip, and
-double-click `basic.html`. It's the whole synth in one file, with no server
-needed. Click once to start the sound, then play with the mouse, your computer
+double-click `basic.html` (or `reed.html`, the example with its own page).
+Each is the whole synth in one file, with no server needed. Click once to start the sound, then play with the mouse, your computer
 keyboard (A–K), or a MIDI keyboard (**Connect MIDI**).
 
 To build it yourself (Ubuntu 24.04: `sudo apt install clang-18 lld-18 wasi-libc
@@ -33,12 +36,12 @@ libc++-18-dev-wasm32 libclang-rt-18-dev-wasm32`):
 
 ```
 cmake -S . -B build-web -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/wasm32-wasi.cmake
-cmake --build build-web        # → build-web/web/basic.html
+cmake --build build-web        # → build-web/web/basic.html, reed.html
 ```
 
 **Preview links.** Once the repo is public, CI also publishes each PR to
-`https://10d6.github.io/synthkit/pr/<number>/` (and `main` at the site root) and
-links it on the PR. It needs one setting: Settings → Pages → Build and
+`https://10d6.github.io/synthkit/pr/<number>/` (and `main` at the site root),
+with the reed example at `…/reed.html`, and links it on the PR. It needs one setting: Settings → Pages → Build and
 deployment → Deploy from a branch → `gh-pages` / root.
 
 ## Starting a new synth
@@ -60,21 +63,24 @@ Every PR's CI run also has a plugin zip per system: **synthkit-basic-windows**,
 `INSTALL.md` for the one Terminal command unsigned plugins need. Tagging a
 version (`v0.2.0`) publishes the zips as a GitHub release.
 
-The plugin window is the same page as the browser version. The sound is saved
+The plugin window is the same page as the browser version, including a
+synth's own page. The sound is saved
 in your DAW project, and your own presets are shared by every copy of the synth
 on the computer.
 
 ## How it fits together
 
 ```
-          your synth (params + voice + layout.json)
+   your synth (params + voice + layout.json, or its own ui/page.js)
                           │
                     synthkit core          portable C++: params, voices,
-                          │                mod matrix, patches, DSP blocks
+                          │                mod matrix, patches, messages,
+                          │                DSP blocks (incl. sk::wa: Web Audio's nodes)
             ┌─────────────┴─────────────┐
         web adapter                plugin adapter
    WASM + AudioWorklet           JUCE → VST3 / AU
    HTML UI, Web MIDI             same HTML UI in a WebView
+   (kit page or synth's own)
    GitHub Pages                  CI builds for Windows / macOS
 ```
 
@@ -89,9 +95,8 @@ on the computer.
 | 5 ✓ | JUCE plugin adapter (VST3, AU, Standalone; the page as its window), Windows/macOS/Linux CI, pluginval, releases | load it in Live / GarageBand |
 | 6 ✓ | synth template + scaffold script (`tools/new-synth.py`), shared CI scripts | start a new synth in one step |
 | 7 ✓ | the first real synth, [10d6/aleatory](https://github.com/10d6/aleatory), ported from its browser sketch using only `API.md` | play it in the browser and in Live |
+| 8 ✓ | `sk::wa`: Web Audio's nodes (biquad, compressor, convolver, periodic-wave oscillator, wave shaper, panner, delay, AudioParam automation) as DSP blocks, checked sample for sample against Chromium | port a browser sketch by translation |
+| 9 ✓ | a synth's own page (`ui/page.js`) using the kit's parts where it wants them; messages between page and engine; `ui/style.css`; [`examples/reed`](examples/reed) | keep an instrument's own look in the browser and the DAW |
 
-Next, from what aleatory and the reed organ
-([10d6/reedorgan](https://github.com/10d6/reedorgan), a Web Audio instrument)
-need: DSP blocks that behave exactly like Web Audio's nodes, so a browser
-sketch ports by translation, and a way for a synth to bring its own page and
-talk to its engine with messages that aren't saved.
+Next: port the reed organ ([10d6/reedorgan](https://github.com/10d6/reedorgan))
+onto the kit, using `sk::wa` for its sound and its own page for its cabinet.

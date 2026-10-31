@@ -650,6 +650,237 @@ TEST(first_note_shape_and_key_range) {
   CHECK_NEAR(modAt(0.75, 64), 0.875, 0.02);  // same shape1, plus shape2 (1.0 × 0.5) for key 64
 }
 
+// ------------------------------------------------------------ messages
+
+struct MsgVoice : Voice {
+  void start(const NoteOn&, const StartInfo&) override {}
+  void render(VoiceContext&, Buffer&) override {}
+};
+struct MsgSynth : Synth {
+  MessageId ping, pong;
+  std::vector<std::pair<float, int>> seen;   // (value, count) per message seen
+  int blocks = 0;
+  void defineParams(ParamBuilder&) override {}
+  void defineMessages(MessageBuilder& b) override { ping = b.add("ping"); pong = b.add("pong"); }
+  std::unique_ptr<Voice> makeVoice() override { return std::make_unique<MsgVoice>(); }
+  void prepare(const PrepareInfo&) override { seen.reserve(1024); }
+  void processEvents(EventContext& ctx) override {
+    ++blocks;
+    for (auto& m : ctx.messages())
+      if (m.is(ping)) { seen.push_back({m[1], m.count}); ctx.post(pong, {m[0] * 2}); }
+  }
+};
+
+TEST(messages_round_trip) {
+  auto s = std::make_unique<MsgSynth>();
+  MsgSynth* syn = s.get();
+  Engine eng(std::move(s), testInfo());
+  eng.prepare(48000, 128);
+  CHECK(eng.messageIds().size() == 2 && eng.messageIndex("pong") == 1 && eng.messageIndex("nope") == -1);
+  std::vector<float> l(128), r(128);
+  float* outs[2] = {l.data(), r.data()};
+  HostTransport ht;
+  const float v[3] = {1.5f, 7, 9};
+  CHECK(eng.sendMessage(0, v, 3));
+  CHECK(!eng.sendMessage(5, v, 1));            // unknown index
+  eng.process(outs, 2, 128, nullptr, 0, ht);
+  eng.process(outs, 2, 128, nullptr, 0, ht);   // seen once, not again
+  CHECK(syn->seen.size() == 1 && syn->seen[0].first == 7 && syn->seen[0].second == 3);
+  Message m;
+  CHECK(eng.takeMessage(m) && m.is(syn->pong) && m.count == 1 && m[0] == 3.f);
+  CHECK(!eng.takeMessage(m));
+  // Order is kept, and a full queue refuses (and counts) instead of growing.
+  for (int i = 0; i < 300; ++i) { const float x = static_cast<float>(i); eng.sendMessage(0, &x, 1); }
+  CHECK(eng.takeStats().droppedMessages == 300 - 255);
+  syn->seen.clear();
+  eng.process(outs, 2, 128, nullptr, 0, ht);
+  CHECK(syn->seen.size() == 255);
+  // ... and the synth's 255 answers came back in order.
+  int n = 0;
+  bool ordered = true;
+  while (eng.takeMessage(m)) { ordered &= m[0] == static_cast<float>(n * 2); ++n; }
+  CHECK(n == 255 && ordered);
+}
+
+TEST(messages_ids_are_checked) {
+  struct Bad : MsgSynth {
+    void defineMessages(MessageBuilder& b) override { b.add("ok"); b.add("ok"); }
+  };
+  CHECK_THROWS(Engine(std::make_unique<Bad>(), testInfo()));
+  struct Bad2 : MsgSynth {
+    void defineMessages(MessageBuilder& b) override { b.add("has space"); }
+  };
+  CHECK_THROWS(Engine(std::make_unique<Bad2>(), testInfo()));
+}
+
+// ------------------------------------------------------------ sk::wa blocks
+// (Bit-level agreement with the browser is checked by
+// web/test/webaudio-parity.cjs; these check the blocks on their own.)
+
+TEST(wa_convolver_is_exact_convolution) {
+  // Long enough to use every partition size, with odd lengths.
+  dsp::Rng rng(7);
+  const int irLen = 20000, n = 30000;
+  std::vector<float> ir(irLen), x(n);
+  for (auto& v : ir) v = rng.bipolar() * 0.01f;
+  for (auto& v : x) v = rng.bipolar();
+  const float* chans[1] = {ir.data()};
+  wa::Convolver c;
+  c.setImpulse(chans, 1, irLen, 48000, false);
+  double worst = 0;
+  for (int i = 0; i < n; ++i) {
+    float l = x[i], r = x[i];
+    c.process(l, r);
+    if (i % 997 == 0 || i == n - 1) {
+      double ref = 0;
+      for (int k = 0; k < irLen && k <= i; ++k) ref += static_cast<double>(ir[k]) * x[i - k];
+      worst = std::max(worst, std::fabs(ref - l));
+      CHECK(l == r);
+    }
+  }
+  CHECK(worst < 1e-4);
+}
+
+TEST(wa_convolver_normalises_like_web_audio) {
+  // A single-sample response of height h has RMS power h/sqrt(len); the
+  // normalised gain is 1/power * 10^(-58/20) * 44100/sampleRate.
+  std::vector<float> ir(100, 0.f);
+  ir[0] = 0.5f;
+  const float* chans[1] = {ir.data()};
+  wa::Convolver c;
+  c.setImpulse(chans, 1, 100, 44100, true);
+  float l = 1, r = 1;
+  c.process(l, r);
+  const double power = 0.5 / std::sqrt(100.0);
+  CHECK_NEAR(l, 0.5 / power * std::pow(10.0, -58.0 / 20), 1e-5);
+}
+
+TEST(wa_biquad_responses) {
+  wa::BiquadFilter f;
+  f.prepare(48000);
+  f.set(1000, 0);  // lowpass; Q is in dB here, and Q = 0 dB gives 0 dB at the corner
+  CHECK_NEAR(20 * std::log10(f.magnitude(1000)), 0.0, 0.05);
+  CHECK(f.magnitude(10) > 0.99 && f.magnitude(10000) < 0.05);
+  f.setType(wa::BiquadFilter::Type::Peaking);
+  f.set(2000, 2, 6);
+  CHECK_NEAR(20 * std::log10(f.magnitude(2000)), 6.0, 0.01);
+  f.setType(wa::BiquadFilter::Type::Highshelf);
+  f.set(3000, 1, -9);
+  CHECK_NEAR(20 * std::log10(f.magnitude(20000)), -9.0, 0.3);
+  f.setType(wa::BiquadFilter::Type::Notch);
+  f.set(440, 4);
+  CHECK(f.magnitude(440) < 1e-6);
+  // Detune shifts the frequency: +1200 cents is an octave.
+  f.setType(wa::BiquadFilter::Type::Peaking);
+  f.set(1000, 3, 12, 1200);
+  CHECK_NEAR(20 * std::log10(f.magnitude(2000)), 12.0, 0.01);
+}
+
+TEST(wa_compressor_reduces_loud_and_passes_quiet) {
+  wa::DynamicsCompressor c;
+  c.prepare(48000);
+  c.set(-24, 30, 12, 0.003f, 0.25f);
+  CHECK(c.latency() == 288);
+  float l = 0, r = 0;
+  for (int i = 0; i < 48000; ++i) { l = r = (i % 2 ? 0.9f : -0.9f); c.process(l, r); }
+  CHECK(c.reduction() < -3);
+  CHECK(std::isfinite(l) && std::fabs(l) < 0.9f);
+  for (int i = 0; i < 96000; ++i) { l = r = (i % 2 ? 0.001f : -0.001f); c.process(l, r); }
+  CHECK(c.reduction() > -1);
+}
+
+TEST(wa_oscillator_pitch_and_level) {
+  wa::PeriodicWave w;
+  w.build(48000, wa::PeriodicWave::Basic::Sine);
+  wa::Oscillator o;
+  o.prepare(48000);
+  o.setWave(&w);
+  int up = 0;
+  float prev = 0, peak = 0;
+  for (int i = 0; i < 48000; ++i) {
+    const float v = o.next(441);
+    if (prev <= 0 && v > 0) ++up;
+    prev = v;
+    peak = std::max(peak, std::fabs(v));
+  }
+  CHECK(up >= 440 && up <= 442);
+  CHECK_NEAR(peak, 1.0, 1e-3);
+  // Without normalisation, imag = [0, 0.5] is a sine of amplitude 0.5.
+  const float re[2] = {0, 0}, im[2] = {0, 0.5f};
+  w.build(48000, re, im, 2, true);
+  o.reset();
+  peak = 0;
+  for (int i = 0; i < 4800; ++i) peak = std::max(peak, std::fabs(o.next(100)));
+  CHECK_NEAR(peak, 0.5, 1e-3);
+}
+
+TEST(wa_shaper_curve_and_oversampling_latency) {
+  wa::WaveShaper s;
+  const float curve[3] = {-1, 0, 1};
+  s.setCurve(curve, 3);
+  CHECK_NEAR(s.shape(0.5f), 0.5, 1e-6);
+  CHECK_NEAR(s.shape(2.f), 1.0, 1e-6);
+  for (auto [os, latency] : {std::pair{wa::WaveShaper::Oversample::X2, 128}, std::pair{wa::WaveShaper::Oversample::X4, 192}}) {
+    s.setOversample(os);
+    int at = -1;
+    float peak = 0;
+    for (int i = 0; i < 1024; ++i) {
+      const float v = std::fabs(s.process(i == 0 ? 0.5f : 0.f));
+      if (v > peak) { peak = v; at = i; }
+    }
+    CHECK(at == latency);
+    CHECK_NEAR(peak, 0.496, 0.001);
+  }
+}
+
+TEST(wa_param_automation) {
+  wa::Param p(0);
+  CHECK(p.setValueAtTime(1, 0.1));
+  CHECK(p.linearRampToValueAtTime(3, 0.2));
+  CHECK(p.exponentialRampToValueAtTime(0.03f, 0.3));
+  CHECK(p.setTargetAtTime(1, 0.4, 0.05));
+  const float curve[3] = {0, 1, 0};
+  CHECK(p.setValueCurveAtTime(curve, 3, 0.6, 0.2));
+  CHECK(!p.setValueAtTime(5, 0.65));   // inside the curve: refused
+  CHECK(!p.exponentialRampToValueAtTime(0, 1));
+  CHECK_NEAR(p.valueAt(0.05), 0, 1e-6);
+  CHECK_NEAR(p.valueAt(0.15), 2, 1e-5);
+  CHECK_NEAR(p.valueAt(0.25), 0.3, 1e-4);           // halfway, geometrically: sqrt(3 * 0.03)
+  CHECK_NEAR(p.valueAt(0.45), 1 + (0.03 - 1) * std::exp(-1.0), 1e-4);
+  CHECK_NEAR(p.valueAt(0.7), 1, 1e-5);
+  CHECK_NEAR(p.valueAt(0.75), 0.5, 1e-5);
+  CHECK_NEAR(p.valueAt(2), 0, 1e-6);                 // holds the curve's last value
+  // cancelAndHold in the middle of a ramp freezes it there.
+  wa::Param q(0);
+  q.linearRampToValueAtTime(1, 1);
+  q.cancelAndHoldAtTime(0.25);
+  CHECK_NEAR(q.valueAt(0.1), 0.1, 1e-5);
+  CHECK_NEAR(q.valueAt(0.9), 0.25, 1e-5);
+  // Range clamping.
+  wa::Param r(0, 0, 1);
+  r.setValueAtTime(4, 0);
+  CHECK_NEAR(r.valueAt(0.1), 1, 1e-6);
+}
+
+TEST(wa_panner_and_delay) {
+  float l = 1, r = 0;
+  wa::StereoPanner::process(1, l, r);   // hard right: left moves into right
+  CHECK_NEAR(l, 0, 1e-6);
+  CHECK_NEAR(r, 1, 1e-6);
+  wa::StereoPanner::processMono(0, 1, l, r);
+  CHECK_NEAR(l, std::sqrt(0.5), 1e-6);
+  CHECK_NEAR(r, std::sqrt(0.5), 1e-6);
+  wa::Delay d;
+  d.prepare(48000, 0.1);
+  float out = 0;
+  for (int i = 0; i < 20; ++i) {
+    const float y = d.process(i == 0 ? 1.f : 0.f, 10.5 / 48000);
+    if (i == 10) out = y;
+    if (i == 11) CHECK_NEAR(y, 0.5, 1e-3);
+  }
+  CHECK_NEAR(out, 0.5, 1e-3);
+}
+
 int main() {
   for (auto& [name, fn] : registry()) {
     int before = gFail;

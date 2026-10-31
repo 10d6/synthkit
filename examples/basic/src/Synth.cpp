@@ -65,6 +65,22 @@ struct Basic : Synth {
 
   std::unique_ptr<Voice> makeVoice() override { return std::make_unique<BasicVoice>(*this); }
 
+  // ---- messages (API.md §9b): the page's "Clear echoes" button empties the
+  // delay, and the engine answers so the button can show it happened.
+  MessageId clearDelay, delayCleared;
+  bool clearPending = false;
+
+  void defineMessages(MessageBuilder& b) override {
+    clearDelay = b.add("delay.clear");
+    delayCleared = b.add("delay.cleared");
+  }
+
+  void processEvents(EventContext& ctx) override {
+    for (auto& m : ctx.messages())
+      if (m.is(clearDelay)) clearPending = true;
+    for (auto& e : ctx.in()) ctx.out(e);
+  }
+
   // ---- global: tempo-synced stereo delay
   dsp::Delay dl, dr;
   dsp::OnePole tl, tr, dcl, dcr;
@@ -89,6 +105,13 @@ struct Basic : Synth {
     float fb = ctx.get(delayFeedback);
     tl.set(ctx.get(delayTone));
     tr.set(ctx.get(delayTone));
+    if (clearPending) {
+      clearPending = false;
+      dl.reset();
+      dr.reset();
+      tl.reset(); tr.reset(); dcl.reset(); dcr.reset();   // their memory would echo too
+      ctx.post(delayCleared, {static_cast<float>(ctx.transport().beat)});
+    }
     double beats = divs[ctx.choice(delayTime)].length(ctx.transport());
     time.setTarget(static_cast<float>(std::min(2.4, beats * ctx.transport().secondsPerBeat()) * sr));
     for (int i = 0; i < io.frames; ++i) {

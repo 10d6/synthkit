@@ -38,6 +38,8 @@ jobs:
         run: ./build/synthkit_tests
       - name: Example synth checks
         run: ./build/examples/basic/basic_render --check examples/basic ${{ matrix.renders && '--out renders' || '' }}
+      - name: Reed example checks (own page, messages, sk::wa)
+        run: ./build/examples/reed/reed_render --check examples/reed ${{ matrix.renders && '--out renders-reed' || '' }}
       - name: Upload renders
         if: matrix.renders && always()
         uses: actions/upload-artifact@v4
@@ -66,7 +68,7 @@ jobs:
       - name: Build the native renderer (for comparison)
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target basic_render
+          cmake --build build --target basic_render reed_render
       - name: Install Chromium for Playwright
         run: |
           npm install --no-save --no-audit --no-fund playwright@1.48.2
@@ -79,6 +81,18 @@ jobs:
         run: |
           ./build/examples/basic/basic_render examples/basic/tests/demo-pump.json --block 128 --out web-test/native.wav
           python3 web/test/compare.py web-test/web-render.f32 web-test/native.wav
+      - name: A synth's own page (examples/reed), compared with native
+        run: |
+          node web/test/page-test.cjs build-web/web/reed.html web-test/reed
+          node web/test/browser-test.cjs build-web/web/reed.html web-test/reed examples/reed/tests/pump.json
+          ./build/examples/reed/reed_render examples/reed/tests/pump.json --block 128 --out web-test/reed/native.wav
+          python3 web/test/compare.py web-test/reed/web-render.f32 web-test/reed/native.wav
+      - name: sk::wa blocks match Chromium's Web Audio nodes
+        run: |
+          cmake --build build --target synthkit_wa_parity
+          mkdir -p web-test/wa
+          ./build/synthkit_wa_parity tests/webaudio/parity.json web-test/wa
+          node web/test/webaudio-parity.cjs tests/webaudio/parity.json web-test/wa web-test/wa
       - name: Upload the page
         if: always()
         uses: actions/upload-artifact@v4
@@ -86,7 +100,9 @@ jobs:
           name: web-basic
           path: |
             build-web/web/basic.html
+            build-web/web/reed.html
             web-test/*.png
+            web-test/reed/*.png
             web-test/*.f32
             web-test/native.wav
           if-no-files-found: ignore
@@ -213,6 +229,7 @@ jobs:
           if git fetch -q --depth 1 origin gh-pages; then git checkout -q gh-pages; else git checkout -q --orphan gh-pages; fi
           mkdir -p "$dest"
           cp ../page/build-web/web/basic.html "$dest/index.html"
+          cp ../page/build-web/web/reed.html "$dest/reed.html"
           touch .nojekyll
           git add -A
           what="main"; [ -n "$PR" ] && what="PR #$PR"
@@ -229,5 +246,5 @@ jobs:
           marker="<!-- synthkit-preview -->"
           if ! gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --jq '.[].body' | grep -q "$marker"; then
             gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="${marker}
-          Play this PR in the browser: ${url} (updates on every push; give Pages a minute)."
+          Play this PR in the browser: ${url} (updates on every push; give Pages a minute). The reed example, with its own page: ${url}reed.html"
           fi

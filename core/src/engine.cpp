@@ -240,7 +240,12 @@ struct Core {
 
   std::atomic<int> reqAllOff{0}, reqPanic{0};
   std::atomic<float> statPeak{0}, statLimDb{0};
-  std::atomic<int> statDropped{0}, statSteals{0}, statActive{0};
+  std::atomic<int> statDropped{0}, statSteals{0}, statActive{0}, statMsgDropped{0};
+
+  std::vector<std::string> messageIds;
+  detail::MessageRing msgFromPage, msgToPage;
+  std::array<Message, detail::MessageRing::kSize> msgIn{};
+  int msgCount = 0;
 
   dsp::Limiter limiter;
   PatchMeta meta;
@@ -269,6 +274,17 @@ struct Core {
     mod.init(*store, info, mb.take(), &epoch);
     pPitch = mod.pitchParam();
     pLevel = mod.levelParam();
+    MessageBuilder msb;
+    synth->defineMessages(msb);
+    messageIds = msb.take();
+    {
+      std::unordered_set<std::string> seen;
+      for (auto& m : messageIds) {
+        if (m.empty() || m.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_") != std::string::npos)
+          fail("message id '" + m + "' must use letters, digits, '.', '-' and '_'");
+        if (!seen.insert(m).second) fail("duplicate message id '" + m + "'");
+      }
+    }
     CustomBuilder cb(&epoch);
     synth->defineCustom(cb);
     customs = cb.take();
@@ -467,8 +483,11 @@ struct Core {
     }
 
     outCount = 0;
+    msgCount = 0;
+    while (msgCount < static_cast<int>(msgIn.size()) && msgFromPage.pop(msgIn[static_cast<std::size_t>(msgCount)])) ++msgCount;
     if (jumped) synth->onTransportJump(ectx);
     synth->processEvents(ectx);
+    msgCount = 0;   // each message is seen once
     collectDue();
     // Stable insertion sort by sample (small n, no allocation).
     for (int i = 1; i < outCount; ++i) {
@@ -975,6 +994,27 @@ const Transport& GlobalContext::transport() const { return core_->transport; }
 float GlobalContext::lfo(int n) const { return core_->mod.globalSource(core_->mod.sourceIndex(detail::Src::Lfo, n - 1)); }
 float GlobalContext::shape(int n) const { return core_->mod.globalSource(core_->mod.sourceIndex(detail::Src::Shape, n - 1)); }
 void GlobalContext::setSource(ModSource s, float v) { core_->mod.setGlobalSource(s.index, v); }
+
+namespace {
+bool postMessage(detail::Core* core, MessageId m, std::initializer_list<float> values) {
+  if (!m.valid() || m.index >= static_cast<int>(core->messageIds.size())) return false;
+  Message msg;
+  msg.id = m;
+  for (float v : values) {
+    if (msg.count >= Message::kMaxValues) break;
+    msg.values[static_cast<std::size_t>(msg.count++)] = v;
+  }
+  if (core->msgToPage.push(msg)) return true;
+  core->statMsgDropped.fetch_add(1);
+  return false;
+}
+}  // namespace
+
+bool GlobalContext::post(MessageId m, std::initializer_list<float> values) { return postMessage(core_, m, values); }
+bool EventContext::post(MessageId m, std::initializer_list<float> values) { return postMessage(core_, m, values); }
+EventContext::Messages EventContext::messages() const {
+  return {core_->msgIn.data(), core_->msgIn.data() + core_->msgCount};
+}
 double GlobalContext::sampleRate() const { return core_->sr; }
 
 EventContext::Range EventContext::in() const {
@@ -1090,8 +1130,27 @@ EngineStats Engine::takeStats() {
   s.peakBeforeLimiterDb = dsp::gainToDb(core_->statPeak.exchange(0));
   s.droppedEvents = core_->statDropped.exchange(0);
   s.steals = core_->statSteals.exchange(0);
+  s.droppedMessages = core_->statMsgDropped.exchange(0);
   return s;
 }
+
+const std::vector<std::string>& Engine::messageIds() const { return core_->messageIds; }
+int Engine::messageIndex(const std::string& id) const {
+  for (std::size_t i = 0; i < core_->messageIds.size(); ++i)
+    if (core_->messageIds[i] == id) return static_cast<int>(i);
+  return -1;
+}
+bool Engine::sendMessage(int index, const float* values, int count) {
+  if (index < 0 || index >= static_cast<int>(core_->messageIds.size())) return false;
+  Message m;
+  m.id = MessageId{index};
+  m.count = std::clamp(count, 0, Message::kMaxValues);
+  for (int i = 0; i < m.count; ++i) m.values[static_cast<std::size_t>(i)] = values[i];
+  if (core_->msgFromPage.push(m)) return true;
+  core_->statMsgDropped.fetch_add(1);
+  return false;
+}
+bool Engine::takeMessage(Message& out) { return core_->msgToPage.pop(out); }
 
 Json Engine::savePatch() const {
   Json p = Json::object();

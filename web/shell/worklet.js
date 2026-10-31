@@ -66,6 +66,11 @@ class SynthkitProcessor extends AudioWorkletProcessor {
         if (m.playing && !this.playing) this.beat = 0;  // start from the top
         this.bpm = m.bpm; this.playing = m.playing; this.num = m.num; this.den = m.den;
         break;
+      case "msg": {
+        const v = m.v || [];
+        x.sk_message(m.i, Math.min(4, v.length), v[0] || 0, v[1] || 0, v[2] || 0, v[3] || 0);
+        break;
+      }
       case "allOff": x.sk_all_notes_off(); break;
       case "panic": x.sk_panic(); break;
     }
@@ -76,28 +81,55 @@ class SynthkitProcessor extends AudioWorkletProcessor {
     const L = out[0], R = out[1] || out[0];
     const n = L.length;
     const x = this.x;
+    const sched = this.schedule;
     for (const d of this.queue) x.sk_midi(0, d[0], d[1] | 0, d[2] | 0);
     this.queue.length = 0;
-    while (this.si < this.schedule.length && this.schedule[this.si].sample < this.pos + n) {
-      const ev = this.schedule[this.si++];
-      x.sk_midi(Math.max(0, ev.sample - this.pos), ev.d[0], ev.d[1] | 0, ev.d[2] | 0);
-    }
-    x.sk_process(n, this.bpm, this.playing ? 1 : 0, this.beat, this.num, this.den);
-    if (this.playing) {
-      this.beat += (n / sampleRate) * (this.bpm / 60);
-      if (this.clockCorr !== 0) {
-        const step = this.clockCorr * Math.min(1, n / (sampleRate * 0.2));
-        this.beat += step;
-        this.clockCorr -= step;
-        if (Math.abs(this.clockCorr) < 1e-6) this.clockCorr = 0;
+    // Offline renders may schedule messages ({sample, m: [index, values]});
+    // the block is split at each, as the native render tool does, so the two
+    // agree sample for sample.
+    let done = 0;
+    while (done < n) {
+      const at = this.pos + done;
+      while (this.si < sched.length && sched[this.si].m && sched[this.si].sample <= at) {
+        const [i, v = []] = sched[this.si++].m;
+        x.sk_message(i, Math.min(4, v.length), v[0] || 0, v[1] || 0, v[2] || 0, v[3] || 0);
       }
+      let end = n;
+      for (let k = this.si; k < sched.length && sched[k].sample < this.pos + n; k++)
+        if (sched[k].m) { end = Math.min(end, sched[k].sample - this.pos); break; }
+      if (end <= done) end = n;   // never stall
+      while (this.si < sched.length && !sched[this.si].m && sched[this.si].sample < this.pos + end) {
+        const ev = sched[this.si++];
+        x.sk_midi(Math.max(0, ev.sample - at), ev.d[0], ev.d[1] | 0, ev.d[2] | 0);
+      }
+      const len = end - done;
+      x.sk_process(len, this.bpm, this.playing ? 1 : 0, this.beat, this.num, this.den);
+      // Views must be re-created if the module's memory grew.
+      const buf = this.x.memory.buffer;
+      L.set(new Float32Array(buf, x.sk_left(), len), done);
+      if (R !== L) R.set(new Float32Array(buf, x.sk_right(), len), done);
+      if (this.playing) {
+        this.beat += (len / sampleRate) * (this.bpm / 60);
+        if (this.clockCorr !== 0) {
+          const step = this.clockCorr * Math.min(1, len / (sampleRate * 0.2));
+          this.beat += step;
+          this.clockCorr -= step;
+          if (Math.abs(this.clockCorr) < 1e-6) this.clockCorr = 0;
+        }
+      }
+      done = end;
     }
     this.pos += n;
-    // Views must be re-created if the module's memory grew.
-    const buf = this.x.memory.buffer;
-    const l = new Float32Array(buf, x.sk_left(), n), r = new Float32Array(buf, x.sk_right(), n);
-    L.set(l);
-    if (R !== L) R.set(r);
+    const l = L, r = R;
+
+    // Messages the synth posted for the page (API.md §9b).
+    const nm = x.sk_take_messages();
+    if (nm) {
+      const mb = new Float32Array(this.x.memory.buffer, x.sk_message_buffer(), nm * 6);
+      const list = [];
+      for (let k = 0; k < nm; k++) list.push([mb[k * 6], Array.from(mb.subarray(k * 6 + 2, k * 6 + 2 + mb[k * 6 + 1]))]);
+      this.port.postMessage({ t: "msgs", list });
+    }
 
     if (!this.meters) return true;
     for (let i = 0; i < n; i++) {

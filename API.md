@@ -1,13 +1,14 @@
 # synthkit API
 
-> **Status: v0.5.** Every section marked **✓** is implemented and used by
-> [examples/basic](examples/basic) and [10d6/aleatory](https://github.com/10d6/aleatory).
+> **Status: v0.6.** Every section marked **✓** is implemented and used by
+> [examples/basic](examples/basic), [examples/reed](examples/reed) (a synth
+> with its own page) or [10d6/aleatory](https://github.com/10d6/aleatory).
 
 This page is everything you need to build a synth on synthkit. A synth should
 not need to read synthkit's source; if it does, this page is missing something.
 
 Include `<synthkit/synth.h>`; everything is in namespace `sk` (DSP blocks in
-`sk::dsp`).
+`sk::dsp`, and Web Audio's nodes in `sk::wa`, §8a).
 
 ---
 
@@ -33,6 +34,9 @@ my-synth/
   src/Synth.cpp        params, voice, optional hooks
   ui/layout.json       which controls go where (§9)
   ui/custom.js         optional: custom widgets (§9)
+  ui/style.css         optional: the synth's own styles, after the kit's (§9)
+  ui/page.html,        optional: the synth's own page instead of the kit's
+  ui/page.js, ui/page/ (§9a)
   presets/*.json       factory patches (embedded into the build)
   tests/*.json         render scenarios run in CI
   CMakeLists.txt
@@ -58,7 +62,9 @@ same call builds `<name>.html` instead (§11), and with `-DSYNTHKIT_PLUGIN=ON` i
 also builds the plugins (§12).
 
 Everything else (MIDI, voices, patches, mod matrix, UI binding, automation,
-web build, plugin builds) comes from synthkit.
+messages between page and engine, web build, plugin builds) comes from
+synthkit. A synth that keeps the kit's page needs only `layout.json`; one with
+a look of its own adds `ui/page.js` (§9a).
 
 **CI** (the template's `ci.yml`) runs on every PR: native checks (§10), the
 browser page in Chromium compared with the native render (the scenario in the
@@ -239,6 +245,7 @@ struct MySynth : Synth {
 
   // all optional
   void defineCustom(CustomBuilder&) override;                // §5a
+  void defineMessages(MessageBuilder&) override;             // §9b
   void prepare(const PrepareInfo&) override;
   void processEvents(EventContext&) override;                // §4a
   void processGlobal(GlobalContext&, Buffer& io) override;   // effects after the voices
@@ -332,7 +339,8 @@ glide) uses the result.
 **Global processing.** `processGlobal(GlobalContext& ctx, Buffer& io)` runs once
 per control block after the voices are mixed, and edits `io` in place (reverb,
 delay, chorus…). `GlobalContext` has `get/choice/on/ramp`, `modwheel()`,
-`cc(n)`, `activeVoices()`, `transport()`, `sampleRate()`.
+`cc(n)`, `activeVoices()`, `lfo(n)`, `shape(n)`, `setSource(src, v)` (§6),
+`post(message, {values})` (§9b), `transport()`, `sampleRate()`.
 
 **Escape hatches.** The kit's defaults are meant to be overridden when a synth
 needs something unusual:
@@ -343,7 +351,11 @@ needs something unusual:
   `state(i)`, `note(i)`, `age(i)`, `level(i)`, `findFree()`, `fadeOut(i)` and
   `defaultAllocate(n)` (the policy above). Example: a fixed voice per key,
   like a piano emulation.
-- `processGlobal` → anything that happens after the voices are mixed.
+- `processGlobal` → anything that happens after the voices are mixed (a
+  reservoir that playing drains, a whole-instrument effect chain).
+- Messages (§9b) → input from the page that isn't a parameter (a held treadle,
+  a "new reeds" button), and news back to it.
+- A synth's own page (§9a) → when the kit's panels aren't the instrument.
 
 If an escape hatch is used in a second synth for the same reason, that's the
 signal to turn it into a kit feature.
@@ -383,6 +395,7 @@ void processEvents(EventContext& ctx) override {
 | `ctx.transport()`, `ctx.sampleRate()`, `ctx.pending()` | |
 | `ctx.trigger(n)` | restart shape n now (§6a) |
 | `ctx.setSource(src, v)` | set a custom mod source's global value (§6) |
+| `ctx.messages()`, `ctx.post(m, {values})` | messages from the page since the last block, and sending one back (§9b) |
 
 Events are `MidiEvent`s (`type`, `note`, `vel`, `cc`, `value`, `channel`,
 `sample`, `beat`, `tag`, plus `isNoteOn()`, `isNoteOff()`, `isCC(n)`). Build
@@ -416,6 +429,11 @@ exceptions. (Synth code never uses exceptions at all, because the browser
 build doesn't have them: §11.) Allocate in `prepare`. Use `dsp::Rng` for randomness (seedable,
 allocation-free). The render tool counts every allocation made while the
 engine is processing audio, and fails on any.
+
+The setup calls of the Web Audio blocks allocate, so they belong in
+`prepare` too: `wa::Convolver::setImpulse`, `wa::PeriodicWave::build`,
+`wa::WaveShaper::setCurve`, `wa::Delay::prepare` and `wa::Param::reserve`
+(§8a). Messages (`ctx.messages()`, `ctx.post`) never allocate.
 
 ## 5. Patches ✓
 
@@ -456,6 +474,8 @@ old patches.
   folder) and can be exported as files.
 - The same JSON is what the plugin stores inside your DAW project.
 - MIDI-learn mappings are **not** part of a patch; they're per-installation.
+  Neither are messages (§9b) or a page's own settings (`sk.store`, §9a): a
+  sound that depends on something must keep it in a parameter or custom state.
 - `"mod"` holds the matrix routes (§6) and `"shapes"` the shape curves (§6a).
   A synth without those features keeps them unchanged through load and save.
 
@@ -557,8 +577,10 @@ void defineModSources(ModSourceBuilder& b) override {
 // in processEvents / processGlobal:  ctx.setSource(synth.phraseStep, value);  (global value)
 ```
 
-Custom sources show up in the matrix and in custom widgets (`ctx.onMeter`)
-like the built-in ones. A per-voice source that a voice hasn't set uses the
+Custom sources show up in the matrix, in custom widgets (`ctx.onMeter`) and
+on a synth's own page (`sk.onMeter`, §9a) like the built-in ones; a global
+source set in `processGlobal` makes a good gauge, and its meter keeps moving
+with nothing playing. A per-voice source that a voice hasn't set uses the
 global value.
 
 **Reading modulation directly.** In a voice, `ctx.lfo(n)`, `ctx.shape(n)` and
@@ -687,6 +709,51 @@ a seed for `Rng`), `flushDenormal(x)`, `kPi`, `kTwoPi`.
 New blocks are added to the kit when a second synth needs them; until then they
 live in the synth repo.
 
+## 8a. Web Audio blocks ✓
+
+Synths often start as a browser sketch built from Web Audio nodes. The blocks
+in `sk::wa` compute what those nodes compute, **sample for sample**, so a port
+is a translation that can be checked against the sketch by comparing renders,
+not a re-voicing by ear. They come with `<synthkit/synth.h>`.
+
+| Block | Web Audio node | How to use it |
+|---|---|---|
+| `wa::BiquadFilter` | `BiquadFilterNode` | `prepare(sr)`, `setType(Type::Lowpass / Highpass / Bandpass / Lowshelf / Highshelf / Peaking / Notch / Allpass)`, `set(frequency, Q, gainDb = 0, detuneCents = 0)` (cheap to call every sample; recomputes only on change), `process(x)`, `flush()` once per block, `magnitude(hz)` / `phase(hz)` (`getFrequencyResponse`). Q is in dB for lowpass and highpass, as in Web Audio. One per channel. |
+| `wa::DynamicsCompressor` | `DynamicsCompressorNode` | `prepare(sr)`, `set(thresholdDb, kneeDb, ratio, attack, release)` (defaults −24, 30, 12, 0.003, 0.25), `process(l, r)` in place (stereo, linked), `reduction()` (dB), `latency()` (the browsers' 6 ms look-ahead). |
+| `wa::Convolver` | `ConvolverNode` | `setImpulse(channels, numChannels 1–2, length, irSampleRate, normalize = true)` (**allocates**: call it in `prepare` or before audio starts), then `process(l, r)` or `processMono(in, l, r)`. Zero latency, Web Audio's normalisation and channel routing. Costs a 64-tap direct head per sample plus FFT partitions; the most work in one sample is a few 8192-point FFTs. |
+| `wa::PeriodicWave`, `wa::Oscillator` | `createPeriodicWave`, `OscillatorNode` | `wave.build(sr, real, imag, count, disableNormalization = false)` or `wave.build(sr, PeriodicWave::Basic::Sawtooth)` (**allocates**; one wave can feed many oscillators). `osc.prepare(sr)`, `osc.setWave(&wave)`, `osc.reset(phase0to1)`, `osc.next(hz)` per sample, with detune folded in: `hz * exp2(cents / 1200)`. |
+| `wa::WaveShaper` | `WaveShaperNode` | `setCurve(curve, n)` (copies; **allocates**), `setOversample(Oversample::None / X2 / X4)`, `process(x)`. Oversampling uses the browsers' filters, so it has their latency (128 / 192 samples at 2× / 4×). |
+| `wa::StereoPanner` | `StereoPannerNode` | `StereoPanner::process(pan, l, r)` (stereo input) or `processMono(pan, in, l, r)`. |
+| `wa::Delay` | `DelayNode` | `prepare(sr, maxSeconds)`, `process(x, delaySeconds)` (write, then read; linear interpolation). |
+| `wa::Param` | `AudioParam` | `Param p(default, min, max)`; `setValueAtTime`, `linearRampToValueAtTime`, `exponentialRampToValueAtTime`, `setTargetAtTime`, `setValueCurveAtTime(curve, n, t, duration)`, `cancelScheduledValues`, `cancelAndHoldAtTime`, `setValue(v)`; `valueAt(t)` per sample (times only move forward) or `fill(t0, dt, out, n)`. Times are seconds on the synth's own clock (keep a `double now` the way the sketch used `ctx.currentTime`). Room for 32 events and 256 curve points; `reserve(events, points)` in `prepare` for more. A full Param refuses an event (returns false) instead of allocating. |
+
+Porting a node graph:
+
+- **Gain, ConstantSource, connections into AudioParams** are just arithmetic:
+  a gain node is a multiply, a `ConstantSourceNode` is a `wa::Param`, and a
+  connection into a param adds to its value (`osc.next(freq * exp2((detune +
+  wind) / 1200))`).
+- **Per voice or global.** A node created per note becomes a member of the
+  voice; one shared by all notes goes in the synth and runs in
+  `processGlobal`. A node's channel count carries over: process each channel
+  through its own block (biquads, shapers, delays), or use the stereo calls.
+- **Where it can differ.** The browser renders in blocks of 128 and reads
+  k-rate values once per block; these blocks read whatever you pass, when you
+  pass it. Pass values per sample for a-rate behaviour, or hold them for 128
+  samples where a sketch relied on k-rate timing. Chromium's x86 code steps
+  ramps in single precision, so a *modulated* `DelayNode` agrees to about
+  −58 dB rather than exactly.
+- **Checking a port.** Render the sketch's graph in an `OfflineAudioContext`
+  and the port with the same input, and compare. synthkit does this for every
+  block (`tests/webaudio/parity.json`, checked in CI against Chromium):
+
+  ```
+  ./build/synthkit_wa_parity tests/webaudio/parity.json build/wa
+  node web/test/webaudio-parity.cjs tests/webaudio/parity.json build/wa
+  ```
+
+  The two scripts are a template for a synth's own comparison with its sketch.
+
 ## 9. UI layout ✓
 
 `ui/layout.json` arranges the synth's panel. It's optional: without it, the
@@ -748,7 +815,9 @@ export function register(sk) {
     // ctx.get(id), ctx.set(id, value), ctx.format(id, value), ctx.param(id)
     // ctx.custom(id), ctx.setCustom(id, json)
     // ctx.noteOn(note, vel), ctx.noteOff(note)
-    // ctx.onMeter(sourceId, fn)    live value of any mod source (~30 times a second)
+    // ctx.onMeter(sourceId, fn)    live value of any mod source (~30 times a second, playing or not)
+    // ctx.send(messageId, ...values), ctx.onMessage(messageId, fn)   messages (§9b)
+    // ctx.toast(text, kind)
   });
 }
 ```
@@ -756,6 +825,117 @@ export function register(sk) {
 Then use `{ "type": "phraseView" }` as a control in the layout. Custom widgets
 run identically in the browser and the plugin. A 128-key detune editor drawn
 over a keyboard is the kind of thing they're for.
+
+**Styles** (`ui/style.css`): loaded after the kit's styles, in the browser and
+the plugin. The kit's colours are CSS variables (`--bg`, `--panel`, `--edge`,
+`--ink`, `--ink-soft`, `--accent`, `--field`, `--track`, `--cap`, …), so a
+synth can retheme everything, or style its own widgets and page (§9a).
+
+## 9a. A synth's own page ✓
+
+When the kit's panels aren't the instrument (a cabinet with treadles, a
+sequencer you draw in), a synth brings its own page and uses the kit's parts
+only where it wants them. Add `ui/page.js`; the kit then builds no page of its
+own and calls the page's `mount`:
+
+```js
+// ui/page.js
+import { setupGauge } from "./page/gauge.js";
+
+export function mount(sk, root) {
+  sk.mount(root.querySelector(".presets-here"), "presets");
+  sk.mount(root.querySelector(".keys-here"), "keyboard", { tempo: false });
+  sk.mount(root.querySelector(".knobs"), "section", { title: "Voicing", controls: [{ param: "reed.bright" }] });
+  setupGauge(sk, root.querySelector(".gauge"));
+}
+```
+
+- `root` holds `ui/page.html`, if there is one (markup only: scripts in it
+  don't run). Everything is still packed into the one HTML file, so the page
+  works from a double-click, GitHub Pages and the plugin window alike.
+- **Modules.** `page.js` can import other files under `ui/` (`./page/x.js`).
+  They're joined into one scope rather than loaded, so: named imports and
+  exports only (no `export default`, `import * as`, `import.meta` or packages),
+  and a top-level name may be declared in only one file. `pack.py` says which
+  rule a page breaks. A module should only define things when it loads; do
+  the work in functions called from `mount` (load order follows imports, but
+  circular imports are allowed).
+- **Parts** (`sk.mount(element, name, options)`, which returns the part):
+
+  | Name | Part |
+  |---|---|
+  | `presets` | the preset bar (pick, step, save, rename, delete, import, export) |
+  | `keyboard` | the on-screen keyboard and wheels; computer keys play while it's on the page (`typing: false` to stop that). Its bar also takes the tempo and MIDI controls unless the page placed them (`tempo: false`, `midi: false`). |
+  | `midi`, `tempo`, `output`, `panic`, `theme` | the Connect MIDI control, tempo controls (a readout in the plugin), scope and level, Stop all sound, light/dark switch |
+  | `panels` | panels for a whole layout (`{ sections: [...] }` as in layout.json; default: `ui/layout.json`) |
+  | `section` | one panel, from one layout section (`{ title, controls }` or `{ kit: "env1" }`, `"modMatrix"`, `"shape1"`, …) |
+  | `control` | one control, from one layout control (`{ param, type, label, size }`) |
+
+- **The bridge** (`sk`):
+
+  | | |
+  |---|---|
+  | `info` | `{ synth, params, messages, custom }` |
+  | `get(id)`, `set(id, v)`, `norm(id)`, `setNorm(id, n)`, `format(id, v?)`, `parse(id, text)`, `reset(id)`, `param(id)`, `onParam(id, fn)`, `gesture(id, on)` | parameters (wrap a drag in `gesture` so a DAW records one automation move) |
+  | `custom(id)`, `setCustom(id, v)`, `onCustom(id, fn)` | custom state (§5a) |
+  | `send(id, ...values)`, `onMessage(id, fn)` | messages (§9b) |
+  | `onMeter(sourceId, fn)` | a mod source's value, ~30 times a second, whether or not anything is playing (a synth's own source makes a good gauge) |
+  | `onMeters(fn)` | every meter frame (`voices`, `peak`, `beat`, `playing`, `bpm`, …) |
+  | `noteOn(n, vel)`, `noteOff(n)`, `midi(bytes)`, `allNotesOff()`, `panic()` | playing |
+  | `onMidi(fn)`, `connectMidi()` | Web MIDI input before the synth sees it (`fn(bytes)` returns true to keep a message); start MIDI without the button |
+  | `start()`, `running` | start the sound (browsers need a click first; the kit also starts it on the first click or key) |
+  | `presets.list()`, `current()`, `load(name, kind?)`, `save()`, `saveAs(name)`, `rename(name)`, `remove()`, `revert()`, `init()`, `exportFile()`, `importFile()`, `onChange(fn)` | the kit's presets without its bar: `current()` is `{ name, kind, dirty }`, `kind` is `factory`, `user` or `session` |
+  | `store.get(key, fallback)`, `store.set(key, value)` | the page's own settings (open drawers, a chosen view): kept per synth in the browser, or in the plugin's shared settings; never in patches |
+  | `toast(text, kind)`, `menu(x, y, items)`, `host` | |
+
+- The kit's computer-keyboard notes, Space for Play, and the start banner are
+  off unless the page mounts the parts they belong to. The sound starts on the
+  first click or key press anywhere.
+- [`examples/reed`](examples/reed) is a complete example: a walnut cabinet
+  with a wind gauge and two treadles, built this way.
+
+## 9b. Messages ✓
+
+Messages carry things between the page and the engine that aren't
+parameters: a treadle being held, a "new reeds" button, the engine saying a
+valve opened. They're not saved, not automatable and not in the host's
+parameter list. A synth declares them:
+
+```cpp
+MessageId treadleLeft, valve;
+void defineMessages(MessageBuilder& b) override {
+  treadleLeft = b.add("treadle.left");   // the page sends this
+  valve = b.add("wind.valve");           // the engine posts this
+}
+
+void processEvents(EventContext& ctx) override {
+  for (auto& m : ctx.messages())
+    if (m.is(treadleLeft)) leftDown = m.value() > 0.5f;   // m[0] … m[3], m.count
+  for (auto& e : ctx.in()) ctx.out(e);
+}
+
+void processGlobal(GlobalContext& ctx, Buffer& io) override {
+  if (opened) ctx.post(valve, {1});      // also ctx.post from processEvents
+}
+```
+
+and the page (or a custom widget) sends and listens: `sk.send("treadle.left",
+1)`, `sk.onMessage("wind.valve", (open) => …)`.
+
+- A message is an id and up to four numbers. Ids use letters, digits, `.`, `-`
+  and `_`, and are only used between the synth and its own page, so renaming
+  one is fine.
+- The engine sees each incoming message once, in `ctx.messages()` at the start
+  of the next block (in the plugin, the host's next block). Keep what it means
+  in the synth (`leftDown`), not in the message. A message sent before the
+  sound has started starts it first.
+- Posted messages reach the page within a block in the browser and within
+  about 30 ms in the plugin. Post on changes, not every block: queues hold 255
+  messages each way, and `post` returns false (and the stats count a drop)
+  when one is full.
+- Both directions are lock-free and allocation-free on the audio thread.
+- Render scenarios (§10) can send them: `{ "t": 0.5, "msg": "treadle.left",
+  "values": [1] }`.
 
 ## 10. Testing a synth ✓
 
@@ -789,7 +969,7 @@ Scenarios in `tests/*.json` render offline and are checked in CI:
 | `transport` | `bpm` (120), `timeSig` (`[4, 4]`), `playing` (false) |
 | `sampleRate` | default 48000 |
 | `length` / `lengthBeats` | how long to render |
-| `events` | time in seconds (`t`) or beats (`beat`); `on`/`off` (+`vel` 0–127, `ch`), `cc` + `value` (0–127), `bend` (−1…1), `at` (0–127) |
+| `events` | time in seconds (`t`) or beats (`beat`); `on`/`off` (+`vel` 0–127, `ch`), `cc` + `value` (0–127), `bend` (−1…1), `at` (0–127), or `msg` + `values` (a message from the page, §9b; the render splits its block there, so the result doesn't depend on block size) |
 
 | Expectation | Passes when |
 |---|---|
@@ -833,18 +1013,21 @@ This needs clang 18+, `lld` and the wasm32 sysroot. On Ubuntu 24.04:
 installs them.
 
 The result is **one self-contained HTML file** with the synth (WebAssembly),
-the UI, the layout and the presets inside. It runs from a double-click
-(`file://`), from GitHub Pages, or from anywhere else, with no server. The page
-has the preset bar (factory presets, your own presets saved in the browser,
-import and export as files), a keyboard you can play with the mouse, touch or
-computer keys, pitch and mod wheels, Web MIDI input with MIDI learn, a tempo
-clock (play, BPM, time signature), a scope, a level meter and a voice count. The
-current sound is restored when you come back.
+the UI, the layout, `ui/style.css`, the synth's own page if it has one (§9a)
+and the presets inside. It runs from a double-click (`file://`), from GitHub
+Pages, or from anywhere else, with no server. The kit's page has the preset
+bar (factory presets, your own presets saved in the browser, import and export
+as files), a keyboard you can play with the mouse, touch or computer keys,
+pitch and mod wheels, Web MIDI input with MIDI learn, a tempo clock (play, BPM,
+time signature), a scope, a level meter and a voice count; a synth's own page
+has whichever of these it mounts. The current sound is restored when you come
+back.
 
 The audio engine is the same C++ as the plugin's, so the browser plays exactly
-what the plugin will. CI renders a scenario through the page's real
-AudioWorklet and fails if it differs from the native render by more than
-floating-point noise.
+what the plugin will. CI renders a scenario (messages included) through the
+page's real AudioWorklet and fails if any 100 ms of it differs from the
+native render by more than −40 dB (in practice they agree to −75 dB or
+better).
 
 **Rules this adds for synth code:** it must compile without C++ exceptions
 (no `throw`, `try` or `catch`) and without threads. Report definition-time
@@ -887,16 +1070,21 @@ Nothing in the synth changes for the plugin:
 **The plugin window is the browser page** (§11) in a web view (WebView2 on
 Windows, WebKit on macOS and Linux). Build the page first and point
 `SYNTHKIT_WEB_UI_DIR` at it; without it the plugin gets JUCE's plain parameter
-list instead. Layout and custom widgets (§9) work unchanged. In the plugin:
+list instead. Layout, custom widgets, styles (§9), a synth's own page (§9a)
+and messages (§9b) work unchanged. In the plugin:
 
 - the tempo area shows the DAW's tempo and time signature (no Play button, no
   Web MIDI, no MIDI learn: map controllers with the DAW's own MIDI mapping);
-- your presets, theme and keyboard settings are shared by every instance of
-  the synth on the computer (`%APPDATA%\synthkit\<id>\settings.json`,
+  on a synth's own page, `sk.mount(el, "midi")` places nothing and
+  `sk.onMidi` sees nothing, since the DAW routes MIDI to the plugin;
+- your presets, theme, keyboard settings and a page's `sk.store` settings
+  are shared by every instance of the synth on the computer (`%APPDATA%\synthkit\<id>\settings.json`,
   `~/Library/Application Support/synthkit/<id>/settings.json`), and Export /
   Import use the system's file dialogs;
 - the on-screen keyboard plays through the plugin; meters and modulation rings
-  show the plugin's output.
+  show the plugin's output;
+- messages reach the engine at its next block, and its posts reach the page
+  about 30 times a second.
 
 The page is packed as pure ASCII (non-ASCII is escaped), because some web
 views ignore the declared character set.

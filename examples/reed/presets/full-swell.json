@@ -1,0 +1,16 @@
+{
+  "synthkit": 1,
+  "synth": "sk-reed",
+  "patchVersion": 1,
+  "name": "Full Swell",
+  "author": "synthkit",
+  "tags": [
+    "bright"
+  ],
+  "params": {
+    "reed.bright": 0.8,
+    "swell": 1,
+    "room": 0.4,
+    "wind.helper": 0.2
+  }
+}

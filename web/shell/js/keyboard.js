@@ -20,6 +20,7 @@ class Keyboard {
     this.typed = new Map();        // key code -> note
     this.keys = new Map();         // note -> element
     this.lit = new Map();          // note -> count (all sources)
+    this.typing = true;            // computer keys play notes (off on a page without the keyboard)
     this.build();
     document.addEventListener("keydown", (e) => this.key(e, true));
     document.addEventListener("keyup", (e) => this.key(e, false));
@@ -56,7 +57,7 @@ class Keyboard {
     this.showVelocity();
   }
 
-  addToBar(...els) { this.slot.replaceWith(...els); }
+  addToBar(...els) { if (this.slot.parentNode) this.slot.replaceWith(...els); }
 
   wheel(label, spring, send) {
     const thumb = h("div", { class: "wheel-thumb" });
@@ -149,6 +150,7 @@ class Keyboard {
   }
 
   key(e, down) {
+    if (!this.typing) return;
     const t = e.target;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
