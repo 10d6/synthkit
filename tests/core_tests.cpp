@@ -650,6 +650,69 @@ TEST(first_note_shape_and_key_range) {
   CHECK_NEAR(modAt(0.75, 64), 0.875, 0.02);  // same shape1, plus shape2 (1.0 × 0.5) for key 64
 }
 
+// ------------------------------------------------------------ messages
+
+struct MsgVoice : Voice {
+  void start(const NoteOn&, const StartInfo&) override {}
+  void render(VoiceContext&, Buffer&) override {}
+};
+struct MsgSynth : Synth {
+  MessageId ping, pong;
+  std::vector<std::pair<float, int>> seen;   // (value, count) per message seen
+  int blocks = 0;
+  void defineParams(ParamBuilder&) override {}
+  void defineMessages(MessageBuilder& b) override { ping = b.add("ping"); pong = b.add("pong"); }
+  std::unique_ptr<Voice> makeVoice() override { return std::make_unique<MsgVoice>(); }
+  void prepare(const PrepareInfo&) override { seen.reserve(1024); }
+  void processEvents(EventContext& ctx) override {
+    ++blocks;
+    for (auto& m : ctx.messages())
+      if (m.is(ping)) { seen.push_back({m[1], m.count}); ctx.post(pong, {m[0] * 2}); }
+  }
+};
+
+TEST(messages_round_trip) {
+  auto s = std::make_unique<MsgSynth>();
+  MsgSynth* syn = s.get();
+  Engine eng(std::move(s), testInfo());
+  eng.prepare(48000, 128);
+  CHECK(eng.messageIds().size() == 2 && eng.messageIndex("pong") == 1 && eng.messageIndex("nope") == -1);
+  std::vector<float> l(128), r(128);
+  float* outs[2] = {l.data(), r.data()};
+  HostTransport ht;
+  const float v[3] = {1.5f, 7, 9};
+  CHECK(eng.sendMessage(0, v, 3));
+  CHECK(!eng.sendMessage(5, v, 1));            // unknown index
+  eng.process(outs, 2, 128, nullptr, 0, ht);
+  eng.process(outs, 2, 128, nullptr, 0, ht);   // seen once, not again
+  CHECK(syn->seen.size() == 1 && syn->seen[0].first == 7 && syn->seen[0].second == 3);
+  Message m;
+  CHECK(eng.takeMessage(m) && m.is(syn->pong) && m.count == 1 && m[0] == 3.f);
+  CHECK(!eng.takeMessage(m));
+  // Order is kept, and a full queue refuses (and counts) instead of growing.
+  for (int i = 0; i < 300; ++i) { const float x = static_cast<float>(i); eng.sendMessage(0, &x, 1); }
+  CHECK(eng.takeStats().droppedMessages == 300 - 255);
+  syn->seen.clear();
+  eng.process(outs, 2, 128, nullptr, 0, ht);
+  CHECK(syn->seen.size() == 255);
+  // ... and the synth's 255 answers came back in order.
+  int n = 0;
+  bool ordered = true;
+  while (eng.takeMessage(m)) { ordered &= m[0] == static_cast<float>(n * 2); ++n; }
+  CHECK(n == 255 && ordered);
+}
+
+TEST(messages_ids_are_checked) {
+  struct Bad : MsgSynth {
+    void defineMessages(MessageBuilder& b) override { b.add("ok"); b.add("ok"); }
+  };
+  CHECK_THROWS(Engine(std::make_unique<Bad>(), testInfo()));
+  struct Bad2 : MsgSynth {
+    void defineMessages(MessageBuilder& b) override { b.add("has space"); }
+  };
+  CHECK_THROWS(Engine(std::make_unique<Bad2>(), testInfo()));
+}
+
 // ------------------------------------------------------------ sk::wa blocks
 // (Bit-level agreement with the browser is checked by
 // web/test/webaudio-parity.cjs; these check the blocks on their own.)

@@ -1,0 +1,34 @@
+<div class="cabinet">
+  <header class="rail">
+    <div class="nameplate">
+      <h1>synthkit Reed</h1>
+      <span>a small pump organ</span>
+    </div>
+    <div class="rail-presets" data-mount="presets"></div>
+    <div class="gauge" role="meter" aria-label="Wind pressure" aria-valuemin="0" aria-valuemax="3.6" aria-valuenow="0">
+      <svg viewBox="0 0 120 68" aria-hidden="true">
+        <path class="gauge-arc" d="M 12 60 A 48 48 0 0 1 108 60"></path>
+        <path class="gauge-ref" d="M 60 12 L 60 20"></path>
+        <line class="gauge-needle" x1="60" y1="60" x2="60" y2="18"></line>
+        <circle class="gauge-hub" cx="60" cy="60" r="4"></circle>
+      </svg>
+      <span class="gauge-readout">0.0&Prime;</span>
+      <span class="gauge-valve" hidden>Relief valve</span>
+    </div>
+    <div class="rail-actions">
+      <span data-mount="midi"></span>
+      <span data-mount="panic"></span>
+    </div>
+  </header>
+  <section class="voicing" aria-label="Voicing"></section>
+  <div class="keybed" data-mount="keyboard"></div>
+  <section class="treadles" aria-label="Treadles">
+    <button type="button" class="treadle" data-foot="left" aria-pressed="false" aria-label="Left treadle">
+      <span class="treadle-face"></span><span class="treadle-label">Left <kbd>&larr;</kbd></span>
+    </button>
+    <p class="treadle-hint">Hold a treadle to pump, or alternate them. The helper pump keeps a little wind coming.</p>
+    <button type="button" class="treadle" data-foot="right" aria-pressed="false" aria-label="Right treadle">
+      <span class="treadle-face"></span><span class="treadle-label">Right <kbd>&rarr;</kbd></span>
+    </button>
+  </section>
+</div>

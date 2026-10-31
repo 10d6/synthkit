@@ -30,23 +30,41 @@ class App {
       catch (err) { console.error(err); this.later(`ui/custom.js failed to load: ${err.message}`, "error"); }
     }
 
+    // Messages to and from the synth (API.md §9b).
+    this.messageIds = m.info.messages || [];
+    this.messageSubs = new Map();
+    this.midiTaps = new Set();
+
     this.presets = new PresetBar(this);
     this.midi = new MidiInput(this);
     this.keyboard = new Keyboard(this);
-    const panels = new Panels(this);
-    const panelEl = panels.build(this.layout.sections ? this.layout : null);
+    this.buildParts();
 
     this.toasts = h("div", { class: "toasts", role: "status", "aria-live": "polite" });
     this.banner = h("button", { type: "button", class: "start-banner", onclick: () => this.startAudio() },
       h("span", { class: "start-dot", "aria-hidden": "true" }),
       "Sound is off. Click here, or anywhere, to start it.");
 
-    rootEl.append(
-      this.header(),
-      this.banner,
-      h("main", { class: "main" }, panelEl),
-      this.layout.keyboard === false ? null : this.keyboard.root,
-      this.toasts);
+    // A synth with ui/page.js brings its own page (API.md §9a); otherwise the
+    // kit builds the standard one from layout.json.
+    const ownPage = typeof window.__skPage === "function" ? window.__skPage : null;
+    const problems = [];
+    if (!ownPage) {
+      const panels = new Panels(this);
+      const panelEl = panels.build(this.layout.sections ? this.layout : null);
+      problems.push(...panels.problems);
+      rootEl.append(
+        this.header(),
+        this.banner,
+        h("main", { class: "main" }, panelEl),
+        this.layout.keyboard === false ? null : this.keyboard.root,
+        this.toasts);
+      if (this.layout.keyboard === false) this.keyboard.typing = false;
+    } else {
+      this.keyboard.typing = false;   // until the page mounts the keyboard
+      rootEl.classList.add("sk-own-page");
+      rootEl.append(this.toasts);
+    }
     rootEl.removeAttribute("aria-busy");
     this.keyboard.layout();
 
@@ -57,11 +75,25 @@ class App {
       this.banner.hidden = true;
       this.audio.onHost = (msg) => this.hostMessage(msg);
     }
+    this.audio.onMessages = (list) => this.receiveMessages(list);
+
+    if (ownPage) {
+      const pageRoot = h("div", { class: "sk-page" });
+      const tpl = document.getElementById("sk-page-html");
+      if (tpl) pageRoot.append(tpl.content.cloneNode(true));
+      rootEl.prepend(pageRoot);
+      this.pageProblems = problems;
+      try { ownPage(this.pageApi(), pageRoot); }
+      catch (err) { console.error(err); problems.push({ msg: `ui/page.js failed: ${err.message}`, kind: "error" }); }
+    }
+
     this.refreshLearned();
     // Live modulation rings on knobs.
-    const ringed = this.controls.filter((c) => c.modulated);
+    const ringed = this.controls.filter((c) => c.modulated && !c.ringed);
+    for (const c of ringed) c.ringed = true;
     this.modMeters.on((mm) => { for (const c of ringed) c.modulated(mm.active ? mm.param(c.p.index) : NaN); });
-    for (const p of panels.problems.concat(this.pending || [])) this.toast(p.msg || p, p.kind || "warn");
+    this.pageProblems = null;
+    for (const p of problems.concat(this.pending || [])) this.toast(p.msg || p, p.kind || "warn");
 
     // Browsers only allow audio after the first click or key press.
     const kick = () => { this.startAudio(); };
@@ -105,10 +137,40 @@ class App {
   noteOn(n, v) { this.keyboard.light(n, true); this.sendMidi([0x90, n, v]); }
   noteOff(n) { this.keyboard.light(n, false); this.sendMidi([0x80, n, 64]); }
 
+  // ---- messages (API.md §9b) -----------------------------------------------
+
+  sendMessage(id, values = []) {
+    const i = this.messageIds.indexOf(id);
+    if (i < 0) { console.warn(`[synthkit] no message "${id}" (declare it in defineMessages)`); return false; }
+    const v = Array.from(values, Number).slice(0, 4);
+    if (!this.audio.node) { this.startAudio().then(() => this.audio.send({ t: "msg", i, v })); return true; }
+    this.audio.send({ t: "msg", i, v });
+    return true;
+  }
+  onMessage(id, fn) {
+    if (!this.messageSubs.has(id)) this.messageSubs.set(id, new Set());
+    this.messageSubs.get(id).add(fn);
+    return () => this.messageSubs.get(id).delete(fn);
+  }
+  receiveMessages(list) {
+    for (const [i, v] of list) {
+      const id = this.messageIds[i];
+      for (const fn of this.messageSubs.get(id) || []) {
+        try { fn(...v); } catch (err) { console.error(err); }
+      }
+    }
+  }
+  // MIDI from Web MIDI, before the synth sees it: a tap returning true keeps it.
+  tapMidi(d) {
+    for (const fn of this.midiTaps) { try { if (fn(d)) return true; } catch (err) { console.error(err); } }
+    return false;
+  }
+
   // ---- header --------------------------------------------------------------
 
-  header() {
-    const info = this.model.info.synth;
+  // The header's parts, built once: the default page places them, and a
+  // synth's own page can mount them (API.md §9a).
+  buildParts() {
     const t = this.transport;
     this.bpm = h("input", { class: "bpm-input", type: "number", min: 30, max: 300, step: 1, value: t.bpm, "aria-label": "Tempo in BPM" });
     this.bpm.addEventListener("change", () => {
@@ -126,7 +188,7 @@ class App {
     this.sig.value = `${t.num}/${t.den}`;
     this.play = h("button", { type: "button", class: "btn play-btn", "aria-pressed": "false", title: "Start the tempo clock (space)", onclick: () => this.togglePlay() }, "Play");
     document.addEventListener("keydown", (e) => {
-      if (this.host) return;   // the DAW's transport
+      if (this.host || !this.tempoShown) return;   // the DAW's transport, or no tempo on the page
       if (e.code === "Space" && !/INPUT|SELECT|TEXTAREA|BUTTON/.test(e.target.tagName)) { e.preventDefault(); this.togglePlay(); }
     });
     this.beats = h("div", { class: "beats", "aria-hidden": "true" });
@@ -136,29 +198,38 @@ class App {
     this.levelFill = h("div", { class: "level-fill" });
     this.levelEl = h("div", { class: "level", "aria-hidden": "true" }, this.levelFill);
     this.voices = h("span", { class: "voice-count", text: "0 voices" });
-    const panic = h("button", { type: "button", class: "btn btn-quiet", title: "Silence everything right now", onclick: () => { this.audio.send({ t: "panic" }); this.keyboard.clearLights(); } }, "Stop all sound");
+    this.panicBtn = h("button", { type: "button", class: "btn btn-quiet", title: "Silence everything right now", onclick: () => this.panic() }, "Stop all sound");
     const icon = svg("svg", { viewBox: "0 0 16 16", width: 16, height: 16, "aria-hidden": "true" });
     icon.append(svg("circle", { cx: 8, cy: 8, r: 6.25, fill: "none", stroke: "currentColor", "stroke-width": 1.5 }),
                 svg("path", { d: "M8 1.75 A6.25 6.25 0 0 1 8 14.25 Z", fill: "currentColor" }));
-    const themeBtn = h("button", { type: "button", class: "btn btn-quiet btn-icon theme-btn", title: "Switch light / dark", "aria-label": "Switch light or dark theme", onclick: () => this.cycleTheme() }, icon);
+    this.themeBtn = h("button", { type: "button", class: "btn btn-quiet btn-icon theme-btn", title: "Switch light / dark", "aria-label": "Switch light or dark theme", onclick: () => this.cycleTheme() }, icon);
+    this.tempoReadout = h("span", { class: "tempo-readout", text: "" });
+    this.outputEl = h("div", { class: "output" }, this.scope, h("div", { class: "output-side" }, this.levelEl, this.voices));
+  }
 
+  // Tempo controls (play, BPM, signature, clock source, beat lights); in the
+  // plugin, a readout of the DAW's tempo.
+  tempoEl() {
+    this.tempoShown = true;
+    if (this.host) return h("div", { class: "tempo is-host", title: "Tempo and time signature come from your DAW" }, this.tempoReadout, this.beats);
+    return h("div", { class: "tempo" }, this.play, h("label", { class: "bpm" }, this.bpm, h("span", { text: "BPM" })), this.sig, this.clockSel, this.beats);
+  }
+
+  panic() { this.audio.send({ t: "panic" }); this.keyboard.clearLights(); }
+
+  header() {
+    const info = this.model.info.synth;
     // Playing controls (tempo, MIDI) live with the keyboard. In the plugin the
     // DAW sets the tempo, so they become a readout.
-    this.tempoReadout = h("span", { class: "tempo-readout", text: "" });
-    if (this.host) {
-      this.keyboard.addToBar(h("div", { class: "tempo is-host", title: "Tempo and time signature come from your DAW" }, this.tempoReadout, this.beats));
-    } else {
-      this.keyboard.addToBar(
-        h("div", { class: "tempo" }, this.play, h("label", { class: "bpm" }, this.bpm, h("span", { text: "BPM" })), this.sig, this.clockSel, this.beats),
-        this.midi.root);
-    }
+    if (this.host) this.keyboard.addToBar(this.tempoEl());
+    else this.keyboard.addToBar(this.tempoEl(), this.midi.root);
     return h("header", { class: "top" },
       h("div", { class: "brand" },
         h("h1", { class: "synth-name", text: info.name }),
         h("span", { class: "synth-meta", text: [info.vendor, info.version && "v" + info.version].filter(Boolean).join(" ") })),
       this.presets.root,
-      h("div", { class: "output" }, this.scope, h("div", { class: "output-side" }, this.levelEl, this.voices)),
-      h("div", { class: "top-actions" }, panic, themeBtn));
+      this.outputEl,
+      h("div", { class: "top-actions" }, this.panicBtn, this.themeBtn));
   }
 
   buildBeats() {
@@ -222,6 +293,7 @@ class App {
 
   meter(mtr) {
     if (this.host) this.followHost(mtr);
+    for (const fn of this.meterTaps || []) { try { fn(mtr); } catch (err) { console.error(err); } }
     this.modMeters.update(mtr.mod, mtr.voices > 0);
     this.voices.textContent = `${mtr.voices} ${mtr.voices === 1 ? "voice" : "voices"}`;
     const db = mtr.peak > 0 ? 20 * Math.log10(mtr.peak) : -100;
@@ -337,6 +409,141 @@ class App {
     setTimeout(() => t.remove(), kind === "error" ? 9000 : 3500);
   }
 
+  // ---- a synth's own page (ui/page.js, API.md §9a) --------------------------
+
+  // The object passed to the page's mount(sk, root).
+  pageApi() {
+    const m = this.model, app = this;
+    const pr = this.presets;
+    const entry = (name, kind) => pr.entries().find((e) => e.name === name && (!kind || e.kind === kind));
+    const storeKey = (k) => `synthkit:${m.info.synth.id}:page:${k}`;
+    return {
+      info: { synth: m.info.synth, params: m.params, messages: this.messageIds.slice(), custom: m.info.custom.slice() },
+      host: !!this.host,
+
+      // parameters
+      param: (id) => m.param(id),
+      get: (id) => m.get(id),
+      set: (id, v) => m.set(id, v, "ui"),
+      setNorm: (id, n) => m.setNorm(id, n, "ui"),
+      norm: (id) => m.norm(id),
+      format: (id, v) => m.format(id, v),
+      parse: (id, text) => m.parse(id, text),
+      reset: (id) => m.reset(id),
+      gesture: (id, on) => m.gesture(id, on),
+      onParam: (id, fn) => { const off = m.on(id, fn); fn(m.get(id)); return off; },
+
+      // custom state (API.md §5a)
+      custom: (id) => m.custom(id),
+      setCustom: (id, v) => m.setCustom(id, v),
+      onCustom: (id, fn) => { const off = m.onCustom(id, fn); fn(m.custom(id)); return off; },
+
+      // messages (API.md §9b)
+      send: (id, ...values) => app.sendMessage(id, values),
+      onMessage: (id, fn) => app.onMessage(id, fn),
+
+      // meters: a mod source's live value, or the whole meter frame
+      onMeter: (id, fn) => app.modMeters.onSource(id, fn),
+      onMeters: (fn) => { const prev = app.meterTaps || (app.meterTaps = new Set()); prev.add(fn); return () => prev.delete(fn); },
+
+      // playing
+      noteOn: (n, v = 100) => app.noteOn(n, v),
+      noteOff: (n) => app.noteOff(n),
+      midi: (bytes) => app.sendMidi(bytes),
+      onMidi: (fn) => { app.midiTaps.add(fn); return () => app.midiTaps.delete(fn); },
+      connectMidi: () => app.midi.connect(),
+      allNotesOff: () => app.audio.send({ t: "allOff" }),
+      panic: () => app.panic(),
+      start: () => app.startAudio(),
+      get running() { return app.host ? true : app.audio.running; },
+
+      // presets (the kit's preset store; mount "presets" for its bar)
+      presets: {
+        list: () => pr.entries().map((e) => ({ name: e.name, kind: e.kind })),
+        current: () => ({ ...pr.current, dirty: !!m.dirty }),
+        load: (name, kind) => { const e = entry(name, kind); return e ? pr.load(e) : false; },
+        save: () => { if (pr.current.kind !== "user") return false; pr.store(pr.current.name); return true; },
+        saveAs: (name) => { if (!String(name || "").trim()) return false; pr.store(String(name).trim()); return true; },
+        rename: (name) => pr.renameTo(String(name || "").trim()),
+        remove: () => { if (pr.current.kind !== "user") return false; pr.remove(); return true; },
+        revert: () => { const e = entry(pr.current.name, pr.current.kind); return e ? pr.load(e) : false; },
+        init: () => pr.init(),
+        exportFile: () => pr.exportFile(),
+        importFile: () => pr.startImport(),
+        onChange: (fn) => { pr.listeners.add(fn); return () => pr.listeners.delete(fn); },
+      },
+
+      // settings kept for this synth (the browser's storage, or the plugin's
+      // shared settings file); not part of the sound
+      store: {
+        get: (key, fallback) => skStore.get(storeKey(key), fallback),
+        set: (key, value) => skStore.set(storeKey(key), value),
+      },
+
+      toast: (msg, kind) => app.toast(msg, kind),
+      menu: (x, y, items) => app.menu(x, y, items),
+      mount: (el, name, opts) => app.mountPart(el, name, opts || {}),
+    };
+  }
+
+  // Puts one of the kit's parts into an element of the synth's page.
+  mountPart(el, name, opts) {
+    let part = null;
+    switch (name) {
+      case "presets": part = this.presets.root; break;
+      case "keyboard":
+        part = this.keyboard.root;
+        this.keyboard.typing = opts.typing !== false;
+        {
+          // The keyboard's bar takes the tempo and MIDI controls unless the
+          // page placed them elsewhere (or asked for no tempo).
+          const bar = [];
+          if (opts.tempo !== false && !this.tempoShown) bar.push(this.tempoEl());
+          if (!this.host && opts.midi !== false && !this.midi.root.parentNode) bar.push(this.midi.root);
+          if (bar.length) this.keyboard.addToBar(...bar);
+        }
+        break;
+      case "midi": part = this.host ? null : this.midi.root; break;   // the DAW routes MIDI in the plugin
+      case "tempo": part = this.tempoEl(); break;
+      case "output": part = this.outputEl; break;
+      case "panic": part = this.panicBtn; break;
+      case "theme": part = this.themeBtn; break;
+      case "panels": {
+        const p = new Panels(this);
+        part = p.build(opts.sections ? opts : (this.layout.sections ? this.layout : null));
+        this.reportProblems(p.problems);
+        break;
+      }
+      case "section": {
+        const p = new Panels(this);
+        part = p.section(opts);
+        this.reportProblems(p.problems);
+        break;
+      }
+      case "control": {
+        const p = new Panels(this);
+        part = p.control(opts);
+        this.reportProblems(p.problems);
+        break;
+      }
+      default:
+        this.toast(`mount: there's no part called "${name}"`, "warn");
+        return null;
+    }
+    if (part && el) el.append(part);
+    if (name === "keyboard") requestAnimationFrame(() => this.keyboard.layout());
+    // Controls added after boot get their modulation rings too.
+    const ringed = this.controls.filter((c) => c.modulated && !c.ringed);
+    for (const c of ringed) c.ringed = true;
+    if (ringed.length) this.modMeters.on((mm) => { for (const c of ringed) c.modulated(mm.active ? mm.param(c.p.index) : NaN); });
+    return part;
+  }
+
+  reportProblems(list) {
+    if (this.pageProblems) this.pageProblems.push(...list);
+    else for (const p of list) this.toast(p.msg || p, p.kind || "warn");
+  }
+
   // ---- custom widgets (ui/custom.js) ---------------------------------------
 
   customWidget(spec) {
@@ -352,9 +559,12 @@ class App {
       custom: (id) => m.custom(id),
       setCustom: (id, v) => m.setCustom(id, v),
       onCustom: (id, fn) => { const off = m.onCustom(id, fn); fn(m.custom(id)); return off; },
-      onMeter: (id, fn) => this.modMeters.on((mm) => fn(mm.sourceById(id))),
+      onMeter: (id, fn) => this.modMeters.onSource(id, fn),
       noteOn: (n, v = 100) => this.noteOn(n, v),
       noteOff: (n) => this.noteOff(n),
+      send: (id, ...values) => this.sendMessage(id, values),
+      onMessage: (id, fn) => this.onMessage(id, fn),
+      toast: (msg, kind) => this.toast(msg, kind),
     };
     try { this.widgets.get(spec.type)(el, ctx); }
     catch (err) { console.error(err); el.textContent = `Widget "${spec.type}" failed: ${err.message}`; el.classList.add("is-broken"); }

@@ -1,0 +1,47 @@
+/* synthkit Reed: a walnut cabinet. Loaded after the kit's styles, so the
+   kit's parts (preset bar, knobs, keyboard) pick up these colours too. */
+:root, :root[data-theme] {
+  --accent-base: #c8893a;
+  --accent: #d79a4a;
+  --bg: #2a1d15;
+  --panel: #3a281d;
+  --edge: #57402f;
+  --ink: #f1e6d6;
+  --ink-soft: #c2ad94;
+  --field: #2f2119;
+  --track: #5a4433;
+  --cap: #1c130d;
+  --cap-hi: #4a3526;
+  color-scheme: dark;
+}
+body { background: radial-gradient(ellipse at top, #3b2a1f, #1b120c 70%); }
+.sk-page { max-width: 1100px; margin: 0 auto; padding: 18px 16px 28px; }
+.cabinet { background: linear-gradient(#4a3324, #33231a); border: 1px solid #5c4331; border-radius: 14px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 230, 200, 0.08); padding: 16px; display: grid; gap: 14px; }
+.rail { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px; }
+.nameplate h1 { margin: 0; font-size: 20px; letter-spacing: 0.04em; font-weight: 650; }
+.nameplate span { color: var(--ink-soft); font-size: 12px; }
+.rail-presets { flex: 1 1 320px; }
+.rail-actions { display: flex; gap: 8px; align-items: center; }
+.gauge { position: relative; width: 132px; text-align: center; }
+.gauge svg { width: 120px; height: 68px; display: block; margin: 0 auto; }
+.gauge-arc { fill: none; stroke: #8a6a4f; stroke-width: 3; }
+.gauge-ref { stroke: var(--accent); stroke-width: 2; }
+.gauge-needle { stroke: #f4e3c8; stroke-width: 2.5; stroke-linecap: round; transform-origin: 60px 60px; transform: rotate(-75deg); transition: transform 60ms linear; }
+.gauge-hub { fill: #f4e3c8; }
+.gauge-readout { font-variant-numeric: tabular-nums; font-size: 13px; }
+.gauge-valve { position: absolute; left: 0; right: 0; top: -6px; font-size: 11px; color: #ffcf8a; }
+.voicing .panel { background: rgba(0, 0, 0, 0.15); }
+.keybed .keyboard { border-radius: 10px; }
+.treadles { display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 14px; align-items: center; }
+.treadle { appearance: none; border: 1px solid #6a4e39; border-radius: 10px; background: linear-gradient(#5a4130, #3d2b20);
+  height: 92px; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  touch-action: none; user-select: none; transition: transform 80ms ease, background 80ms ease; }
+.treadle-face { width: 70%; height: 22px; border-radius: 6px; background: repeating-linear-gradient(90deg, #2b1e16 0 6px, #3a2a20 6px 12px); }
+.treadle[aria-pressed="true"] { transform: translateY(4px) scaleY(0.96); background: linear-gradient(#4a3426, #2f2118); }
+.treadle-label kbd { font: inherit; font-size: 11px; color: var(--ink-soft); border: 1px solid var(--edge); border-radius: 4px; padding: 0 4px; }
+.treadle-hint { margin: 0; color: var(--ink-soft); text-align: center; font-size: 12px; }
+@media (max-width: 640px) {
+  .treadles { grid-template-columns: 1fr 1fr; }
+  .treadle-hint { grid-column: 1 / -1; grid-row: 2; }
+}

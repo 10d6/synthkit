@@ -11,9 +11,13 @@ class ModMeters {
     this.data = null;
     this.active = false;   // any voice sounding? Live displays rest when not.
     this.subs = new Set();
+    this.sourceSubs = new Set();   // (meters) on every update, sounding or not
   }
   update(arr, active) {
     if (!arr || !arr.length) return;
+    this.latest = arr;
+    // Sources a synth drives globally (a wind gauge) move with nothing playing.
+    for (const fn of this.sourceSubs) fn(this);
     // Settle once when playing stops, then stay quiet until it starts again.
     if (!active && !this.active) return;
     this.data = arr;
@@ -21,6 +25,14 @@ class ModMeters {
     for (const fn of this.subs) fn(this);
   }
   on(fn) { this.subs.add(fn); return () => this.subs.delete(fn); }
+  // A source's latest value, whenever meters arrive (for custom widgets and pages).
+  onSource(id, fn) {
+    const i = this.model.sourceIndex.get(id);
+    if (i === undefined) { console.warn(`[synthkit] no mod source "${id}"`); return () => {}; }
+    const sub = () => fn(this.latest[i]);
+    this.sourceSubs.add(sub);
+    return () => this.sourceSubs.delete(sub);
+  }
   source(i) { return this.data ? this.data[i] : 0; }
   sourceById(id) { const i = this.model.sourceIndex.get(id); return i === undefined ? 0 : this.source(i); }
   param(i) { return this.data ? this.data[this.ns + i] : NaN; }

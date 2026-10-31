@@ -1,0 +1,75 @@
+{
+  "patch": "init",
+  "params": {
+    "wind.helper": 0
+  },
+  "events": [
+    {
+      "t": 0.0,
+      "msg": "treadle.left",
+      "values": [
+        1
+      ]
+    },
+    {
+      "t": 0.5,
+      "msg": "treadle.left",
+      "values": [
+        0
+      ]
+    },
+    {
+      "t": 0.5,
+      "msg": "treadle.right",
+      "values": [
+        1
+      ]
+    },
+    {
+      "t": 1.0,
+      "msg": "treadle.right",
+      "values": [
+        0
+      ]
+    },
+    {
+      "t": 0.6,
+      "on": 48
+    },
+    {
+      "t": 0.6,
+      "on": 55
+    },
+    {
+      "t": 0.6,
+      "on": 64
+    },
+    {
+      "t": 2.0,
+      "off": 48
+    },
+    {
+      "t": 2.0,
+      "off": 55
+    },
+    {
+      "t": 2.0,
+      "off": 64
+    }
+  ],
+  "length": 3.8,
+  "expect": {
+    "levelAt": [
+      {
+        "t": 0.4,
+        "below": -90
+      },
+      {
+        "t": 1.2,
+        "above": -30
+      }
+    ],
+    "silentAfter": 3.7,
+    "peakBelow": 0
+  }
+}

@@ -34,6 +34,7 @@ struct EngineStats {
   float peakBeforeLimiterDb = -120;
   int droppedEvents = 0;          // queue overflows since last call
   int steals = 0;
+  int droppedMessages = 0;        // message queue overflows since last call
 };
 
 class Engine {
@@ -81,6 +82,15 @@ class Engine {
   // (NaN when not modulated), and (phase or -1, value) per shape. Values are
   // for the most recently started voice, or global when none is sounding.
   void readModMeters(float* sources, float* params, float* shapes) const;
+
+  // Messages (API.md §9b). Ids in declaration order; index -1 if unknown.
+  const std::vector<std::string>& messageIds() const;
+  int messageIndex(const std::string& id) const;
+  // From the page: one producer thread (the UI or message thread). Delivered
+  // at the start of the next block. False if the queue is full.
+  bool sendMessage(int index, const float* values, int count);
+  // To the page: one consumer thread. False when there are none waiting.
+  bool takeMessage(Message& out);
 
   EngineStats takeStats();
   const Transport& transport() const;

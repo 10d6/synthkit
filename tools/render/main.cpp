@@ -83,6 +83,8 @@ std::string readFile(const fs::path& p) {
 struct TimedEvent {
   double seconds = -1, beat = -1;
   sk::MidiEvent e;
+  std::string msg;            // a message from the page instead of MIDI
+  std::vector<float> values;
 };
 
 struct Scenario {
@@ -143,8 +145,11 @@ Scenario parseScenario(const Json& j, const std::string& name, const fs::path& s
     } else if (ev.contains("at")) {
       te.e.type = sk::MidiEvent::Type::ChannelPressure;
       te.e.value = static_cast<float>(ev["at"].number() / 127.0);
+    } else if (ev.contains("msg")) {
+      te.msg = ev["msg"].string();
+      for (auto& v : ev["values"].items()) te.values.push_back(static_cast<float>(v.number()));
     } else {
-      throw std::runtime_error(name + ": event needs on/off/cc/bend/at");
+      throw std::runtime_error(name + ": event needs on/off/cc/bend/at/msg");
     }
     s.events.push_back(te);
   }
@@ -197,11 +202,24 @@ Render render(sk::Engine& eng, const Scenario& s, const RenderOpts& o) {
 
   struct Ev { long sample; sk::MidiEvent e; };
   std::vector<Ev> evs;
+  // Messages arrive at the start of a block, so blocks are split at each
+  // message's time (the result doesn't depend on the block size).
+  struct Msg { long sample; int index; std::vector<float> values; };
+  std::vector<Msg> msgs;
   for (auto& te : s.events) {
     double sec = te.beat >= 0 ? te.beat * 60.0 / s.bpm : te.seconds;
-    evs.push_back({static_cast<long>(std::llround(sec * s.sampleRate)), te.e});
+    long at = static_cast<long>(std::llround(sec * s.sampleRate));
+    if (!te.msg.empty()) {
+      int idx = eng.messageIndex(te.msg);
+      if (idx < 0) throw std::runtime_error(s.name + ": unknown message '" + te.msg + "'");
+      msgs.push_back({at, idx, te.values});
+    } else {
+      evs.push_back({at, te.e});
+    }
   }
   std::stable_sort(evs.begin(), evs.end(), [](const Ev& a, const Ev& b) { return a.sample < b.sample; });
+  std::stable_sort(msgs.begin(), msgs.end(), [](const Msg& a, const Msg& b) { return a.sample < b.sample; });
+  std::size_t mi = 0;
 
   std::vector<float> bl(static_cast<std::size_t>(block)), br(static_cast<std::size_t>(block));
   std::vector<sk::MidiEvent> blockEv;
@@ -212,7 +230,13 @@ Render render(sk::Engine& eng, const Scenario& s, const RenderOpts& o) {
   double quietThresh = std::pow(10.0, -80.0 / 20.0);
   auto t0 = std::chrono::steady_clock::now();
   while (pos < total) {
-    int n = static_cast<int>(std::min<long>(block, total - pos));
+    while (mi < msgs.size() && msgs[mi].sample <= pos) {
+      eng.sendMessage(msgs[mi].index, msgs[mi].values.data(), static_cast<int>(msgs[mi].values.size()));
+      ++mi;
+    }
+    long upTo = std::min<long>(block, total - pos);
+    if (mi < msgs.size()) upTo = std::min<long>(upTo, msgs[mi].sample - pos);
+    int n = static_cast<int>(upTo);
     blockEv.clear();
     while (ei < evs.size() && evs[ei].sample < pos + n) {
       sk::MidiEvent e = evs[ei].e;

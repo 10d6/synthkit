@@ -58,4 +58,5 @@ endif()
 
 if(SYNTHKIT_BUILD_EXAMPLES)
   add_subdirectory(examples/basic)
+  add_subdirectory(examples/reed)
 endif()

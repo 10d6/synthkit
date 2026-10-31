@@ -105,6 +105,9 @@
         {
           "param": "delay.tone",
           "label": "Tone"
+        },
+        {
+          "type": "clearEchoes"
         }
       ]
     },

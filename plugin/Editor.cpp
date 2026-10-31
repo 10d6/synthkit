@@ -72,6 +72,8 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
     for (auto* prm : proc_.params()) lastValues_.push_back(proc_.engine().params().get(prm->index()));
     lastGeneration_ = proc_.engine().params().generation();
     lastSerial_ = proc_.stateSerial();
+    // Messages posted while no window was open are stale.
+    for (sk::Message stale; proc_.engine().takeMessage(stale);) {}
     settingsToken_ = settings_->addListener(
         [this](const juce::String& key, const juce::var& value) { send(obj({{"t", "store"}, {"key", key}, {"value", value}})); },
         this);
@@ -189,6 +191,14 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
     } else if (t == "shapes") {
       std::lock_guard<std::mutex> g(proc_.engineLock());
       engine.setShapes(toSk(m["json"].toString()));
+    } else if (t == "msg") {
+      // A message for the synth (API.md §9b): lock-free, from this thread only.
+      const int i = m["i"];
+      float v[sk::Message::kMaxValues] = {};
+      int n = 0;
+      if (const auto* arr = m["v"].getArray())
+        for (const auto& x : *arr) if (n < sk::Message::kMaxValues) v[n++] = static_cast<float>(static_cast<double>(x));
+      engine.sendMessage(i, v, n);
     } else if (t == "panic") {
       engine.panic();
     } else if (t == "allOff") {
@@ -270,12 +280,25 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
       if (!changes.isEmpty()) send(obj({{"t", "params"}, {"changes", changes}}));
     }
     sendMeters();
+    sendMessages();
 
     // Remember the window size once resizing settles.
     if (sizeChangedAt_ && juce::Time::getMillisecondCounter() - sizeChangedAt_ > 600) {
       sizeChangedAt_ = 0;
       settings_->set(kSizeKey, juce::Array<juce::var>{getWidth(), getHeight()}, this);
     }
+  }
+
+  // Messages the synth posted (API.md §9b).
+  void sendMessages() {
+    juce::Array<juce::var> list;
+    sk::Message msg;
+    while (proc_.engine().takeMessage(msg)) {
+      juce::Array<juce::var> v;
+      for (int i = 0; i < msg.count; ++i) v.add(msg.values[static_cast<std::size_t>(i)]);
+      list.add(juce::Array<juce::var>{msg.id.index, v});
+    }
+    if (!list.isEmpty()) send(obj({{"t", "msgs"}, {"list", list}}));
   }
 
   void sendMeters() {

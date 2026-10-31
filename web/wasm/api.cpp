@@ -25,6 +25,9 @@ float gStats[8] = {};
 // Mod meters, sized once in sk_init so reading them on the audio thread doesn't allocate.
 std::vector<float> gMeters;
 std::size_t gMeterSources = 0, gMeterParams = 0;
+// Messages to the page, drained after each block: [index, count, v0..v3] each.
+constexpr int kMsgBatch = 64;
+float gMsgOut[kMsgBatch * 6] = {};
 
 const char* ret(std::string s) {
   gStr = std::move(s);
@@ -103,6 +106,7 @@ SK_EXPORT(sk_info) const char* sk_info() {
   }
   j["presets"] = presets;
   j["custom"] = sk::Json(gEngine->customIds());
+  j["messages"] = sk::Json(gEngine->messageIds());
   sk::Json mod = sk::Json::object();
   sk::Json srcs = sk::Json::array();
   for (const auto& d : gEngine->modSources()) {
@@ -222,6 +226,27 @@ SK_EXPORT(sk_mod_meters) float* sk_mod_meters() {
   return gMeters.data();
 }
 SK_EXPORT(sk_mod_meter_count) int sk_mod_meter_count() { return static_cast<int>(gMeters.size()); }
+
+// A message from the page (API.md §9b), delivered at the next block.
+SK_EXPORT(sk_message) int sk_message(int index, int count, double a, double b, double c, double d) {
+  const float v[4] = {static_cast<float>(a), static_cast<float>(b), static_cast<float>(c), static_cast<float>(d)};
+  return gEngine->sendMessage(index, v, count) ? 1 : 0;
+}
+// Messages the engine posted since the last call: returns how many, laid out
+// in sk_message_buffer() as [index, count, v0, v1, v2, v3] each.
+SK_EXPORT(sk_take_messages) int sk_take_messages() {
+  int n = 0;
+  sk::Message m;
+  while (n < kMsgBatch && gEngine->takeMessage(m)) {
+    float* o = gMsgOut + n * 6;
+    o[0] = static_cast<float>(m.id.index);
+    o[1] = static_cast<float>(m.count);
+    for (int i = 0; i < 4; ++i) o[2 + i] = m.values[static_cast<std::size_t>(i)];
+    ++n;
+  }
+  return n;
+}
+SK_EXPORT(sk_message_buffer) float* sk_message_buffer() { return gMsgOut; }
 
 SK_EXPORT(sk_all_notes_off) void sk_all_notes_off() { gEngine->allNotesOff(); }
 SK_EXPORT(sk_panic) void sk_panic() { gEngine->panic(); }
