@@ -171,8 +171,42 @@ function skEvalCurve(pts, x) {
   return pts[pts.length - 1][1];
 }
 
+// Fit handles to one segment of the older curvature model, keeping both
+// handles inside the editor (heights 0..1) so they can always be grabbed.
+// Tries a grid of handle reaches and solves the heights by least squares.
+// Returns [outX, outY, inX, inY] as offsets from the segment's ends.
+function skFitSegment(x0, y0, x1, y1, curvature) {
+  const w = x1 - x0, e = Math.pow(2, 3 * (curvature || 0));
+  const N = 31, target = [], xs = [];
+  for (let k = 1; k <= N; k++) { const f = k / (N + 1); xs.push(f); target.push(y0 + (y1 - y0) * Math.pow(f, e)); }
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  let best = null;
+  for (let ia = 0; ia <= 6; ia++) for (let ib = 0; ib <= 6; ib++) {
+    const a = ia / 12, b = 1 - ib / 12;   // control x's, in units of the width
+    let s11 = 0, s12 = 0, s22 = 0, r1 = 0, r2 = 0;
+    const basis = xs.map((x, k) => {
+      let lo = 0, hi = 1, t = x;
+      for (let j = 0; j < 30; j++) { const xt = skBez(0, a, b, 1, t); if (xt < x) lo = t; else hi = t; t = 0.5 * (lo + hi); }
+      const u = 1 - t, b0 = u * u * u, b1 = 3 * u * u * t, b2 = 3 * u * t * t, b3 = t * t * t;
+      const r = target[k] - y0 * b0 - y1 * b3;
+      s11 += b1 * b1; s12 += b1 * b2; s22 += b2 * b2; r1 += b1 * r; r2 += b2 * r;
+      return [b0, b1, b2, b3];
+    });
+    const det = s11 * s22 - s12 * s12;
+    let Y1 = det > 1e-12 ? (r1 * s22 - r2 * s12) / det : y0, Y2 = det > 1e-12 ? (s11 * r2 - s12 * r1) / det : y1;
+    // Keep inside the box; if one height had to move, re-solve the other.
+    if (Y1 !== clamp01(Y1)) { Y1 = clamp01(Y1); if (s22 > 1e-12) Y2 = (r2 - s12 * Y1) / s22; }
+    if (Y2 !== clamp01(Y2)) { Y2 = clamp01(Y2); if (s11 > 1e-12) Y1 = clamp01((r1 - s12 * Y2) / s11); }
+    Y2 = clamp01(Y2);
+    let err = 0;
+    basis.forEach(([b0, b1, b2, b3], k) => { const d = y0 * b0 + Y1 * b1 + Y2 * b2 + y1 * b3 - target[k]; err += d * d; });
+    if (!best || err < best.err - 1e-12) best = { err, out: [a * w, Y1 - y0, (b - 1) * w, Y2 - y1] };
+  }
+  return best.out;
+}
+
 // Convert a curve that uses the older curvature model to handles, fitting
-// each segment (handles at a third of the way in; least-squares heights).
+// each segment.
 function skToHandles(pts) {
   if (pts.every(skHasHandles)) return;
   const out = pts.map((p) => [p[0], p[1], 0, p[3] ? 1 : 0, 0, 0, 0, 0, skHasHandles(p) ? (p[8] || 0) : 1]);
@@ -185,32 +219,38 @@ function skToHandles(pts) {
       if (skHasHandles(b)) { out[i + 1][6] = b[6]; out[i + 1][7] = b[7]; }
       continue;
     }
-    const y0 = a[1], y1 = b[1], e = Math.pow(2, 3 * (a[2] || 0));
-    let s11 = 0, s12 = 0, s22 = 0, r1 = 0, r2 = 0;
-    for (let k = 0; k <= 32; k++) {
-      const t = k / 32, u = 1 - t;
-      const b1 = 3 * u * u * t, b2 = 3 * u * t * t;
-      const r = y0 + (y1 - y0) * Math.pow(t, e) - y0 * u * u * u - y1 * t * t * t;
-      s11 += b1 * b1; s12 += b1 * b2; s22 += b2 * b2; r1 += b1 * r; r2 += b2 * r;
-    }
-    const det = s11 * s22 - s12 * s12;
-    const Y1 = (r1 * s22 - r2 * s12) / det, Y2 = (s11 * r2 - s12 * r1) / det;
-    out[i][4] = w / 3; out[i][5] = Y1 - y0;
-    out[i + 1][6] = -w / 3; out[i + 1][7] = Y2 - y1;
+    if (!a[2]) continue;  // a straight line needs no handles
+    const [ox, oy, ix, iy] = skFitSegment(a[0], a[1], b[0], b[1], a[2]);
+    out[i][4] = ox; out[i][5] = oy;
+    out[i + 1][6] = ix; out[i + 1][7] = iy;
   }
   pts.length = 0;
   pts.push(...out);
 }
 
+// Shorten a handle (keeping its direction) so its end stays inside the editor:
+// heights 0..1, and no further than xMax across (xMax is signed: + for out
+// handles, - for in handles).
+function skFitHandle(py, dx, dy, xMax) {
+  let s = 1;
+  if (Math.abs(dx) > Math.abs(xMax) && dx !== 0) s = Math.min(s, Math.abs(xMax / dx));
+  if (py + dy > 1) s = Math.min(s, (1 - py) / dy);
+  if (py + dy < 0) s = Math.min(s, -py / dy);
+  s = Math.max(0, s);
+  return [dx * s, dy * s];
+}
+
 // Smooth handles for point i: tangent through its neighbours, a third of the
-// way to each.
+// way to each (shortened if that would leave the editor).
 function skSmoothHandles(pts, i) {
   const p = pts[i], prev = pts[i - 1], next = pts[i + 1];
   const slope = prev && next ? (next[1] - prev[1]) / Math.max(1e-6, next[0] - prev[0])
     : next ? (next[1] - p[1]) / Math.max(1e-6, next[0] - p[0])
     : prev ? (p[1] - prev[1]) / Math.max(1e-6, p[0] - prev[0]) : 0;
   const wo = next ? (next[0] - p[0]) / 3 : 0, wi = prev ? (p[0] - prev[0]) / 3 : 0;
-  p[4] = wo; p[5] = slope * wo; p[6] = -wi; p[7] = -slope * wi; p[8] = 0;
+  [p[4], p[5]] = skFitHandle(p[1], wo, slope * wo, wo);
+  [p[6], p[7]] = skFitHandle(p[1], -wi, -slope * wi, -wi);
+  p[8] = 0;
 }
 
 class ShapeEditor {
@@ -284,7 +324,13 @@ class ShapeEditor {
     p.sort((a, b) => a[0] - b[0]);
     p[0][0] = 0;
     p[p.length - 1][0] = 1;
-    this.m.setShapes(this.all, true);
+    // Write only this shape's curve into the current data: other shape
+    // editors may have changed theirs since this one loaded.
+    const fresh = this.m.shapes();
+    const mine = this.all[this.n - 1];
+    fresh[this.n - 1] = mine;
+    this.all = fresh;
+    this.m.setShapes(fresh, true);
     this.draw();
   }
   lengthBeats() {
@@ -342,7 +388,16 @@ class ShapeEditor {
         const len = Math.hypot(dirx, diry) || 1, reach = Math.min(ghost, len / 3);
         hx = this.px(p[0]) + (dirx / len) * reach; hy = this.py(p[1]) + (diry / len) * reach;
       }
-      out.push({ kind, x: hx, y: hy });
+      // A handle outside the editor (from an older patch) is shown pinned to
+      // the edge, where it can still be grabbed; dragging brings it inside.
+      const top = this.py(1), bottom = this.py(0);
+      const pinned = hy < top - 0.5 || hy > bottom + 0.5;
+      if (pinned) {
+        const cy = Math.min(bottom, Math.max(top, hy));
+        hx = this.px(p[0]) + (hx - this.px(p[0])) * ((cy - this.py(p[1])) / ((hy - this.py(p[1])) || 1));
+        hy = cy;
+      }
+      out.push({ kind, x: hx, y: hy, pinned });
     };
     const has = skHasHandles(p);
     if (!p[3]) add("out", has ? Math.min(Math.max(p[4], 0), pts[i + 1] ? (pts[i + 1][0] - p[0]) / 2 : 0) : 0, has ? p[5] : 0, pts[i + 1]);
@@ -409,7 +464,7 @@ class ShapeEditor {
         const p = this.shown()[this.sel];
         for (const hp of this.handlePositions(this.sel)) {
           this.g.handles.append(svg("line", { class: "handle-arm", x1: this.px(p[0]), y1: this.py(p[1]), x2: hp.x, y2: hp.y }),
-            svg("circle", { class: "handle-knob", cx: hp.x, cy: hp.y, r: 4.5 }));
+            svg("circle", { class: "handle-knob" + (hp.pinned ? " is-pinned" : ""), cx: hp.x, cy: hp.y, r: 4.5 }));
         }
       }
       pts.forEach((p, i) => {
@@ -446,6 +501,7 @@ class ShapeEditor {
     let dx = (mx - this.px(p[0])) / sx, dy = -(my - this.py(p[1])) / sy;
     const wOut = pts[i + 1] ? (pts[i + 1][0] - p[0]) / 2 : 0, wIn = pts[i - 1] ? (p[0] - pts[i - 1][0]) / 2 : 0;
     if (e.altKey) p[8] = 1;  // Alt/Option breaks the pair
+    dy = Math.min(1 - p[1], Math.max(-p[1], dy));   // keep the handle inside the editor
     if (which === "out") { p[4] = Math.min(Math.max(dx, 0), wOut); p[5] = dy; }
     else { p[6] = Math.max(Math.min(dx, 0), -wIn); p[7] = dy; }
     if (!p[8]) {
@@ -456,9 +512,9 @@ class ShapeEditor {
       let oLen = Math.hypot(ox * sx, oy * sy);
       if (oLen < 3) oLen = aLen;
       if (aLen > 0.5) {
-        let nx = (-ax * sx / aLen) * oLen / sx, ny = (-ay * sy / aLen) * oLen / sy;
-        if (which === "out") { nx = Math.max(Math.min(nx, 0), -wIn); p[6] = nx; p[7] = ny; }
-        else { nx = Math.min(Math.max(nx, 0), wOut); p[4] = nx; p[5] = ny; }
+        const nx = (-ax * sx / aLen) * oLen / sx, ny = (-ay * sy / aLen) * oLen / sy;
+        if (which === "out") [p[6], p[7]] = skFitHandle(p[1], Math.min(nx, 0), ny, -wIn);
+        else [p[4], p[5]] = skFitHandle(p[1], Math.max(nx, 0), ny, wOut);
       }
     }
   }
@@ -468,6 +524,10 @@ class ShapeEditor {
     let lastDown = { t: 0, x: 0, y: 0 };
     this.svg.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
+      // Without this the browser starts selecting text as the drag drifts out
+      // of the editor, and a selection over the editor hijacks the next press.
+      e.preventDefault();
+      window.getSelection().removeAllRanges();
       this.area.focus({ preventScroll: true });
       const now = performance.now();
       const isDouble = now - lastDown.t < 400 && Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) < 8;
@@ -685,13 +745,20 @@ class AmountSlider {
     this.label = h("button", { type: "button", class: "ctl-value amt-value", title: "Type an amount" });
     this.root = h("div", { class: "amt" }, this.track, this.label);
     let start = null;
-    this.track.addEventListener("pointerdown", (e) => { this.track.setPointerCapture(e.pointerId); start = { x: e.clientX, v: this.v }; });
+    this.track.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      this.track.focus({ preventScroll: true });
+      this.track.setPointerCapture(e.pointerId);
+      start = { x: e.clientX, v: this.v };
+    });
     this.track.addEventListener("pointermove", (e) => {
       if (!start) return;
       const w = this.track.clientWidth || 120;
       this.set(start.v + ((e.clientX - start.x) / w) * 2 * (e.shiftKey ? 0.1 : 1));
     });
     this.track.addEventListener("pointerup", () => { start = null; });
+    this.track.addEventListener("pointercancel", () => { start = null; });
     this.track.addEventListener("dblclick", () => this.set(0));
     this.track.addEventListener("keydown", (e) => {
       const s = e.shiftKey ? 0.002 : 0.02;
@@ -740,7 +807,9 @@ class MatrixPanel {
     this.add = h("button", { type: "button", class: "btn", onclick: () => this.addRoute() }, "Add route");
     root.append(this.list, h("div", { class: "matrix-foot" }, this.add, this.count));
     this.root = root;
-    this.m.onMod(() => this.build());
+    // Rows edit the matrix themselves; rebuilding them mid-drag would end the
+    // drag, so only rebuild for changes made elsewhere (presets, Modulate…).
+    this.m.onMod(() => { if (!this.editing) this.build(); });
     app.modMeters.on((mm) => this.meter(mm));
     this.build();
   }
@@ -755,6 +824,12 @@ class MatrixPanel {
     const dsts = this.m.modulatable();
     routes.forEach((r, i) => {
       const update = (patch) => { const next = this.m.routes(); Object.assign(next[i], patch); if (patch.via === "") delete next[i].via; this.m.setRoutes(next); };
+      const setAmt = (v) => {
+        const next = this.m.routes();
+        next[i].amt = v;
+        this.editing = true;
+        try { this.m.setRoutes(next); } finally { this.editing = false; }
+      };
       const src = skSourceSelect(this.m, r.src, (v) => update({ src: v }));
       src.setAttribute("aria-label", `Route ${i + 1} source`);
       const dst = h("select", { class: "menu-select", "aria-label": `Route ${i + 1} destination`, onchange: () => update({ dst: dst.value }) });
@@ -766,7 +841,7 @@ class MatrixPanel {
       }
       for (const og of groups.values()) dst.append(og);
       dst.value = r.dst;
-      const amt = new AmountSlider(r.amt, (v) => { const next = this.m.routes(); next[i].amt = v; this.m.setRoutes(next); });
+      const amt = new AmountSlider(r.amt, setAmt);
       const via = skSourceSelect(this.m, r.via, (v) => update({ via: v }), true);
       via.setAttribute("aria-label", `Route ${i + 1} scaled by`);
       const meter = h("span", { class: "route-meter" }, h("span", { class: "route-meter-fill" }));

@@ -119,7 +119,8 @@ jobs:
           cp ../page/build-web/web/basic.html "$dest/index.html"
           touch .nojekyll
           git add -A
-          git commit -q -m "Preview for ${PR:+PR #$PR}${PR:-main} (${{ github.sha }})" || exit 0
+          what="main"; [ -n "$PR" ] && what="PR #$PR"
+          git commit -q -m "Preview for $what (${{ github.sha }})" || exit 0
           git push -q origin gh-pages
       - name: Link the preview on the PR
         if: github.event_name == 'pull_request'

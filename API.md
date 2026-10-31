@@ -562,12 +562,14 @@ automatable, and rate, offset and depth are modulatable too:
     before it. A segment with a handle at either end is a cubic Bezier. Each
     handle reaches at most half the segment's width, so a curve can never bend
     back in time. `corner` 1 means the two handles move independently in the
-    editor.
+    editor. The editor keeps handle ends within heights 0…1 (the curve's own
+    range); a handle outside that still plays as saved and is shown pinned to
+    the editor's edge until it's dragged.
   - **Step** holds the point's level until the next point.
   - Points with only the first four entries use the older **curvature** model
     (−1…1 bends the segment that starts at the point). They still load and play
     unchanged. The editor converts a curve to handles the first time it's
-    edited.
+    edited, choosing the closest fit whose handles stay inside the editor.
 
   Curves always span 0…1 (missing ends are added) and hold up to 64 points.
 - The editor (`{ "kit": "shape1" }` in the layout) draws a grid from the length
