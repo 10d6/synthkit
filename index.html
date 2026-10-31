@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..700&display=swap" rel="stylesheet">
 <style>
 /* synthkit shell. A light instrument enclosure (graphite in dark mode);
-   each synth sets --accent in ui/layout.json → theme.accent. */
+   each synth sets --accent in ui/layout.json \002192 theme.accent. */
 :root {
   --accent-base: #2457d6;
   --accent: var(--accent-base);
@@ -123,6 +123,7 @@ button, input, select { font: inherit; color: inherit; }
 }
 
 .tempo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tempo-readout { font-variant-numeric: tabular-nums; color: var(--ink-soft); font-size: 13px; white-space: nowrap; }
 .play-btn { min-width: 58px; }
 .play-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 .bpm { display: flex; align-items: center; gap: 5px; color: var(--ink-soft); }
@@ -738,7 +739,7 @@ class Model {
     this.listeners = new Map();   // index -> Set(fn)
     this.anyListeners = new Set();
     this.customListeners = new Map();
-    this.sink = null;             // audio forwarding: {param(i, v), patch(json), custom(id, json), mod(json), shapes(json)}
+    this.sink = null;             // audio forwarding: {param(i, v), gesture?(i, on), patch(json), custom(id, json), mod(json), shapes(json)}
     this.mod = this.info.mod || { sources: [], slots: 0, lfos: 0, shapes: 0 };
     this.sourceIndex = new Map(this.mod.sources.map((s, i) => [s.id, i]));
     this.modListeners = new Set();
@@ -770,6 +771,18 @@ class Model {
     this.emit(p.index, now, source);
   }
   setNorm(id, n, source) { this.set(id, this.fromNorm(id, Math.min(1, Math.max(0, n))), source); }
+  // A value that changed in the plugin (automation, the host's own controls):
+  // update the page without sending it back.
+  applyHost(i, v) {
+    const p = this.param(i);
+    if (!p) return;
+    const before = this.get(p.index);
+    this.x.sk_set_param(p.index, v);
+    const now = this.get(p.index);
+    if (now !== before) { this.dirty = true; this.emit(p.index, now, "host"); }
+  }
+  // Start/end of a drag, so a DAW records the change as one gesture.
+  gesture(id, on) { const p = this.param(id); if (p && this.sink && this.sink.gesture) this.sink.gesture(p.index, on); }
   reset(id) { const p = this.param(id); this.set(p.index, p.def); }
 
   on(id, fn) {
@@ -791,12 +804,13 @@ class Model {
   get patchName() { return this.savePatch().name; }
   setName(name) { this.w.withStrings([name], (p) => this.x.sk_set_name(p)); }
 
-  loadPatch(patch) {
+  // fromHost: the plugin already has this patch, so don't send it back.
+  loadPatch(patch, { fromHost = false } = {}) {
     const text = typeof patch === "string" ? patch : JSON.stringify(patch);
     const res = this.w.json(this.w.withStrings([text], (p) => this.x.sk_load_patch(p)));
     if (!res.ok) return res;
     const saved = JSON.stringify(this.savePatch());
-    if (this.sink) this.sink.patch(saved);
+    if (this.sink && !fromHost) this.sink.patch(saved);
     this.dirty = false;
     this.emitAll();
     for (const id of this.info.custom) this.emitCustom(id);
@@ -952,6 +966,55 @@ class Audio {
   }
 }
 
+// ---- host.js
+// Running inside the plugin. The plugin serves this page with its current
+// state in window.__skHost and talks to it through JUCE's web view bridge
+// (window.__JUCE__.backend). HostAudio stands in for Audio: the sound comes
+// from the plugin, so there is nothing to start, and changes go to the plugin
+// instead of an AudioWorklet.
+
+const skHost = (typeof window !== "undefined" && window.__skHost && window.__JUCE__ && window.__JUCE__.backend) ? window.__skHost : null;
+
+class HostAudio {
+  constructor() {
+    this.onMeter = null;
+    this.onLog = null;
+    this.onHost = null;      // (message) for params / state / store / imported
+    this.node = true;        // App checks this before sending MIDI
+    window.__JUCE__.backend.addEventListener("sk", (m) => this.receive(m));
+  }
+
+  get running() { return true; }
+  start() { return Promise.resolve(); }
+
+  send(msg) { window.__JUCE__.backend.emitEvent("sk", msg); }
+  midi(bytes) { this.send({ t: "midi", d: bytes }); }
+
+  sink() {
+    return {
+      param: (i, v) => this.send({ t: "param", i, v }),
+      gesture: (i, on) => this.send({ t: "gesture", i, on }),
+      patch: (json) => this.send({ t: "patch", json }),
+      custom: (id, json) => this.send({ t: "custom", id, json }),
+      mod: (json) => this.send({ t: "mod", json }),
+      shapes: (json) => this.send({ t: "shapes", json }),
+    };
+  }
+
+  receive(m) {
+    if (!m) return;
+    if (m.t === "meter") {
+      // JSON has no NaN: the plugin sends null for "not modulated".
+      m.mod = Float32Array.from(m.mod || [], (v) => (v === null ? NaN : v));
+      if (this.onMeter) this.onMeter(m);
+    } else if (m.t === "log") {
+      if (this.onLog) this.onLog(m.msg, m.kind);
+    } else if (this.onHost) {
+      this.onHost(m);
+    }
+  }
+}
+
 // ---- controls.js
 // Controls bound to parameters. Every control: drag (Shift = fine), wheel,
 // arrow keys, double-click to reset, click the value to type one, right-click
@@ -995,6 +1058,7 @@ function attachDrag(target, ctl, axis = "y") {
     e.preventDefault();
     target.setPointerCapture(e.pointerId);
     start = { x: e.clientX, y: e.clientY, n: ctl.norm(), moved: false };
+    ctl.model.gesture(ctl.p.index, true);
     ctl.root.classList.add("is-active");
     ctl.focus();
   });
@@ -1005,7 +1069,11 @@ function attachDrag(target, ctl, axis = "y") {
     if (Math.abs(d) > 2) start.moved = true;
     ctl.setNorm(start.n + d / range);
   });
-  const end = () => { start = null; ctl.root.classList.remove("is-active"); };
+  const end = () => {
+    if (start) ctl.model.gesture(ctl.p.index, false);
+    start = null;
+    ctl.root.classList.remove("is-active");
+  };
   target.addEventListener("pointerup", end);
   target.addEventListener("pointercancel", end);
   target.addEventListener("dblclick", () => ctl.reset());
@@ -1211,9 +1279,18 @@ class XYPad {
       this.model.setNorm(px.index, (e.clientX - r.left) / r.width, "ui");
       this.model.setNorm(py.index, 1 - (e.clientY - r.top) / r.height, "ui");
     };
-    this.pad.addEventListener("pointerdown", (e) => { this.pad.setPointerCapture(e.pointerId); this.dragging = true; move(e); });
+    this.pad.addEventListener("pointerdown", (e) => {
+      this.pad.setPointerCapture(e.pointerId); this.dragging = true;
+      this.model.gesture(px.index, true); this.model.gesture(py.index, true);
+      move(e);
+    });
     this.pad.addEventListener("pointermove", (e) => { if (this.dragging) move(e); });
-    this.pad.addEventListener("pointerup", () => { this.dragging = false; });
+    const up = () => {
+      if (this.dragging) { this.model.gesture(px.index, false); this.model.gesture(py.index, false); }
+      this.dragging = false;
+    };
+    this.pad.addEventListener("pointerup", up);
+    this.pad.addEventListener("pointercancel", up);
     this.pad.addEventListener("dblclick", () => { this.model.reset(px.index); this.model.reset(py.index); });
     this.pad.addEventListener("keydown", (e) => {
       const s = e.shiftKey ? 0.002 : 0.02;
@@ -1666,7 +1743,7 @@ class ShapeEditor {
     this.toolBtns = ["points", "steps"].map((t) => h("button", { type: "button", class: "seg-btn", role: "radio", text: t === "points" ? "Points" : "Steps", onclick: () => this.setTool(t) }));
     toolSeg.append(...this.toolBtns);
     this.snapBtn = h("button", { type: "button", class: "btn btn-small", "aria-pressed": "true", title: "Snap to the beat grid (hold Shift to place freely)", onclick: () => { this.snap = !this.snap; this.snapBtn.setAttribute("aria-pressed", String(this.snap)); } }, "Snap");
-    const presets = h("button", { type: "button", class: "btn btn-small btn-quiet", onclick: (e) => this.presetMenu(e) }, "Curves…");
+    const presets = h("button", { type: "button", class: "btn btn-small btn-quiet", onclick: (e) => this.presetMenu(e) }, "Curves\u2026");
     this.hint = h("span", { class: "shape-hint" });
     this.bar = h("div", { class: "shape-bar" }, toolSeg, this.snapBtn, presets, this.hint);
     this.root = h("div", { class: "shape-editor" }, this.bar, this.area);
@@ -2203,7 +2280,7 @@ class MatrixPanel {
     root.append(this.list, h("div", { class: "matrix-foot" }, this.add, this.count));
     this.root = root;
     // Rows edit the matrix themselves; rebuilding them mid-drag would end the
-    // drag, so only rebuild for changes made elsewhere (presets, Modulate…).
+    // drag, so only rebuild for changes made elsewhere (presets, Modulate\u2026).
     this.m.onMod(() => { if (!this.editing) this.build(); });
     app.modMeters.on((mm) => this.meter(mm));
     this.build();
@@ -2272,12 +2349,31 @@ class MatrixPanel {
 // (kept in this browser), import/export as files, and the session (the
 // current sound is restored when you come back).
 
+// Settings that outlive the page: the browser's local storage, or in the
+// plugin a file shared by every instance (the plugin passes its contents in
+// and is told about each change).
 const skStore = {
+  subs: new Map(),
   get(key, fallback) {
+    if (skHost) { const v = (skHost.store || {})[key]; return v === undefined || v === null ? fallback : JSON.parse(JSON.stringify(v)); }
     try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch { return fallback; }
   },
   set(key, value) {
+    if (skHost) {
+      (skHost.store = skHost.store || {})[key] = JSON.parse(JSON.stringify(value));
+      window.__JUCE__.backend.emitEvent("sk", { t: "store", key, value });
+      return true;
+    }
     try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
+  },
+  // Another plugin window changed a setting.
+  external(key, value) {
+    if (skHost) (skHost.store = skHost.store || {})[key] = value;
+    for (const fn of this.subs.get(key) || []) fn(value);
+  },
+  on(key, fn) {
+    if (!this.subs.has(key)) this.subs.set(key, new Set());
+    this.subs.get(key).add(fn);
   },
 };
 
@@ -2290,6 +2386,7 @@ class PresetBar {
       .filter((p) => p.patch)
       .map((p) => ({ name: p.patch.name || p.path, patch: p.patch, file: p.path }));
     this.user = skStore.get(this.key("presets"), {});
+    skStore.on(this.key("presets"), () => { this.user = skStore.get(this.key("presets"), {}); this.refresh(); });
     this.current = { kind: "factory", name: "Init" };
     this.build();
     this.model.onAny(() => this.changed());
@@ -2310,9 +2407,9 @@ class PresetBar {
     this.saveBtn = btn("Save", "Save preset", () => this.save());
     this.moreBtn = btn("More", "More preset actions", (e) => this.moreMenu(e), "btn-quiet");
     this.root = h("div", { class: "presets" },
-      btn("‹", "Previous preset", () => this.step(-1), "btn-icon"),
+      btn("\u2039", "Previous preset", () => this.step(-1), "btn-icon"),
       h("div", { class: "preset-field" }, this.select, this.nameInput, this.dirtyDot),
-      btn("›", "Next preset", () => this.step(1), "btn-icon"),
+      btn("\u203a", "Next preset", () => this.step(1), "btn-icon"),
       this.saveBtn, this.moreBtn, this.fileInput);
     this.refresh();
   }
@@ -2342,10 +2439,27 @@ class PresetBar {
   }
 
   saveSession() {
+    // In the plugin the DAW project keeps the sound; the plugin just notes
+    // which preset is showing.
+    if (skHost) { this.app.audio.send({ t: "meta", ui: { current: this.current, dirty: this.model.dirty } }); return; }
     skStore.set(this.key("session"), { patch: this.model.savePatch(), current: this.current, dirty: this.model.dirty });
   }
 
+  // The plugin's sound (on opening the window, or when the DAW loads a project).
+  applyHostState(patch, ui) {
+    const res = this.model.loadPatch(patch, { fromHost: true });
+    if (!res.ok) { this.app.toast(`Couldn't show the plugin's sound: ${res.error}`, "error"); return false; }
+    ui = ui || {};
+    const name = patch && patch.name;
+    const factory = this.factory.find((p) => p.name === name);
+    this.current = ui.current || (factory ? { kind: "factory", name } : { kind: "session", name: name || "Untitled" });
+    this.model.dirty = !!ui.dirty;
+    this.refresh();
+    return true;
+  }
+
   restoreSession() {
+    if (skHost) return this.applyHostState(skHost.state.patch, skHost.state.ui);
     const s = skStore.get(this.key("session"), null);
     if (s && s.patch && this.model.loadPatch(s.patch).ok) {
       this.current = s.current || { kind: "session", name: s.patch.name || "Untitled" };
@@ -2444,6 +2558,7 @@ class PresetBar {
 
   exportFile() {
     const patch = this.model.savePatch();
+    if (skHost) { this.app.audio.send({ t: "export", name: patch.name || "patch", json: JSON.stringify(patch, null, 2) }); return; }
     const blob = new Blob([JSON.stringify(patch, null, 2) + "\n"], { type: "application/json" });
     const a = h("a", { href: URL.createObjectURL(blob), download: (patch.name || "patch").replace(/[^\w\- ]+/g, "") + ".json" });
     document.body.append(a);
@@ -2456,11 +2571,17 @@ class PresetBar {
     const f = this.fileInput.files[0];
     this.fileInput.value = "";
     if (!f) return;
-    const text = await f.text();
+    this.importText(await f.text(), f.name);
+  }
+  startImport() {
+    if (skHost) this.app.audio.send({ t: "import" });   // the plugin shows a file dialog
+    else this.fileInput.click();
+  }
+  importText(text, fileName) {
     const res = this.model.loadPatch(text);
-    if (!res.ok) { this.app.toast(`Couldn't import ${f.name}: ${res.error}`, "error"); return; }
-    for (const w of res.warnings || []) this.app.toast(`${f.name}: ${w}`, "warn");
-    let name = this.model.patchName || f.name.replace(/\.json$/i, "");
+    if (!res.ok) { this.app.toast(`Couldn't import ${fileName}: ${res.error}`, "error"); return; }
+    for (const w of res.warnings || []) this.app.toast(`${fileName}: ${w}`, "warn");
+    let name = this.model.patchName || fileName.replace(/\.json$/i, "");
     for (let k = 2; this.user[name]; k++) name = `${this.model.patchName} ${k}`;
     this.store(name);
   }
@@ -2469,12 +2590,12 @@ class PresetBar {
     const r = e.currentTarget.getBoundingClientRect();
     const user = this.current.kind === "user";
     this.app.menu(r.left, r.bottom + 4, [
-      { label: "Save as new…", run: () => this.startNaming("save", this.current.name + (user ? " 2" : "")) },
-      { label: "Rename…", run: () => this.startNaming("rename", this.current.name), disabled: !user },
+      { label: "Save as new\u2026", run: () => this.startNaming("save", this.current.name + (user ? " 2" : "")) },
+      { label: "Rename\u2026", run: () => this.startNaming("rename", this.current.name), disabled: !user },
       { label: "Delete", run: () => this.remove(), disabled: !user },
       null,
       { label: "Export to file", run: () => this.exportFile() },
-      { label: "Import from file…", run: () => this.fileInput.click() },
+      { label: "Import from file\u2026", run: () => this.startImport() },
       null,
       { label: "Start from Init", run: () => this.init() },
     ]);
@@ -2492,7 +2613,7 @@ const SK_KEYMAP = {
 };
 const SK_BLACK = new Set([1, 3, 6, 8, 10]);
 
-function skNoteName(n) { return ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"][n % 12] + (Math.floor(n / 12) - 1); }
+function skNoteName(n) { return ["C", "C\u266f", "D", "D\u266f", "E", "F", "F\u266f", "G", "G\u266f", "A", "A\u266f", "B"][n % 12] + (Math.floor(n / 12) - 1); }
 
 class Keyboard {
   constructor(app) {
@@ -2526,12 +2647,12 @@ class Keyboard {
       h("div", { class: "kb-main" },
         this.bar = h("div", { class: "kb-bar" },
           h("div", { class: "kb-octave" },
-            h("button", { type: "button", class: "btn btn-icon", title: "Octave down", "aria-label": "Octave down", onclick: () => shift(-12) }, "‹"),
+            h("button", { type: "button", class: "btn btn-icon", title: "Octave down", "aria-label": "Octave down", onclick: () => shift(-12) }, "\u2039"),
             this.range,
-            h("button", { type: "button", class: "btn btn-icon", title: "Octave up", "aria-label": "Octave up", onclick: () => shift(12) }, "›")),
+            h("button", { type: "button", class: "btn btn-icon", title: "Octave up", "aria-label": "Octave up", onclick: () => shift(12) }, "\u203a")),
           this.slot = h("div", { class: "kb-slot" }),
           h("span", { class: "kb-spacer" }),
-          h("span", { class: "kb-hint", title: "Z / X shift the octave, C / V change velocity" }, "Play with A–K on your keyboard"),
+          h("span", { class: "kb-hint", title: "Z / X shift the octave, C / V change velocity" }, "Play with A\u2013K on your keyboard"),
           this.velLabel),
         this.keysEl));
     this.keysEl.addEventListener("pointerdown", (e) => this.press(e));
@@ -2596,7 +2717,7 @@ class Keyboard {
       this.keysEl.append(k);
       this.keys.set(n, k);
     }
-    this.range.textContent = `${skNoteName(low)} – ${skNoteName(high)}`;
+    this.range.textContent = `${skNoteName(low)} \u2013 ${skNoteName(high)}`;
   }
 
   velocityFrom(e, key) {
@@ -2701,6 +2822,7 @@ class MidiInput {
     this.select = h("select", { class: "midi-select", "aria-label": "MIDI input", hidden: true, onchange: () => this.choose(this.select.value) });
     this.dot = h("span", { class: "midi-dot", "aria-hidden": "true" });
     this.root = h("div", { class: "midi" }, this.dot, this.btn, this.select);
+    if (skHost) return;   // the plugin gets MIDI from the DAW
     if (!navigator.requestMIDIAccess) {
       this.btn.disabled = true;
       this.btn.textContent = "No MIDI in this browser";
@@ -2845,7 +2967,8 @@ class App {
     this.model = model;
     this.wasm = wasmBytes;
     this.layout = layout || {};
-    this.audio = new Audio(wasmBytes);
+    this.host = skHost;          // set when running inside the plugin
+    this.audio = skHost ? new HostAudio() : new Audio(wasmBytes);
     this.controls = [];
     this.widgets = new Map();
     this.transport = skStore.get("synthkit:transport", { bpm: 120, playing: false, num: 4, den: 4 });
@@ -2889,6 +3012,12 @@ class App {
     this.keyboard.layout();
 
     this.presets.restoreSession();
+    if (this.host) {
+      // The plugin makes the sound: changes go straight to it.
+      this.model.sink = this.audio.sink();
+      this.banner.hidden = true;
+      this.audio.onHost = (msg) => this.hostMessage(msg);
+    }
     this.refreshLearned();
     // Live modulation rings on knobs.
     const ringed = this.controls.filter((c) => c.modulated);
@@ -2901,9 +3030,9 @@ class App {
     document.addEventListener("keydown", kick, { once: true, capture: true });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") { this.midi.cancelLearn(); this.closeMenu(); } });
 
-    if (this.clockSource === "midi") this.setClockSource("midi");
+    if (this.clockSource === "midi" && !this.host) this.setClockSource("midi");
     this.audio.onMeter = (mtr) => this.meter(mtr);
-    this.audio.onLog = (msg) => this.toast(msg, "error");
+    this.audio.onLog = (msg, kind) => this.toast(msg, kind || "error");
     for (const l of m.logs) this.toast(l, "error");
   }
 
@@ -2920,6 +3049,14 @@ class App {
       console.error(err);
       this.toast(`Audio couldn't start: ${err.message}`, "error");
     }
+  }
+
+  // Messages from the plugin (see host.js).
+  hostMessage(m) {
+    if (m.t === "params") { for (const [i, v] of m.changes || []) this.model.applyHost(i, v); }
+    else if (m.t === "state") this.presets.applyHostState(m.patch, m.ui);
+    else if (m.t === "store") skStore.external(m.key, m.value);
+    else if (m.t === "imported") this.presets.importText(m.text, m.file);
   }
 
   sendMidi(bytes) {
@@ -2950,6 +3087,7 @@ class App {
     this.sig.value = `${t.num}/${t.den}`;
     this.play = h("button", { type: "button", class: "btn play-btn", "aria-pressed": "false", title: "Start the tempo clock (space)", onclick: () => this.togglePlay() }, "Play");
     document.addEventListener("keydown", (e) => {
+      if (this.host) return;   // the DAW's transport
       if (e.code === "Space" && !/INPUT|SELECT|TEXTAREA|BUTTON/.test(e.target.tagName)) { e.preventDefault(); this.togglePlay(); }
     });
     this.beats = h("div", { class: "beats", "aria-hidden": "true" });
@@ -2965,10 +3103,16 @@ class App {
                 svg("path", { d: "M8 1.75 A6.25 6.25 0 0 1 8 14.25 Z", fill: "currentColor" }));
     const themeBtn = h("button", { type: "button", class: "btn btn-quiet btn-icon theme-btn", title: "Switch light / dark", "aria-label": "Switch light or dark theme", onclick: () => this.cycleTheme() }, icon);
 
-    // Playing controls (tempo, MIDI) live with the keyboard.
-    this.keyboard.addToBar(
-      h("div", { class: "tempo" }, this.play, h("label", { class: "bpm" }, this.bpm, h("span", { text: "BPM" })), this.sig, this.clockSel, this.beats),
-      this.midi.root);
+    // Playing controls (tempo, MIDI) live with the keyboard. In the plugin the
+    // DAW sets the tempo, so they become a readout.
+    this.tempoReadout = h("span", { class: "tempo-readout", text: "" });
+    if (this.host) {
+      this.keyboard.addToBar(h("div", { class: "tempo is-host", title: "Tempo and time signature come from your DAW" }, this.tempoReadout, this.beats));
+    } else {
+      this.keyboard.addToBar(
+        h("div", { class: "tempo" }, this.play, h("label", { class: "bpm" }, this.bpm, h("span", { text: "BPM" })), this.sig, this.clockSel, this.beats),
+        this.midi.root);
+    }
     return h("header", { class: "top" },
       h("div", { class: "brand" },
         h("h1", { class: "synth-name", text: info.name }),
@@ -3038,6 +3182,7 @@ class App {
   }
 
   meter(mtr) {
+    if (this.host) this.followHost(mtr);
     this.modMeters.update(mtr.mod, mtr.voices > 0);
     this.voices.textContent = `${mtr.voices} ${mtr.voices === 1 ? "voice" : "voices"}`;
     const db = mtr.peak > 0 ? 20 * Math.log10(mtr.peak) : -100;
@@ -3049,6 +3194,17 @@ class App {
     const idx = mtr.playing ? Math.floor(mtr.beat / per) % this.transport.num : -1;
     beats.forEach((b, i) => b.classList.toggle("is-on", i === idx));
     this.drawScope(mtr.scope);
+  }
+
+  // The DAW's tempo and time signature, as the plugin last saw them.
+  followHost(mtr) {
+    const t = this.transport;
+    const bpm = Math.round(mtr.bpm * 100) / 100;
+    const sigChanged = mtr.num !== t.num || mtr.den !== t.den;
+    t.bpm = bpm; t.playing = mtr.playing; t.num = mtr.num; t.den = mtr.den;
+    const text = `${bpm} BPM \u00b7 ${t.num}/${t.den}`;
+    if (this.tempoReadout.textContent !== text) this.tempoReadout.textContent = text;
+    if (sigChanged) { this.buildBeats(); for (const fn of this.transportSubs) fn(t); }
   }
 
   drawScope(data) {
@@ -3080,9 +3236,10 @@ class App {
     const canMod = ctl.p.modulatable && this.model.mod.slots > 0;
     this.menu(x, y, [
       { label: `Reset to ${this.model.format(ctl.p.index, ctl.p.def)}`, run: () => ctl.reset() },
-      canMod ? { label: "Modulate…", run: () => this.modulateMenu(ctl, x, y) } : null,
-      learning ? { label: "Stop MIDI learn", run: () => this.midi.cancelLearn() } : { label: "MIDI learn", run: () => this.midi.learn(ctl) },
-      cc !== null ? { label: `Forget CC ${cc}`, run: () => this.midi.forget(ctl.p.id) } : null,
+      canMod ? { label: "Modulate\u2026", run: () => this.modulateMenu(ctl, x, y) } : null,
+      // In the plugin, map controllers with the DAW's own MIDI mapping instead.
+      this.host ? null : learning ? { label: "Stop MIDI learn", run: () => this.midi.cancelLearn() } : { label: "MIDI learn", run: () => this.midi.learn(ctl) },
+      !this.host && cc !== null ? { label: `Forget CC ${cc}`, run: () => this.midi.forget(ctl.p.id) } : null,
     ].filter(Boolean));
   }
 
