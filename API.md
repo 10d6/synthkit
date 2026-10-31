@@ -192,6 +192,25 @@ element.
 Those IDs, and any ID starting with `sk.`, `env<n>.`, `lfo<n>.` or
 `shape<n>.`, are reserved. Otherwise `.` is fine for grouping (`osc2.level`).
 
+**Using kit parameters.** A synth can give a kit parameter its own default,
+and read any kit parameter like its own:
+
+```cpp
+void defineParams(ParamBuilder& b) override {
+  // …
+  b.kitDefault("env1.attack", 0.08);   // this synth's Init starts here
+  b.kitDefault("env1.velocity", 0);
+}
+Param envDecay;
+void prepare(const PrepareInfo& info) override {
+  envDecay = info.param("env1.decay");  // any ID, kit or own; then ctx.get(envDecay)
+}
+```
+
+`kitDefault` matters because patches only store values that differ from the
+defaults: a synth that wants a different starting point must change the
+default, not just its Init preset. Unknown IDs are reported (`sk::fail`).
+
 **Parameter or custom setting?** If the host should automate it, or the mod
 matrix should reach it, make it a parameter. If it's bulk data (a 128-key
 table, a step sequence, a sample map) or structure rather than a value, use
@@ -360,8 +379,9 @@ void processEvents(EventContext& ctx) override {
 | `ctx.quantize(beat, div)` | next grid point at or after `beat`; `div` is a `Division`, including `Division::Bar` |
 | `ctx.now()`, `ctx.blockEnd()` | beat range of this block |
 | `ctx.seconds(s)` | a duration in seconds, as beats at the current tempo |
-| `ctx.rng(e, perKey)` | random stream for this event; `perKey = true` gives the same stream for that key every time |
-| `ctx.get(p)`, `ctx.transport()`, `ctx.sampleRate()`, `ctx.pending()` | |
+| `ctx.rng(e, perKey)` | a `dsp::Rng` (by value) for this event; `perKey = true` gives the same stream for that key every time |
+| `ctx.get(p)`, `ctx.choice(p)`, `ctx.on(p)` | parameter values (global modulation, §6) |
+| `ctx.transport()`, `ctx.sampleRate()`, `ctx.pending()` | |
 | `ctx.trigger(n)` | restart shape n now (§6a) |
 | `ctx.setSource(src, v)` | set a custom mod source's global value (§6) |
 
@@ -381,8 +401,11 @@ them with `NoteOn{note, vel, ch}`, `NoteOff{note, ch}`, `CC{number, value, ch}`.
   fills, new events are dropped, except note-offs, which replace a pending
   non-note-off. Drops are counted, and the checks fail on any.
 - **Transport jumps.** When the host's position jumps (looping, scrubbing,
-  starting playback somewhere new), the kit calls `onTransportJump(ctx)`. By
-  default it drops pending events and fires pending note-offs.
+  starting playback somewhere new), the kit calls
+  `void onTransportJump(EventContext& ctx) override` before the block's
+  `processEvents`. By default it drops pending events and fires pending
+  note-offs; an override that keeps its own schedule (a phrase in progress)
+  should move it to `ctx.now()` and then call `Synth::onTransportJump(ctx)`.
 - MIDI output to the host is not planned (Live 11 handles MIDI out from
   instruments poorly).
 

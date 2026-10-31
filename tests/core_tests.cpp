@@ -223,6 +223,44 @@ TEST(param_id_rules) {
 
 // ------------------------------------------------------------ time
 
+// A synth can read kit parameters and give them its own defaults.
+struct SilentVoice : Voice {
+  void start(const NoteOn&, const StartInfo&) override {}
+  void render(VoiceContext&, Buffer&) override {}
+};
+struct KitParamSynth : Synth {
+  Param sustain, master;
+  void defineParams(ParamBuilder& b) override {
+    b.add("x").range(0, 1);
+    b.kitDefault("env1.attack", 0.08);
+    b.kitDefault("master", -6);
+  }
+  void prepare(const PrepareInfo& info) override {
+    sustain = info.param("env1.sustain");
+    master = info.param("master");
+  }
+  std::unique_ptr<Voice> makeVoice() override { return std::make_unique<SilentVoice>(); }
+};
+
+TEST(kit_params_reachable_and_defaults_overridable) {
+  auto s = std::make_unique<KitParamSynth>();
+  auto* synth = s.get();
+  Engine eng(std::move(s), testInfo());
+  eng.prepare(48000, 256);
+  auto& ps = eng.params();
+  CHECK(synth->sustain.valid() && ps.spec(synth->sustain.index).id == "env1.sustain");
+  CHECK(ps.spec(synth->master.index).id == "master");
+  CHECK(std::fabs(ps.spec(ps.find("env1.attack")).def - 0.08) < 1e-9);
+  CHECK(std::fabs(ps.get(ps.find("master")) + 6) < 1e-6);
+  ParamBuilder b;
+  b.add("own").range(0, 1);
+  b.kitDefault("own", 0.5);
+  CHECK_THROWS(b.finish());   // not a kit parameter
+  ParamBuilder b2;
+  b2.kitDefault("env9.attack", 0.1);
+  CHECK_THROWS(b2.finish());  // no such parameter
+}
+
 TEST(divisions) {
   Division d;
   CHECK(Division::parse("1/8T", d) && std::fabs(d.beats - 1.0 / 3.0) < 1e-12);

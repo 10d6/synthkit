@@ -336,7 +336,7 @@ struct Core {
   void prepare(double rate, int block) {
     sr = rate > 0 ? rate : 48000;
     maxBlock = std::max(block, 1);
-    PrepareInfo pi{sr, maxBlock};
+    PrepareInfo pi{sr, maxBlock, store.get()};
     synth->prepare(pi);
     int n = store->size();
     smoothers.assign(static_cast<std::size_t>(n), {});
@@ -998,6 +998,12 @@ int EventContext::pending() const {
   int n = 0;
   for (auto& q : core_->queue) n += q.used;
   return n;
+}
+
+Param PrepareInfo::param(std::string_view id) const {
+  const int i = params ? params->find(id) : -1;
+  if (i < 0) fail("PrepareInfo::param: no parameter '" + std::string(id) + "'");
+  return Param{i};
 }
 
 void Synth::onTransportJump(EventContext& ctx) { ctx.core_->cancel(0, true); }
