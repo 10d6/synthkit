@@ -255,6 +255,10 @@ struct Core {
   // MIDI controllers mapped to parameters (ParamDef::cc): one route each.
   struct CcRoute { int cc, param; double nlo, nhi; };
   std::vector<CcRoute> ccRoutes;
+  // This block's mapped-controller moves, applied at their own sample.
+  struct ParamMove { int sample, param; double value; };
+  std::vector<ParamMove> ccMoves;
+  int ccMoveCount = 0;
   // Parameters moved on the audio thread, for the adapters (single producer,
   // single consumer; a full ring drops, and the page still follows through
   // the store's generation).
@@ -415,6 +419,7 @@ struct Core {
     mixL.assign(static_cast<std::size_t>(maxBlock), 0);
     mixR.assign(static_cast<std::size_t>(maxBlock), 0);
     inEv.assign(1024, {});
+    ccMoves.assign(inEv.size(), {});
     outEv.assign(static_cast<std::size_t>(1024 + info.features.eventQueue), {});
     for (auto& sl : slots) {
       sl.voice->prepare(pi);
@@ -539,6 +544,7 @@ struct Core {
     updateTransport(offset, n, host, jumped);
 
     inCount = 0;
+    ccMoveCount = 0;
     for (int i = 0; i < injected; ++i) {
       inject[i].beat = blockStart;
       inEv[static_cast<std::size_t>(inCount++)] = inject[i];
@@ -549,11 +555,13 @@ struct Core {
       e.sample = std::clamp(e.sample < 0 ? 0 : e.sample - offset, 0, n - 1);
       e.beat = blockStart + e.sample / spb;
       inEv[static_cast<std::size_t>(inCount++)] = e;
-      // Controllers mapped to parameters (ParamDef::cc) move them; the synth
-      // still sees the CC.
+      // Controllers mapped to parameters (ParamDef::cc) move them at the
+      // CC's own sample (below), so the result doesn't depend on the host's
+      // block size; the synth still sees the CC.
       if (e.type == MidiEvent::Type::CC)
         for (auto& r : ccRoutes)
-          if (r.cc == e.cc) moveParam(r.param, store->spec(r.param).fromNorm(r.nlo + (r.nhi - r.nlo) * e.value));
+          if (r.cc == e.cc && ccMoveCount < static_cast<int>(ccMoves.size()))
+            ccMoves[static_cast<std::size_t>(ccMoveCount++)] = {e.sample, r.param, store->spec(r.param).fromNorm(r.nlo + (r.nhi - r.nlo) * e.value)};
     }
 
     outCount = 0;
@@ -576,15 +584,22 @@ struct Core {
 
     std::fill(mixL.begin(), mixL.begin() + n, 0.f);
     std::fill(mixR.begin(), mixR.begin() + n, 0.f);
-    int pos = 0, oi = 0;
+    int pos = 0, oi = 0, mi = 0;
     while (pos < n) {
       transport.beat = blockStart + pos / spb;
+      // Controller moves first, so a note on the same sample hears them.
+      while (mi < ccMoveCount && ccMoves[static_cast<std::size_t>(mi)].sample <= pos) {
+        auto& m = ccMoves[static_cast<std::size_t>(mi++)];
+        moveParam(m.param, m.value);
+      }
       while (oi < outCount && outEv[static_cast<std::size_t>(oi)].sample <= pos) handle(outEv[static_cast<std::size_t>(oi++)]);
       int next = std::min(n, pos + kControlBlock);
       if (oi < outCount) next = std::min(next, outEv[static_cast<std::size_t>(oi)].sample);
+      if (mi < ccMoveCount) next = std::min(next, ccMoves[static_cast<std::size_t>(mi)].sample);
       sub(pos, next - pos);
       pos = next;
     }
+    while (mi < ccMoveCount) { auto& m = ccMoves[static_cast<std::size_t>(mi++)]; moveParam(m.param, m.value); }
     while (oi < outCount) handle(outEv[static_cast<std::size_t>(oi++)]);
 
     for (int i = 0; i < n; ++i) {
@@ -803,7 +818,7 @@ struct Core {
 
   double tune(const MidiEvent& e, uint64_t serial) {
     dsp::Rng r(dsp::hashSeed(serial, static_cast<uint64_t>(e.note), 0x7u));
-    NoteContext nc{e.note, e.vel, e.channel, r, transport};
+    NoteContext nc{e.note, e.vel, e.channel, r, transport, gvals};
     double t = synth->tune(e.note, nc);
     return std::isfinite(t) ? std::clamp(t, -24.0, 160.0) : static_cast<double>(e.note);
   }

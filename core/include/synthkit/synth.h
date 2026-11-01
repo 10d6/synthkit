@@ -138,6 +138,13 @@ struct NoteContext {
   int channel;
   dsp::Rng& rng;  // seeded per note
   const Transport& transport;
+  const float* values_ = nullptr;  // set by the engine
+
+  // Parameter values as the note starts (smoothed, plus global modulation, §6),
+  // the same values EventContext::get reads.
+  float get(Param p) const { return values_[p.index]; }
+  int choice(Param p) const { return static_cast<int>(values_[p.index] + 0.5f); }
+  bool on(Param p) const { return values_[p.index] >= 0.5f; }
 };
 
 // The event stage (API.md §4a).

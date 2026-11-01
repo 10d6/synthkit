@@ -169,11 +169,15 @@ struct MySynth : Synth {
 | `cc(n)` / `cc(n, lo, hi)` | MIDI controller `n` (0–119) moves this parameter: 0…127 across the whole range, or across `lo`…`hi` (real units, spaced by knob travel). Call it again for more controllers. |
 
 **MIDI controllers** declared with `cc()` work the same in the browser and in
-a DAW: the engine moves the parameter as the CC arrives, and the page's
-control and the host's (its automation lane, a learned DAW controller) follow.
-The synth still sees the CC in `processEvents`. A mapping that depends on
-something else (CC 7 moves one setting or another) goes in `processEvents`
-with `ctx.setParam(p, value)` (§4a), which moves a parameter the same way. In
+a DAW: the engine moves the parameter at the CC's own sample, not at the
+start of the host's audio block, so a mapped controller sounds the same at
+any block size and can drive something fast like tremolo depth directly. The
+page's control and the host's (its automation lane, a learned DAW controller)
+follow. The synth still sees the CC in `processEvents`; there, `ctx.get` still
+reads the block-start value, because the move hasn't happened yet. A mapping
+that depends on something else (CC 7 moves one setting or another) goes in
+`processEvents` with `ctx.setParam(p, value)` (§4a), which moves the
+parameter from the start of the block, with the page and host following. In
 the browser, a control MIDI-learned on the page (§9) takes its CC instead.
 
 ```cpp
@@ -349,10 +353,13 @@ double tune(int note, const NoteContext& n) override;  // returns a fractional M
 ```
 
 It's called once per note start, with `n.note`, `n.velocity`, `n.channel`,
-`n.rng` (seeded per note) and `n.transport`. It can read parameters, custom
-state or randomness: per-key detune tables, drifting "worn instrument"
-tuning, alternate temperaments. Everything downstream (`pitchHz`, key tracking,
-glide) uses the result.
+`n.rng` (seeded per note) and `n.transport`. `n.get(p)`, `n.choice(p)` and
+`n.on(p)` read parameters as the note starts (smoothed, plus global
+modulation, §6: the values `EventContext::get` reads; per-voice modulation
+hasn't started yet). So `tune` can use parameters, custom state or
+randomness: per-key detune tables, drifting "worn instrument" tuning,
+alternate temperaments. Everything downstream (`pitchHz`, key tracking, glide)
+uses the result.
 
 **Global processing.** `processGlobal(GlobalContext& ctx, Buffer& io)` runs once
 per control block after the voices are mixed, and edits `io` in place (reverb,
@@ -413,7 +420,7 @@ void processEvents(EventContext& ctx) override {
 | `ctx.transport()`, `ctx.sampleRate()`, `ctx.pending()` | |
 | `ctx.trigger(n)` | restart shape n now (§6a) |
 | `ctx.setSource(src, v)` | set a custom mod source's global value (§6) |
-| `ctx.setParam(p, value)` | move a parameter, as a mapped MIDI controller does (§3): in effect at once; the page and the host follow |
+| `ctx.setParam(p, value)` | move a parameter: in effect from the start of this block (unlike a `cc()` mapping, which moves at the CC's own sample, §3); the page and the host follow |
 | `ctx.messages()`, `ctx.post(m, {values})` | messages from the page since the last block, and sending one back (§9b) |
 
 Events are `MidiEvent`s (`type`, `note`, `vel`, `cc`, `value`, `channel`,
