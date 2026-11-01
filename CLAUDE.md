@@ -26,7 +26,8 @@ builds from CI artifacts at milestones.
    `vendorCode` never change once released. Patches store real units, not
    normalised values.
 5. **Build for synths that exist.** A feature goes into the kit when a second
-   synth needs it. Until then it lives in the synth repo.
+   synth needs it. Until then it lives in the synth repo. Gaps a synth repo
+   finds in `API.md` get fixed here, in the doc or the kit.
 6. **Expect unusual synths.** The owner's synths often have very custom
    behaviour (per-note detune tables, self-generating note sequences,
    note-triggered tempo-locked modulation). Musical time — beats, bars, time
@@ -181,6 +182,11 @@ The browser test writes screenshots (desktop, phone, dark) to `build-web/test/`.
 Look at them after any UI change. Emscripten can't be installed here (its
 download host is blocked); the browser build uses plain clang + wasi-libc.
 
+The browser test emulates a real browser's autoplay rule. Playwright's
+`evaluate()` and `waitForFunction()` count as user gestures (for a few
+seconds), so a test of "nothing may start before a click" must not touch the
+page until it clicks.
+
 Run the native checks before every PR. For DSP changes, also look at the renders
 (spectrograms show clicks as vertical lines) and run a sanitizer build:
 `-DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined"`
@@ -195,8 +201,8 @@ Run the native checks before every PR. For DSP changes, also look at the renders
 
 ## Licensing
 
-JUCE is used only in `plugin/` (free Starter tier while private; AGPLv3 or
-Starter once public). Everything else must stay JUCE-free so it can be
+JUCE is used only in `plugin/` (under JUCE's Starter or AGPLv3 terms).
+Everything else must stay JUCE-free so it can be
 licensed independently. It's our own code, except that the `sk::wa` blocks
 (`core/include/synthkit/webaudio/`) follow Chromium's Web Audio code, which is
 BSD-licensed: keep its notice in `webaudio.h`, and when a license is chosen
@@ -218,19 +224,3 @@ GitHub release from those zips. The Windows job gets the WebView2 SDK from
 NuGet. The plugin steps live in `tools/ci/` so synth repos run the same ones.
 A "Template synth" job scaffolds a synth from `template/` and runs its native,
 browser and Linux plugin checks.
-
-## Status
-
-See README → Roadmap. Phases 1–10 are done (contract; core, DSP, render tool,
-example synth; browser build; modulation; plugins; template + scaffold; the
-first real synth; `sk::wa`; own pages and messages; the DAW's stand-ins: host
-bar, `cc()` mappings and `ctx.setParam`, tempo source and tempo in patches,
-first-click audio start). `10d6/aleatory` and `10d6/parlour` (reedorgan's
-organ, with its own page) are built on the kit; gaps found in synth repos get
-fixed in API.md here. Aleatory's hand-written band-pass and compressor can
-move to `wa::BiquadFilter` and `wa::DynamicsCompressor`.
-
-The browser test emulates a real browser's autoplay rule. Playwright's
-`evaluate()` and `waitForFunction()` count as user gestures (for a few
-seconds), so a test of "nothing may start before a click" must not touch the
-page until it clicks.

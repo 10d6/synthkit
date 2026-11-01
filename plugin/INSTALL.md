@@ -49,5 +49,5 @@ Copy the `.vst3` folder to `~/.vst3/`.
   the synth on this computer, in
   `%APPDATA%\synthkit\` (Windows) or
   `~/Library/Application Support/synthkit/` (Mac).
-- Use **More → Export / Import** to move presets between the browser
-  version and the plugin.
+- Use the preset bar's **More → Export to file / Import from file…** to move
+  presets between the browser version and the plugin.
