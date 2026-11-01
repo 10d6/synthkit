@@ -21,6 +21,73 @@ function svg(tag, attrs = {}) {
   return e;
 }
 
+// Info icons: a small (i) beside a control's label or a panel's title. Its
+// text shows in a popover while the mouse is over it or it has keyboard
+// focus, and stays up after a click or tap until the next click elsewhere.
+const skInfo = {
+  pop: null, btn: null, pinned: false,
+  init() {
+    this.pop = h("div", { class: "info-pop", role: "tooltip", id: "sk-info-pop", hidden: true });
+    document.body.append(this.pop);
+    document.addEventListener("pointerdown", (e) => { if (this.btn && !this.btn.contains(e.target) && !this.pop.contains(e.target)) this.hide(); }, true);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") this.hide(); });
+    window.addEventListener("scroll", () => { if (this.btn) this.place(); }, true);
+    window.addEventListener("resize", () => this.hide());
+  },
+  show(btn, pinned) {
+    if (!this.pop) this.init();
+    if (this.btn && this.btn !== btn) this.release();
+    this.btn = btn;
+    this.pinned = pinned;
+    this.pop.textContent = btn.skInfo;
+    this.pop.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    btn.setAttribute("aria-describedby", this.pop.id);
+    this.place();
+  },
+  place() {
+    const r = this.btn.getBoundingClientRect(), p = this.pop, m = 8;
+    if (!r.width) { this.hide(); return; }   // its panel was hidden
+    p.style.left = "0px"; p.style.top = "0px";
+    const w = p.offsetWidth, ht = p.offsetHeight;
+    const x = Math.max(m, Math.min(window.innerWidth - w - m, r.left + r.width / 2 - w / 2));
+    let y = r.bottom + 6;
+    if (y + ht > window.innerHeight - m && r.top - 6 - ht >= m) y = r.top - 6 - ht;
+    p.style.left = x.toFixed(0) + "px"; p.style.top = y.toFixed(0) + "px";
+  },
+  release() {
+    this.btn.setAttribute("aria-expanded", "false");
+    this.btn.removeAttribute("aria-describedby");
+  },
+  // hide(btn) only hides if btn is the one showing.
+  hide(btn) {
+    if (!this.btn || (btn && btn !== this.btn)) return;
+    this.release();
+    this.pop.hidden = true;
+    this.btn = null;
+    this.pinned = false;
+  },
+};
+
+function skInfoButton(text, about) {
+  const b = h("button", { type: "button", class: "info-btn", "aria-label": about ? `About ${about}` : "More information", "aria-expanded": "false" });
+  const s = svg("svg", { viewBox: "0 0 16 16", "aria-hidden": "true" });
+  s.append(svg("circle", { cx: 8, cy: 8, r: 6.6, class: "info-ring" }), svg("path", { d: "M8 7.2v4.4", class: "info-stem" }), svg("circle", { cx: 8, cy: 4.7, r: 1.05, class: "info-dot" }));
+  b.append(s);
+  b.skInfo = String(text);
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (skInfo.btn === b && skInfo.pinned) skInfo.hide(); else skInfo.show(b, true);
+  });
+  b.addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse" && !skInfo.pinned) skInfo.show(b, false); });
+  b.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse" && !skInfo.pinned) skInfo.hide(b); });
+  b.addEventListener("focus", () => { if (b.matches(":focus-visible") && !skInfo.pinned) skInfo.show(b, false); });
+  b.addEventListener("blur", () => { if (!skInfo.pinned) skInfo.hide(b); });
+  // Keys on the button belong to it, not to the computer keyboard's notes.
+  b.addEventListener("keydown", (e) => e.stopPropagation());
+  return b;
+}
+
 const KNOB_START = -135, KNOB_END = 135;
 
 function arcPath(cx, cy, r, a0, a1) {
@@ -73,6 +140,7 @@ class Control {
     this.p = param;
     this.opts = opts;
     this.label = opts.label || param.name;
+    this.info = opts.info || (app.paramInfo && app.paramInfo[param.id]) || "";
     this.discrete = param.type !== "float";
     this.steps = this.discrete ? Math.round((param.max - param.min) / (param.step || 1)) : 0;
     this.stepScale = this.discrete ? Math.max(1, 100 / Math.max(1, this.steps)) : 1;
@@ -90,6 +158,12 @@ class Control {
   }
   set(v) { this.model.set(this.p.index, v, "ui"); }
   reset() { this.model.reset(this.p.index); }
+  // The label under (or beside) a control, with its info icon if it has one.
+  labelEl() {
+    const el = h("div", { class: "ctl-label" }, this.label);
+    if (this.info) el.append(skInfoButton(this.info, this.label));
+    return el;
+  }
   focus() { const f = this.root.querySelector("[tabindex]"); if (f) f.focus({ preventScroll: true }); }
   text(v) { return this.model.format(this.p.index, v); }
 
@@ -159,7 +233,7 @@ class Knob extends Control {
     this.dial.addEventListener("keydown", (e) => this.keyHandler(e));
     attachDrag(this.dial, this);
     this.value = this.valueField();
-    this.root.append(this.dial, h("div", { class: "ctl-label", text: this.label }), this.value);
+    this.root.append(this.dial, this.labelEl(), this.value);
   }
   update(v) {
     const n = this.model.toNorm(this.p.index, v);
@@ -193,7 +267,7 @@ class Slider extends Control {
     this.track.addEventListener("keydown", (e) => this.keyHandler(e));
     attachDrag(this.track, this, "x");
     this.value = this.valueField();
-    this.root.append(h("div", { class: "ctl-row" }, h("div", { class: "ctl-label", text: this.label }), this.value), this.track);
+    this.root.append(h("div", { class: "ctl-row" }, this.labelEl(), this.value), this.track);
   }
   update(v) {
     const n = this.model.toNorm(this.p.index, v);
@@ -213,7 +287,7 @@ class Segmented extends Control {
       h("button", { type: "button", class: "seg-btn", role: "radio", text: c, onclick: () => this.set(this.p.min + i) }));
     this.group.append(...this.buttons);
     this.group.addEventListener("keydown", (e) => this.keyHandler(e));
-    this.root.append(h("div", { class: "ctl-label", text: this.label }), this.group);
+    this.root.append(this.labelEl(), this.group);
   }
   update(v) {
     const idx = Math.round(v - this.p.min);
@@ -233,7 +307,7 @@ class Menu extends Control {
       const v = this.p.min + i * (this.p.step || 1);
       this.select.append(h("option", { value: v, text: this.p.choices ? this.p.choices[i] : this.text(v) }));
     }
-    this.root.append(h("label", { class: "ctl-label", text: this.label }), this.select);
+    this.root.append(this.labelEl(), this.select);
   }
   update(v) { this.select.value = String(Math.round(v)); }
 }
@@ -243,7 +317,7 @@ class Toggle extends Control {
   build() {
     this.btn = h("button", { type: "button", class: "toggle", role: "switch", "aria-label": this.label, onclick: () => this.set(this.model.get(this.p.index) >= 0.5 ? 0 : 1) },
       h("span", { class: "toggle-knob" }));
-    this.root.append(this.btn, h("div", { class: "ctl-label", text: this.label }));
+    this.root.append(this.btn, this.labelEl());
   }
   update(v) { this.btn.setAttribute("aria-checked", v >= 0.5 ? "true" : "false"); }
 }
@@ -255,7 +329,10 @@ class XYPad {
     this.dot = h("div", { class: "xy-dot" });
     this.pad = h("div", { class: "xy-pad", role: "group", tabindex: 0, "aria-label": `${px.name} and ${py.name}` }, this.dot);
     this.readout = h("div", { class: "ctl-value is-static" });
-    this.root = h("div", { class: "ctl ctl-xy" }, this.pad, h("div", { class: "ctl-label", text: opts.label || `${px.name} / ${py.name}` }), this.readout);
+    const label = opts.label || `${px.name} / ${py.name}`;
+    const labelEl = h("div", { class: "ctl-label" }, label);
+    if (opts.info) labelEl.append(skInfoButton(opts.info, label));
+    this.root = h("div", { class: "ctl ctl-xy" }, this.pad, labelEl, this.readout);
     const move = (e) => {
       const r = this.pad.getBoundingClientRect();
       this.model.setNorm(px.index, (e.clientX - r.left) / r.width, "ui");

@@ -40,9 +40,11 @@
         },
         {
           "param": "drift",
-          "label": "Drift"
+          "label": "Drift",
+          "info": "Slow random pitch wander per voice, like an analogue oscillator warming up."
         }
-      ]
+      ],
+      "info": "Two oscillators plus a sub an octave below and noise. Osc 2 can be detuned against Osc 1 for a thicker sound."
     },
     {
       "title": "Filter",
@@ -63,7 +65,8 @@
         },
         {
           "param": "filter.drive",
-          "label": "Drive"
+          "label": "Drive",
+          "info": "Saturation before the filter. Thickens the sound and tames resonance."
         },
         {
           "param": "filter.env",
@@ -71,7 +74,8 @@
         },
         {
           "param": "filter.keytrack",
-          "label": "Key track"
+          "label": "Key track",
+          "info": "How far the cutoff follows the keyboard. At 100% the filter opens an octave for each octave you play up."
         },
         {
           "param": "filter.velocity",
@@ -109,32 +113,58 @@
         {
           "type": "clearEchoes"
         }
+      ],
+      "info": "A tempo-synced echo after the voices. Tone darkens each repeat.",
+      "collapsed": false
+    },
+    {
+      "accordion": [
+        {
+          "kit": "voices",
+          "collapsed": true
+        },
+        {
+          "kit": "master"
+        }
       ]
     },
     {
-      "kit": "lfo1"
-    },
-    {
-      "kit": "lfo2"
-    },
-    {
-      "kit": "shape1",
-      "wide": true
-    },
-    {
-      "kit": "shape2",
-      "wide": true
+      "tabs": [
+        {
+          "title": "LFOs",
+          "sections": [
+            {
+              "kit": "lfo1"
+            },
+            {
+              "kit": "lfo2"
+            }
+          ]
+        },
+        {
+          "title": "Shapes",
+          "sections": [
+            {
+              "kit": "shape1",
+              "wide": true
+            },
+            {
+              "kit": "shape2",
+              "wide": true
+            }
+          ]
+        }
+      ]
     },
     {
       "kit": "modMatrix",
-      "wide": true
-    },
-    {
-      "kit": "voices"
-    },
-    {
-      "kit": "master"
+      "wide": true,
+      "info": "Each route sends a source (LFO, envelope, velocity, mod wheel\u2026) to a parameter. Right-click any knob and choose Modulate\u2026 to add one."
     }
   ],
-  "keyboard": true
+  "keyboard": true,
+  "paramInfo": {
+    "sk.a4": "Concert pitch: the frequency of the A above middle C.",
+    "unisonSpread": "Pans unison voices across the stereo field."
+  }
 }
