@@ -89,6 +89,51 @@ async function main() {
         const after = await page.evaluate(() => window.synthkit.model.routes());
         if (after.length !== before + 1 || after[after.length - 1].dst !== "filter.cutoff") fail("Modulate… didn't add an LFO 1 → cutoff route");
         else pass("right-click → Modulate adds a route");
+        // Tabs, accordions and info icons (the example's layout uses all three).
+        {
+          const vis = (sel) => page.evaluate((sel) => { const e = document.querySelector(sel); return !!e && e.getClientRects().length > 0; }, sel);
+          const selected = () => page.evaluate(() => [...document.querySelectorAll(".tab")].filter((t) => t.getAttribute("aria-selected") === "true").map((t) => t.textContent));
+          const s0 = await selected();
+          if (s0.join() !== "LFOs" || !(await vis(".lfo-panel")) || (await vis(".shape-svg"))) fail(`tabs at start: selected ${JSON.stringify(s0)}, LFO shown ${await vis(".lfo-panel")}, shape shown ${await vis(".shape-svg")}`);
+          await page.click('.tab:text-is("Shapes")');
+          const s1 = await selected();
+          if (s1.join() !== "Shapes" || (await vis(".lfo-panel")) || !(await vis(".shape-svg"))) fail(`clicking the Shapes tab: selected ${JSON.stringify(s1)}`);
+          else pass("tabs switch between groups of panels");
+          await page.focus('.tab:text-is("Shapes")');
+          await page.keyboard.press("ArrowLeft");
+          const s2 = await selected();
+          await page.keyboard.press("End");
+          const s3 = await selected();
+          const kept = await page.evaluate(() => JSON.parse(localStorage.getItem(`synthkit:${window.synthkit.model.info.synth.id}:ui`) || "{}"));
+          if (s2.join() !== "LFOs" || s3.join() !== "Shapes") fail(`arrow keys on tabs gave ${s2} then ${s3}`);
+          else if (!Object.values(kept).includes("Shapes")) fail(`the chosen tab isn't remembered: ${JSON.stringify(kept)}`);
+          else pass("tabs follow arrow keys and remember the choice");
+          // Accordion: Voices starts folded; its title opens it.
+          const toggle = page.locator('.panel-toggle:has-text("Voices")');
+          const exp0 = await toggle.getAttribute("aria-expanded");
+          const glide0 = await vis('[data-param="glide"]');
+          await toggle.click();
+          const exp1 = await toggle.getAttribute("aria-expanded");
+          const glide1 = await vis('[data-param="glide"]');
+          await toggle.click();
+          if (exp0 !== "false" || glide0 || exp1 !== "true" || !glide1) fail(`accordion: folded ${exp0}/${glide0}, opened ${exp1}/${glide1}`);
+          else pass("accordion panels fold and open at their titles");
+          // Info icons: on a control, a kit control (paramInfo) and a panel.
+          await page.click('[data-param="filter.drive"] .info-btn');
+          const pop = await page.evaluate(() => { const p = document.querySelector(".info-pop"); return p && !p.hidden ? p.textContent : null; });
+          await page.click(".synth-name");
+          const gone = await page.evaluate(() => document.querySelector(".info-pop").hidden);
+          const counts = await page.evaluate(() => ({ a4: document.querySelectorAll('[data-param="sk.a4"] .info-btn').length, panel: document.querySelectorAll(".matrix-panel > .panel-title .info-btn").length }));
+          if (!pop || !/Saturation/.test(pop) || !gone) fail(`info popover: text ${JSON.stringify(pop)}, closes on outside click ${gone}`);
+          else if (counts.a4 !== 1 || counts.panel !== 1) fail(`info icons missing: ${JSON.stringify(counts)}`);
+          else pass("info icons show their text on controls, kit controls and panels");
+          await page.evaluate(() => document.querySelector('[data-param="filter.drive"] .info-btn').scrollIntoView({ block: "center" }));
+          await page.hover('[data-param="filter.drive"] .info-btn');
+          const hov = await page.evaluate(() => !document.querySelector(".info-pop").hidden);
+          await page.mouse.move(2, 2);
+          const unhov = await page.evaluate(() => document.querySelector(".info-pop").hidden);
+          if (!hov || !unhov) fail(`info on hover: shows ${hov}, hides ${unhov}`); else pass("info shows on hover");
+        }
         // Add a point in the first shape editor.
         const pts = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points.length);
         await page.evaluate(() => document.querySelector(".shape-svg").scrollIntoView({ block: "center" }));

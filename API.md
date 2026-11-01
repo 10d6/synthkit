@@ -830,18 +830,58 @@ and output panels.
 | `type` | `knob` (floats, default), `slider`, `segmented` (choices with up to 4 options, default), `menu` (longer choices), `toggle` (toggles, default), `xy` (with `params: [x, y]`), or a custom widget name |
 | `label` | text under the control (default: the parameter's name) |
 | `size` | `small` or `large` knob |
+| `info` | text for an ⓘ icon beside the label (also on `xy`) |
 
 | Section field | |
 |---|---|
 | `title`, `controls` | a panel of controls |
 | `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4) |
 | `wide` | `true` makes the panel take a full row |
+| `info` | text for an ⓘ icon beside the panel's title (kit panels too) |
+| `collapsed` | makes the panel fold at its title: `true` starts folded, `false` starts open |
+
+**Grouping panels.** Besides panels, `sections` (and the lists inside these)
+can hold:
+
+```json
+{ "tabs": [
+    { "title": "LFOs",   "sections": [ { "kit": "lfo1" }, { "kit": "lfo2" } ] },
+    { "title": "Shapes", "sections": [ { "kit": "shape1" }, { "kit": "shape2" } ] }
+] },
+{ "accordion": [ { "kit": "voices", "collapsed": true }, { "kit": "master" } ], "single": true }
+```
+
+- `tabs`: a full-width row of tabs; only the chosen tab's sections show. Each
+  tab needs a `title` and `sections` (any sections, including more tabs). A tab
+  whose sections all turn out empty (kit panels the synth doesn't enable) is
+  left out. Optional `title` on the group names it for screen readers.
+- `accordion`: panels stacked in one column, each folding at its title (open
+  unless the panel says `"collapsed": true`). `"single": true` keeps one open
+  at a time; `"wide": true` gives it a full row. It holds panels only.
+- The page remembers, per synth, which tab was chosen and which panels were
+  folded (in the browser's storage, or the plugin's shared settings). A panel
+  is known by its `title` (or `kit`), a tab group by its tab titles; give
+  either an `id` to keep that memory across a rename.
+- **Modulate…** opens whatever tab or folded panel hides the matrix.
+
+**Info for any parameter** (`paramInfo`): a top-level map from parameter ID
+to text, shown wherever that parameter's control appears, including in kit
+panels and "More". A control's own `info` wins.
+
+```json
+"paramInfo": { "sk.a4": "Concert pitch: the frequency of the A above middle C." }
+```
+
+Info text is plain text (line breaks are kept). It shows on hover or keyboard
+focus, and stays up after a click or tap until the next click elsewhere.
 
 - `theme.accent` colours the controls. Dark mode derives a lighter shade
   from it automatically.
 - Parameters the layout doesn't mention (other than kit and hidden ones) get a
   "More" panel, so nothing is unreachable. Mistakes in the layout (unknown
-  parameter IDs or control types) show as warnings when the page opens.
+  parameter IDs or control types, malformed tabs) show as warnings when the
+  page opens.
+- Without a layout, a synth with both LFOs and shapes gets them in two tabs.
 - Every control supports dragging (Shift for fine), the mouse wheel, arrow keys
   when focused, double-click to reset, clicking the value to type one, and
   right-click for MIDI learn, reset and **Modulate…** (adds a matrix route from

@@ -182,6 +182,58 @@ button, input, select { font: inherit; color: inherit; }
 .env-line { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .env-fill { fill: var(--accent); opacity: 0.1; }
 
+/* Tabs: a row of tab buttons over the panels of the chosen tab. */
+.tabs { flex: 1 1 100%; min-width: 0; }
+.tab-list {
+  display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
+  border-bottom: 1px solid var(--edge); margin-bottom: 14px;
+}
+.tab-list::-webkit-scrollbar { display: none; }
+.tab {
+  flex: none; border: 0; background: none; cursor: pointer; white-space: nowrap;
+  padding: 7px 14px 8px; margin-bottom: -1px; border-bottom: 2px solid transparent;
+  font-weight: 600; font-variation-settings: "wdth" 80; color: var(--ink-soft);
+  border-radius: 7px 7px 0 0;
+}
+.tab:hover { color: var(--ink); background: color-mix(in srgb, var(--panel) 60%, transparent); }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tab:focus-visible { outline-offset: -2px; }
+
+/* Accordions: panels stacked in a column, each folding at its title. */
+.accordion { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.accordion.is-wide { flex-basis: 100%; }
+.accordion > .panel { flex: none; }
+.panel.is-collapsible > .panel-title { display: flex; align-items: center; cursor: pointer; }
+.panel-toggle {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; text-align: left;
+  border: 0; background: none; padding: 2px 0; margin: -2px 0; cursor: pointer;
+  font: inherit; font-weight: inherit; color: inherit;
+}
+.panel-chevron { width: 12px; height: 12px; flex: none; transition: transform 0.15s; }
+.panel-chevron path { fill: none; stroke: var(--ink-soft); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.panel.is-collapsed > .panel-title .panel-chevron { transform: rotate(-90deg); }
+.panel.is-collapsed { padding-bottom: 12px; }
+.panel.is-collapsed > .panel-title { margin-bottom: 0; }
+.panel-title:hover .panel-chevron path { stroke: var(--ink); }
+
+/* Info icons and their popover. */
+.info-btn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 22px; height: 22px; padding: 3px; margin: -4px -4px -4px 0; vertical-align: middle;
+  border: 0; border-radius: 50%; background: none; cursor: help; color: var(--ink-soft);
+}
+.info-btn svg { width: 14px; height: 14px; display: block; }
+.info-ring { fill: none; stroke: currentColor; stroke-width: 1.3; }
+.info-stem { stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.info-dot { fill: currentColor; }
+.info-btn:hover, .info-btn[aria-expanded="true"] { color: var(--accent); }
+.panel-title .info-btn { margin-left: 2px; }
+.info-pop {
+  position: fixed; z-index: 25; max-width: min(280px, calc(100vw - 16px)); padding: 8px 11px;
+  border-radius: 8px; background: var(--cap); color: #f1f3ef; font-size: 12px; line-height: 1.4;
+  border: 1px solid var(--cap-hi); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22); white-space: pre-line;
+}
+
 /* ---- controls -------------------------------------------------------- */
 .ctl { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 62px; position: relative; }
 .ctl-label { font-size: 12px; color: var(--ink-soft); text-align: center; max-width: 9em; line-height: 1.2; }

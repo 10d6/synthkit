@@ -424,7 +424,7 @@ class App {
     routes.push({ src: src.id, dst: ctl.p.id, amt: 0.25 });
     this.model.setRoutes(routes);
     this.toast(`${src.name} now modulates ${ctl.label} by 25%. Adjust it in the Modulation panel.`);
-    if (this.matrix) this.matrix.root.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (this.matrix) { skReveal(this.matrix.root); this.matrix.root.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
   }
 
   refreshLearned() { for (const c of this.controls) c.learned(this.midi.ccFor(c.p.id)); }
