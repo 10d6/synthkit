@@ -47,7 +47,7 @@ struct MeterSnapshot {
   int num = 4, den = 4;
 };
 
-class Processor : public juce::AudioProcessor {
+class Processor : public juce::AudioProcessor, private juce::Timer {
  public:
   Processor();
   ~Processor() override;
@@ -107,6 +107,10 @@ class Processor : public juce::AudioProcessor {
   static constexpr int kScopeSize = 1024;
 
  private:
+  // Parameters the engine moved (mapped MIDI controllers, ctx.setParam):
+  // told to the host on the message thread, so it records and shows them.
+  void timerCallback() override;
+
   std::unique_ptr<sk::Engine> engine_;
   std::vector<Parameter*> params_;
   std::vector<std::atomic<bool>> inGesture_;

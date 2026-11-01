@@ -82,6 +82,7 @@ Processor::Processor()
   }
   events_.reserve(4096);
   uiState_ = juce::var(new juce::DynamicObject());
+  startTimerHz(30);
 
   // A new instance starts on the Init preset, like the browser page does.
   int count = 0;
@@ -96,7 +97,21 @@ Processor::Processor()
   }
 }
 
-Processor::~Processor() = default;
+Processor::~Processor() { stopTimer(); }
+
+void Processor::timerCallback() {
+  int index = 0;
+  std::vector<bool> seen(params_.size(), false);
+  while (engine_->takeParamChange(index)) {
+    if (index < 0 || index >= static_cast<int>(params_.size()) || seen[static_cast<std::size_t>(index)]) continue;
+    seen[static_cast<std::size_t>(index)] = true;
+    auto* p = params_[static_cast<std::size_t>(index)];
+    const bool wrap = !inGesture_[static_cast<std::size_t>(index)].load();
+    if (wrap) p->beginChangeGesture();
+    p->sendValueChangedMessageToListeners(p->getValue());
+    if (wrap) p->endChangeGesture();
+  }
+}
 
 const juce::String Processor::getName() const { return juce::String::fromUTF8(engine_->info().name.c_str()); }
 
@@ -144,6 +159,7 @@ void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&
     if (auto pos = head->getPosition()) {
       if (auto bpm = pos->getBpm()) {
         t.valid = true;
+        t.source = sk::TempoSource::Daw;
         t.bpm = *bpm;
         t.playing = pos->getIsPlaying();
         if (auto sig = pos->getTimeSignature()) {

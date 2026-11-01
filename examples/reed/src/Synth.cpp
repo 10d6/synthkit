@@ -38,7 +38,7 @@ struct Reed : Synth {
 
   void defineParams(ParamBuilder& b) override {
     bright = b.add("reed.bright").name("Brightness").range(0, 1).def(0.5).group("Voicing");
-    swell = b.add("swell").name("Knee Swell").range(0, 1).def(0.3).group("Voicing");
+    swell = b.add("swell").name("Knee Swell").range(0, 1).def(0.3).group("Voicing").cc(11).cc(4);   // an expression or foot pedal
     room = b.add("room").name("Room").range(0, 1).def(0.25).group("Voicing");
     helper = b.add("wind.helper").name("Helper Pump").range(0, 0.3).def(0.12).group("Wind");
     size = b.add("wind.size").name("Reservoir").range(0.5, 4).def(1.5).unit("s").group("Wind");

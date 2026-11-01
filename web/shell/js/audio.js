@@ -21,14 +21,21 @@ class Audio {
     this.onMeter = null;
     this.onLog = null;
     this.onMessages = null;   // ([[index, values], …]) from the synth
+    this.onParams = null;     // ([[index, value], …]) parameters the engine moved
     this.starting = null;
   }
 
   get running() { return !!this.node && this.ctx.state === "running"; }
 
-  // Must be called from a user gesture (browsers block audio until then).
+  // Browsers only let audio start during a click or key press. Called outside
+  // one (a message or MIDI before the first click), the context starts
+  // suspended; the next call, from a click, resumes it, and the first
+  // attempt then completes.
   start(model, transport) {
-    if (this.starting) return this.starting;
+    if (this.starting) {
+      if (this.ctx && this.ctx.state !== "running") this.ctx.resume().catch(() => {});
+      return this.starting;
+    }
     const attempt = (async () => {
       this.ctx = new AudioContext({ latencyHint: "interactive" });
       await this.ctx.audioWorklet.addModule(skWorkletUrl());
@@ -47,6 +54,7 @@ class Audio {
         const m = e.data;
         if (m.t === "meter" && this.onMeter) this.onMeter(m);
         else if (m.t === "msgs" && this.onMessages) this.onMessages(m.list);
+        else if (m.t === "params" && this.onParams) this.onParams(m.changes);
         else if (m.t === "log") { console.error("[synth]", m.msg); if (this.onLog) this.onLog(m.msg); }
       };
       this.node.onprocessorerror = () => { if (this.onLog) this.onLog("The synth stopped with an error. Reload the page to restart it."); };

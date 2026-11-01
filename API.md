@@ -1,6 +1,6 @@
 # synthkit API
 
-> **Status: v0.6.** Every section marked **✓** is implemented and used by
+> **Status: v0.7.** Every section marked **✓** is implemented and used by
 > [examples/basic](examples/basic), [examples/reed](examples/reed) (a synth
 > with its own page) or [10d6/aleatory](https://github.com/10d6/aleatory).
 
@@ -21,8 +21,9 @@ git clone https://github.com/10d6/synthkit /tmp/synthkit
 python3 /tmp/synthkit/tools/new-synth.py my-synth --name "Glass Rain" [--plugin-code Glra] [--id glass-rain]
 ```
 
-It copies `template/` (a small working synth: one oscillator, a filter, the
-kit's envelope, LFO, mod matrix and voice modes), fills in the identity, checks
+It copies `template/` (a small working synth: one oscillator, a filter that
+CC 74 moves, the kit's envelope, LFO, mod matrix and voice modes, with its
+tempo saved in patches), fills in the identity, checks
 the permanent codes (§2), and adds synthkit as a submodule pinned to the
 commit it came from. The result builds, passes every check, and has CI ready
 (below). Run it with `--help` for the options.
@@ -122,6 +123,7 @@ check the synth against it.
 | `standardEnvelopes` | 1 | ADSRs the kit runs per voice (`env1`, `env2`, …) |
 | `ampEnv` | true | `env1` shapes every voice's output (see §4) |
 | `eventQueue` | 256 | capacity for scheduled events (§4a) |
+| `tempoInPatch` | false | the browser's tempo and time signature are saved in patches and restored with them (§7) |
 | `standardLfos` | 0 | standard LFOs (§6) |
 | `modSlots` | 0 | matrix routes; also adds `sk.pitch`, `sk.level` (§6) |
 | `shapes` | 0 | drawn, tempo-locked curves (§6a) |
@@ -164,6 +166,20 @@ struct MySynth : Synth {
 | `smoothing(ms)` | Default 10 ms for floats, 0 for choices/toggles/integers. |
 | `group(s)` | Groups params in the host's list. |
 | `hidden()` | Saved in patches, not shown to the host. |
+| `cc(n)` / `cc(n, lo, hi)` | MIDI controller `n` (0–119) moves this parameter: 0…127 across the whole range, or across `lo`…`hi` (real units, spaced by knob travel). Call it again for more controllers. |
+
+**MIDI controllers** declared with `cc()` work the same in the browser and in
+a DAW: the engine moves the parameter as the CC arrives, and the page's
+control and the host's (its automation lane, a learned DAW controller) follow.
+The synth still sees the CC in `processEvents`. A mapping that depends on
+something else (CC 7 moves one setting or another) goes in `processEvents`
+with `ctx.setParam(p, value)` (§4a), which moves a parameter the same way. In
+the browser, a control MIDI-learned on the page (§9) takes its CC instead.
+
+```cpp
+swell = b.add("swell").range(0, 100).unit("%").cc(11).cc(4);   // expression or foot pedal
+level = b.add("level").range(0, 150).def(100).unit("%").cc(7, 0, 100);
+```
 
 Mistakes (duplicate IDs, reserved IDs, `log()` on a range through zero) are
 reported when the synth is created (`sk::fail`), so they show up in the first
@@ -318,7 +334,9 @@ size (the kit checks this, §10).
 - **Unison** voices are spread across `±unisonDetune` cents and panned across
   `unisonSpread`, each at 1/√n gain.
 - **MIDI.** Velocity 0 counts as note-off. CC64 is sustain. CC120 cuts all
-  voices. CC123 releases all notes. Pitch bend is smoothed over ~4 ms. Every
+  voices. CC123 releases all notes. The kit's own *Stop all sound* and all
+  notes off reach `processEvents` as CC120 and CC123 too, so a synth keeping
+  its own note state (a coupler, a held phrase) can let go. Pitch bend is smoothed over ~4 ms. Every
   CC's last value is readable with `cc(n)`.
 - **Output.** `master` gain, then a safety limiter (−0.3 dBFS ceiling). NaN or
   infinite samples are replaced with silence. Denormals are flushed.
@@ -395,6 +413,7 @@ void processEvents(EventContext& ctx) override {
 | `ctx.transport()`, `ctx.sampleRate()`, `ctx.pending()` | |
 | `ctx.trigger(n)` | restart shape n now (§6a) |
 | `ctx.setSource(src, v)` | set a custom mod source's global value (§6) |
+| `ctx.setParam(p, value)` | move a parameter, as a mapped MIDI controller does (§3): in effect at once; the page and the host follow |
 | `ctx.messages()`, `ctx.post(m, {values})` | messages from the page since the last block, and sending one back (§9b) |
 
 Events are `MidiEvent`s (`type`, `note`, `vel`, `cc`, `value`, `channel`,
@@ -476,6 +495,9 @@ old patches.
 - MIDI-learn mappings are **not** part of a patch; they're per-installation.
   Neither are messages (§9b) or a page's own settings (`sk.store`, §9a): a
   sound that depends on something must keep it in a parameter or custom state.
+- `"tempo"`, with `features.tempoInPatch`: `{ "bpm": 74, "timeSig": [4, 4] }`,
+  the browser's tempo when the patch was saved (§7). A patch without one
+  leaves the tempo as it was.
 - `"mod"` holds the matrix routes (§6) and `"shapes"` the shape curves (§6a).
   A synth without those features keeps them unchanged through load and save.
 
@@ -669,12 +691,27 @@ automatable, and rate, offset and depth are modulatable too:
 ## 7. Tempo ✓
 
 `ctx.transport()` → `Transport { bpm, playing, beat, barStart, timeSigNum,
-timeSigDen }`, plus `beatsPerBar()`, `secondsPerBeat()` and `seconds(s)`. In the
-plugin this comes from the host. In the browser it comes from the page's tempo
-clock (Play, BPM and time signature by the keyboard), or follows incoming
-**MIDI clock** (choose *MIDI clock* next to the time signature): start, stop,
-continue and song position are followed, and tempo is measured from the clock.
-`beat` keeps advancing when the transport is stopped (§4a).
+timeSigDen, source }`, plus `beatsPerBar()`, `secondsPerBeat()` and
+`seconds(s)`. Every synth gets a tempo wherever it runs, so tempo-locked code
+is written once:
+
+| `source` (`sk::TempoSource`) | Where the tempo comes from |
+|---|---|
+| `Daw` | the plugin's host: its tempo, time signature and play position |
+| `Browser` | the page's tempo controls (Play, BPM and time signature, in the host bar or wherever the page put them) |
+| `MidiClock` | the page following incoming MIDI clock (choose *MIDI clock* next to the time signature): start, stop, continue and song position are followed, and tempo is measured from the clock |
+| `Offline` | the render tool: the scenario's `transport`, else the patch's tempo |
+| `Own` | nothing gives a tempo (a host without a play head): the kit's own clock, at the patch's tempo if it has one, else the last one it had |
+
+`beat` keeps advancing when the transport is stopped (§4a). A synth that
+behaves differently in a DAW (say, a pattern that should follow the song
+there but keep its own pace in the browser) can check `source == Daw`.
+
+**Tempo in patches.** With `"tempoInPatch": true` in `synth.json`'s
+features, the browser's tempo and time signature are part of the sound: saved
+in the patch (`"tempo"`, §5), restored when it loads, and changing them marks
+the patch edited. In a DAW the song's tempo rules; the patch's tempo is kept
+with it, and used only when the host gives none (`Own`).
 
 Synced values use `sk::Division`: `Division::Whole`, `Half`, `Quarter`,
 `Eighth`, `Sixteenth`, `ThirtySecond` and `Bar`, with `.triplet()` and
@@ -866,7 +903,8 @@ export function mount(sk, root) {
   |---|---|
   | `presets` | the preset bar (pick, step, save, rename, delete, import, export) |
   | `keyboard` | the on-screen keyboard and wheels; computer keys play while it's on the page (`typing: false` to stop that). Its bar also takes the tempo and MIDI controls unless the page placed them (`tempo: false`, `midi: false`). |
-  | `midi`, `tempo`, `output`, `panic`, `theme` | the Connect MIDI control, tempo controls (a readout in the plugin), scope and level, Stop all sound, light/dark switch |
+  | `midi`, `tempo`, `output`, `panic`, `theme` | the Connect MIDI control, tempo controls (a readout in the plugin; `space: false` if the page uses Space itself), scope and level, Stop all sound, light/dark switch |
+  | `hostbar` | the host bar (below), here instead of at the top of the page |
   | `panels` | panels for a whole layout (`{ sections: [...] }` as in layout.json; default: `ui/layout.json`) |
   | `section` | one panel, from one layout section (`{ title, controls }` or `{ kit: "env1" }`, `"modMatrix"`, `"shape1"`, …) |
   | `control` | one control, from one layout control (`{ param, type, label, size }`) |
@@ -882,15 +920,32 @@ export function mount(sk, root) {
   | `onMeter(sourceId, fn)` | a mod source's value, ~30 times a second, whether or not anything is playing (a synth's own source makes a good gauge) |
   | `onMeters(fn)` | every meter frame (`voices`, `peak`, `beat`, `playing`, `bpm`, …) |
   | `noteOn(n, vel)`, `noteOff(n)`, `midi(bytes)`, `allNotesOff()`, `panic()` | playing |
-  | `onMidi(fn)`, `connectMidi()` | Web MIDI input before the synth sees it (`fn(bytes)` returns true to keep a message); start MIDI without the button |
-  | `start()`, `running` | start the sound (browsers need a click first; the kit also starts it on the first click or key) |
-  | `presets.list()`, `current()`, `load(name, kind?)`, `save()`, `saveAs(name)`, `rename(name)`, `remove()`, `revert()`, `init()`, `exportFile()`, `importFile()`, `onChange(fn)` | the kit's presets without its bar: `current()` is `{ name, kind, dirty }`, `kind` is `factory`, `user` or `session` |
+  | `onMidi(fn)` | listen to Web MIDI input: `fn(bytes)` sees every message, and the synth still gets it |
+  | `takeMidi(fn)` | take Web MIDI messages: when `fn(bytes)` returns `true`, the synth doesn't get that one (a page's own MIDI Learn, say). Anything else goes on |
+  | `connectMidi()` | start Web MIDI without the button |
+  | `transport()`, `onTransport(fn)` | the tempo the page shows: `{ bpm, num, den, playing, source }`, `source` being `daw`, `browser` or `midiClock` (§7) |
+  | `hostBar(options)` | the host bar: `{ midi, tempo, panic, space }` set to `false` leave those out (`space: false`: Space doesn't start the clock); `hostBar(false)` leaves it out entirely |
+  | `start()`, `running` | start the sound (browsers need a click first; the kit also starts it on any click or key) |
+  | `presets.list()`, `current()`, `load(name, kind?)`, `save()`, `saveAs(name)`, `rename(name)`, `remove()`, `revert()`, `init()`, `exportFile()`, `importFile()`, `importPatch(patch)`, `onChange(fn)` | the kit's presets without its bar: `current()` is `{ name, kind, dirty }`, `kind` is `factory`, `user` or `session`. `importPatch` loads a patch object the page built (from an older format, say) and saves it as one of your presets under its name, made unique; it returns `{ ok, name, error, warnings }` |
   | `store.get(key, fallback)`, `store.set(key, value)` | the page's own settings (open drawers, a chosen view): kept per synth in the browser, or in the plugin's shared settings; never in patches |
   | `toast(text, kind)`, `menu(x, y, items)`, `host` | |
 
-- The kit's computer-keyboard notes, Space for Play, and the start banner are
-  off unless the page mounts the parts they belong to. The sound starts on the
-  first click or key press anywhere.
+- **The host bar.** What a DAW would provide comes with every page: a prompt
+  to start the sound (until it's running), Connect MIDI, the tempo controls
+  and Stop all sound. Whatever the page doesn't place itself goes in a bar at
+  the top of the page (or where it mounts `hostbar`), so a synth's own page
+  can always be played from a MIDI keyboard and has a tempo. In the plugin the
+  bar holds the DAW's tempo readout and Stop all sound. Leave parts out with
+  `sk.hostBar({ tempo: false })` (an instrument without a clock; the
+  keyboard's `tempo: false` means the same) or `sk.hostBar(false)`; restyle
+  it with `.sk-hostbar` in `ui/style.css`.
+- **Starting the sound.** Browsers only start audio during a click or key
+  press. The kit starts it on any click or key until it's running. Messages
+  and MIDI sent before then (from `mount`, or a MIDI keyboard played first)
+  wait and are delivered once it starts; anything that tried to start the
+  sound before the first click doesn't stop that click from starting it.
+- The kit's computer-keyboard notes and Space for Play are off unless the page
+  mounts the parts they belong to.
 - [`examples/reed`](examples/reed) is a complete example: a walnut cabinet
   with a wind gauge and two treadles, built this way.
 
@@ -928,7 +983,8 @@ and the page (or a custom widget) sends and listens: `sk.send("treadle.left",
 - The engine sees each incoming message once, in `ctx.messages()` at the start
   of the next block (in the plugin, the host's next block). Keep what it means
   in the synth (`leftDown`), not in the message. A message sent before the
-  sound has started starts it first.
+  sound has started waits, and is delivered when it starts (at the first
+  click or key press, §9a).
 - Posted messages reach the page within a block in the browser and within
   about 30 ms in the plugin. Post on changes, not every block: queues hold 255
   messages each way, and `post` returns false (and the stats count a drop)
@@ -990,6 +1046,13 @@ thread, and on dropped events.
 - rendering in blocks of 512, 1, 37 and 4096 samples gives the same loudness
 - 25 random patches are finite, allocation-free and end in silence
 - speed, reported as a multiple of realtime
+
+**In the browser** (`web/test/browser-test.cjs`, run by every synth's CI),
+the page is also played the way a person does: under a real browser's
+autoplay rule (emulated, since headless Chromium doesn't enforce it) the first
+click must start the sound, even after something tried to start it before;
+the page must offer Connect MIDI; a (fake) MIDI keyboard must play it; and
+each parameter's `cc()` mapping must move it and show on the page.
 
 **Commands** (built as `<name>_render`):
 
@@ -1076,7 +1139,9 @@ and messages (§9b) work unchanged. In the plugin:
 - the tempo area shows the DAW's tempo and time signature (no Play button, no
   Web MIDI, no MIDI learn: map controllers with the DAW's own MIDI mapping);
   on a synth's own page, `sk.mount(el, "midi")` places nothing and
-  `sk.onMidi` sees nothing, since the DAW routes MIDI to the plugin;
+  `sk.onMidi` sees nothing, since the DAW routes MIDI to the plugin (the
+  engine's `cc()` mappings and `ctx.setParam` still work, and the host
+  records the moves as automation gestures);
 - your presets, theme, keyboard settings and a page's `sk.store` settings
   are shared by every instance of the synth on the computer (`%APPDATA%\synthkit\<id>\settings.json`,
   `~/Library/Application Support/synthkit/<id>/settings.json`), and Export /

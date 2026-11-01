@@ -122,10 +122,14 @@ Scenario parseScenario(const Json& j, const std::string& name, const fs::path& s
   if (j["params"].isObject()) s.params = j["params"];
   if (j["custom"].isObject()) s.custom = j["custom"];
   const Json& t = j["transport"];
-  s.bpm = t["bpm"].number(120);
-  if (t["timeSig"].isArray()) {
-    s.sigNum = static_cast<int>(t["timeSig"][0].number(4));
-    s.sigDen = static_cast<int>(t["timeSig"][1].number(4));
+  // The scenario's tempo, else the patch's (features.tempoInPatch), else 120.
+  const Json& patchJson = s.patch;   // const: reading must not add keys
+  const Json& pt = patchJson["tempo"];
+  s.bpm = t["bpm"].number(pt["bpm"].number(120));
+  const Json& sig = t["timeSig"].isArray() ? t["timeSig"] : pt["timeSig"];
+  if (sig.isArray()) {
+    s.sigNum = static_cast<int>(sig[0].number(4));
+    s.sigDen = static_cast<int>(sig[1].number(4));
   }
   s.playing = t["playing"].boolean(false);
   s.sampleRate = j["sampleRate"].number(48000);
@@ -246,6 +250,7 @@ Render render(sk::Engine& eng, const Scenario& s, const RenderOpts& o) {
     }
     sk::HostTransport ht;
     ht.valid = true;
+    ht.source = sk::TempoSource::Offline;
     ht.bpm = s.bpm;
     ht.playing = s.playing;
     ht.beat = pos / s.sampleRate * s.bpm / 60.0;
@@ -257,6 +262,7 @@ Render render(sk::Engine& eng, const Scenario& s, const RenderOpts& o) {
     gTrack = true;
     eng.process(outs, 2, n, blockEv.data(), static_cast<int>(blockEv.size()), ht);
     gTrack = false;
+    for (int moved; eng.takeParamChange(moved);) {}   // as an adapter would
     auto st = eng.takeStats();
     out.peakDb = std::max(out.peakDb, st.peakBeforeLimiterDb);
     out.limiterDb = std::max(out.limiterDb, st.limiterReductionDb);

@@ -27,6 +27,7 @@ class Model {
     this.modListeners = new Set();
     this.shapeListeners = new Set();
     this.dirty = false;
+    this.patchListeners = new Set();   // after any patch load
   }
 
   param(id) { return typeof id === "number" ? this.params[id] : this.byId.get(id); }
@@ -98,7 +99,19 @@ class Model {
     for (const id of this.info.custom) this.emitCustom(id);
     this.emitMod();
     this.emitShapes();
+    for (const fn of this.patchListeners) { try { fn(); } catch (err) { console.error(err); } }
     return res;
+  }
+  onPatch(fn) { this.patchListeners.add(fn); return () => this.patchListeners.delete(fn); }
+
+  // The patch's tempo (features.tempoInPatch): {bpm, num, den}, or null.
+  patchTempo() { const t = this.w.str(this.x.sk_patch_tempo()); return t ? JSON.parse(t) : null; }
+  setPatchTempo(bpm, num, den) {
+    const t = this.patchTempo();
+    if (t && t.bpm === bpm && t.num === num && t.den === den) return;
+    this.x.sk_set_patch_tempo(bpm, num, den);
+    this.dirty = true;
+    for (const fn of this.anyListeners) fn(-1, 0, "tempo");
   }
 
   // Modulation -------------------------------------------------------------

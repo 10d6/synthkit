@@ -150,6 +150,20 @@ button, input, select { font: inherit; color: inherit; }
 .start-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }
 
+/* The host bar on a synth's own page (API.md §9a): what a DAW would provide.
+   Restyle with .sk-hostbar in ui/style.css. */
+.sk-hostbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+  padding: 6px 12px; margin: 0 0 12px;
+  background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius);
+  font-size: 13px; color: var(--ink);
+}
+.sk-hostbar:empty { display: none; }
+.start-banner.in-hostbar {
+  width: auto; padding: 4px 10px; border: 1px solid var(--accent); border-radius: var(--radius);
+  background: transparent; color: var(--ink); font: inherit;
+}
+
 /* ---- panels ---------------------------------------------------------- */
 .main { flex: 1; padding: 18px 20px 22px; }
 .panels { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }

@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <locale>
 #include <sstream>
 #include <stdexcept>
@@ -169,6 +170,12 @@ ParamDef& ParamDef::modulatable(bool m) { return each([&](ParamSpec& s) { s.modu
 ParamDef& ParamDef::smoothing(double ms) { return each([&](ParamSpec& s) { s.smoothingMs = ms; }); }
 ParamDef& ParamDef::group(std::string g) { return each([&](ParamSpec& s) { s.group = g; }); }
 ParamDef& ParamDef::hidden(bool h) { return each([&](ParamSpec& s) { s.hidden = h; }); }
+ParamDef& ParamDef::cc(int number) {
+  return each([&](ParamSpec& s) { s.controllers.push_back({number, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()}); });
+}
+ParamDef& ParamDef::cc(int number, double lo, double hi) {
+  return each([&](ParamSpec& s) { s.controllers.push_back({number, lo, hi}); });
+}
 
 // ---------------------------------------------------------------- ParamBuilder
 
@@ -247,6 +254,13 @@ std::vector<ParamSpec> ParamBuilder::finish() {
       fail("parameter '" + s.id + "': log() needs a positive range");
     if (s.max < s.min) fail("parameter '" + s.id + "': range max < min");
     s.def = s.clamp(s.def);
+    for (auto& c : s.controllers) {
+      if (c.cc < 0 || c.cc > 119)
+        fail("parameter '" + s.id + "': cc(" + std::to_string(c.cc) + ") must be a controller 0-119 (120-127 are channel mode messages)");
+      if (std::isnan(c.lo)) { c.lo = s.min; c.hi = s.max; }
+      c.lo = s.clamp(c.lo);
+      c.hi = s.clamp(c.hi);
+    }
     out.push_back(std::move(s));
   }
   return out;

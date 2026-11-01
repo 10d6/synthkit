@@ -2,6 +2,8 @@
 //   node web/test/browser-test.cjs <synth.html> <out dir> [scenario.json] [--kit-ui]
 // - the page boots with no console errors, at desktop and phone width
 //   (screenshots written to <out dir>)
+// - under a real browser's autoplay rule, the first click starts the sound;
+//   a (fake) MIDI keyboard plays it and mapped controllers move parameters
 // - playing from the computer keyboard (or, on a synth's own page without
 //   the kit's keyboard, the page's note calls) starts voices
 // - a scenario rendered offline through the real AudioWorklet is written
@@ -287,6 +289,19 @@ async function main() {
         if (!clock.playing || Math.abs(clock.bpm - 120) > 1) fail(`MIDI clock follow gave ${JSON.stringify(clock)}`); else pass(`follows MIDI clock (${clock.bpm} BPM)`);
         await page.evaluate(() => { const app = window.synthkit.app; app.clockSource = "internal"; });
 
+        // Tempo in patches (features.tempoInPatch): the BPM is saved with the
+        // sound and marks it edited; a patch with a tempo sets the controls.
+        const tp = await page.evaluate(() => {
+          const app = window.synthkit.app, m = window.synthkit.model;
+          app.bpm.value = "97"; app.bpm.dispatchEvent(new Event("change"));
+          const saved = m.savePatch();
+          const after = { bpm: saved.tempo && saved.tempo.bpm, dirty: m.dirty };
+          m.loadPatch({ ...saved, tempo: { bpm: 133, timeSig: [3, 4] } });
+          return { ...after, loadedBpm: app.transport.bpm, input: app.bpm.value, sig: app.sig.value };
+        });
+        if (tp.bpm !== 97 || !tp.dirty || tp.loadedBpm !== 133 || tp.input !== "133" || tp.sig !== "3/4") fail(`tempo in patches: ${JSON.stringify(tp)}`);
+        else pass("the tempo is saved with the patch, and a patch's tempo sets the controls");
+
         // Messages (API.md §9b): the "Clear echoes" widget sends delay.clear,
         // and the synth's delay.cleared answer shows up in the widget.
         await page.locator(".ctl-custom button", { hasText: "Clear echoes" }).click();
@@ -299,6 +314,76 @@ async function main() {
     }
     if (errors.length) fail(`${name}: console errors: ${errors.join(" | ")}`); else pass(`${name}: boots with no console errors`);
     await page.close();
+  }
+
+  // Playing it the way a person does, in a browser as it really behaves:
+  // sound may only start during a click or key press (headless Chromium
+  // doesn't enforce that, so it's emulated, waiting resume() included), and a
+  // MIDI keyboard arrives through Web MIDI (a fake one). Every synth's page,
+  // the kit's or its own, must start on the first click, offer Connect MIDI,
+  // play MIDI notes and follow its mapped controllers (API.md §3, §9a).
+  {
+    const strict = await chromium.launch();
+    const page = await strict.newPage({ viewport: { width: 1440, height: 900 } });
+    const errors = [];
+    page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await page.addInitScript(() => {
+      const Orig = window.AudioContext, realResume = Orig.prototype.resume;
+      window.AudioContext = class extends Orig {
+        constructor(...a) { super(...a); this.__waiting = []; if (!navigator.userActivation.isActive) this.suspend(); }
+        resume() {
+          if (!navigator.userActivation.isActive) return new Promise((r) => this.__waiting.push(r));
+          return realResume.call(this).then(() => { this.__waiting.splice(0).forEach((r) => r()); });
+        }
+      };
+      const input = { id: "test", name: "Test keyboard", state: "connected", type: "input", onmidimessage: null };
+      window.__midi = (...d) => input.onmidimessage && input.onmidimessage({ data: new Uint8Array(d), timeStamp: performance.now() });
+      navigator.requestMIDIAccess = async () => ({ inputs: new Map([["test", input]]), outputs: new Map(), onstatechange: null });
+      // Something tries to start the sound as the page loads, before any
+      // click (as a page sending a message from mount() would). It runs from
+      // the page's own timer: Playwright's evaluate() counts as a click.
+      const early = setInterval(() => { if (window.synthkit && window.synthkit.app) { clearInterval(early); window.synthkit.app.startAudio(); } }, 20);
+    });
+    // Only plain waits until the click: Playwright's evaluate() and
+    // waitForFunction() count as user gestures, which would let the early
+    // attempt start the sound by itself.
+    await page.goto(url);
+    // The early attempt (above) left the sound suspended; the first click
+    // must still start it. (Wait until that attempt is set up and waiting on
+    // resume(): a browser counts a click as recent for a few seconds.)
+    await page.waitForTimeout(3000);
+    await page.mouse.click(5, 5);
+    try {
+      await page.waitForFunction(() => window.synthkit.app.audio.running, null, { timeout: 5000 });
+      pass("strict autoplay: the first click starts the sound, even after an attempt before it");
+    } catch { fail("strict autoplay: a click didn't start the sound after an early attempt (it stays suspended)"); }
+    // Connect MIDI must be on the page.
+    const midiBtn = page.locator(".midi button", { hasText: "Connect MIDI" }).first();
+    if (!(await midiBtn.count()) || !(await midiBtn.isVisible())) fail("there's no Connect MIDI button on the page");
+    else {
+      await midiBtn.click();
+      await page.waitForTimeout(300);
+      await page.evaluate(() => window.__midi(0x90, 60, 100));
+      await page.waitForTimeout(500);
+      const voices = await page.evaluate(() => window.synthkit.app.voices.textContent);
+      if (!/^[1-9]/.test(voices)) fail(`a MIDI keyboard's note didn't start a voice ("${voices}")`); else pass(`a MIDI keyboard plays (${voices})`);
+      await page.evaluate(() => window.__midi(0x80, 60, 0));
+      // Mapped controllers (ParamDef::cc) move their parameter, and the page follows.
+      const mapped = await page.evaluate(() => window.synthkit.model.params.filter((p) => p.controllers).map((p) => ({ id: p.id, ...p.controllers[0] })));
+      for (const c of mapped.slice(0, 3)) {
+        const before = await page.evaluate((id) => window.synthkit.model.get(id), c.id);
+        const value = Math.abs(before - c.hi) > Math.abs(before - c.lo) ? 127 : 0;
+        const target = value ? c.hi : c.lo;
+        await page.evaluate(([cc, v]) => window.__midi(0xb0, cc, v), [c.cc, value]);
+        try {
+          await page.waitForFunction(([id, t]) => Math.abs(window.synthkit.model.get(id) - t) <= Math.abs(t) * 1e-3 + 1e-6, [c.id, target], { timeout: 3000 });
+          pass(`CC ${c.cc} moves ${c.id}, and the page follows`);
+        } catch { fail(`CC ${c.cc} didn't move ${c.id} (still ${await page.evaluate((id) => window.synthkit.model.get(id), c.id)}, wanted ${target})`); }
+      }
+    }
+    if (errors.length) fail(`strict autoplay: console errors: ${errors.join(" | ")}`);
+    await strict.close();
   }
 
   // Dark theme screenshot.

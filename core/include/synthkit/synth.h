@@ -166,6 +166,9 @@ class EventContext {
   int pending() const;                                  // queued events
   void trigger(int shape);                              // restart shape n (1-based) now
   void setSource(ModSource s, float v);                 // global value of a custom source
+  // Moves a parameter from the audio thread, as a MIDI controller would: it
+  // takes effect at once, and the page and the host follow (API.md §3).
+  void setParam(Param p, double value);
 
   // Messages from the page that arrived since the last block (API.md §9b),
   // and sending one back.

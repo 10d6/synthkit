@@ -98,6 +98,17 @@ bool Division::parse(std::string_view text, Division& out) {
   return true;
 }
 
+const char* tempoSourceName(TempoSource s) {
+  switch (s) {
+    case TempoSource::Daw: return "daw";
+    case TempoSource::Browser: return "browser";
+    case TempoSource::MidiClock: return "midiClock";
+    case TempoSource::Offline: return "offline";
+    case TempoSource::Own: return "own";
+  }
+  return "own";
+}
+
 std::string Division::name() const {
   if (bar) {
     double r = std::round(beats);
@@ -157,6 +168,7 @@ SynthInfo SynthInfo::fromJson(const Json& j) {
   o.modSlots = std::clamp(static_cast<int>(f["modSlots"].number(0)), 0, 64);
   o.shapes = std::clamp(static_cast<int>(f["shapes"].number(0)), 0, 32);
   o.eventQueue = std::clamp(static_cast<int>(f["eventQueue"].number(o.eventQueue)), 16, 8192);
+  o.tempoInPatch = f["tempoInPatch"].boolean(false);
   return s;
 }
 
@@ -239,6 +251,21 @@ struct Core {
   double spb = 24000;  // samples per beat
 
   std::atomic<int> reqAllOff{0}, reqPanic{0};
+
+  // MIDI controllers mapped to parameters (ParamDef::cc): one route each.
+  struct CcRoute { int cc, param; double nlo, nhi; };
+  std::vector<CcRoute> ccRoutes;
+  // Parameters moved on the audio thread, for the adapters (single producer,
+  // single consumer; a full ring drops, and the page still follows through
+  // the store's generation).
+  static constexpr int kChangeRing = 512;
+  std::array<std::atomic<int>, kChangeRing> changeRing{};
+  std::atomic<int> changeHead{0}, changeTail{0};
+
+  // The patch's tempo (features.tempoInPatch).
+  std::atomic<bool> tempoSet{false};
+  std::atomic<double> tempoBpm{120};
+  std::atomic<int> tempoNum{4}, tempoDen{4};
   std::atomic<float> statPeak{0}, statLimDb{0};
   std::atomic<int> statDropped{0}, statSteals{0}, statActive{0}, statMsgDropped{0};
 
@@ -345,6 +372,23 @@ struct Core {
     }
     mod.addKitParams(b, info);
     store = std::make_unique<ParamStore>(b.finish());
+    for (int i = 0; i < store->size(); ++i)
+      for (auto& c : store->spec(i).controllers)
+        ccRoutes.push_back({c.cc, i, store->spec(i).toNorm(c.lo), store->spec(i).toNorm(c.hi)});
+  }
+
+  // A parameter moved on the audio thread (a mapped controller, or the synth's
+  // ctx.setParam): in effect at once, and queued for the host and the page.
+  void moveParam(int i, double v) {
+    if (i < 0 || i >= store->size()) return;
+    const float before = store->get(i);
+    store->set(i, v);
+    if (store->get(i) == before) return;
+    if (prepared && !smoothed[static_cast<std::size_t>(i)]) values[static_cast<std::size_t>(i)] = store->get(i);
+    const int head = changeHead.load(std::memory_order_relaxed), next = (head + 1) % kChangeRing;
+    if (next == changeTail.load(std::memory_order_acquire)) return;
+    changeRing[static_cast<std::size_t>(head)].store(i, std::memory_order_relaxed);
+    changeHead.store(next, std::memory_order_release);
   }
 
   // ------------------------------------------------------------ prepare
@@ -434,6 +478,15 @@ struct Core {
       transport.bpm = host.bpm > 1 ? host.bpm : 120;
       transport.timeSigNum = std::max(1, host.timeSigNum);
       transport.timeSigDen = std::max(1, host.timeSigDen);
+      transport.source = host.source;
+    } else {
+      // No tempo from anywhere: the kit's own clock, at the patch's tempo if it has one.
+      transport.source = TempoSource::Own;
+      if (info.features.tempoInPatch && tempoSet.load(std::memory_order_relaxed)) {
+        transport.bpm = tempoBpm.load(std::memory_order_relaxed);
+        transport.timeSigNum = tempoNum.load(std::memory_order_relaxed);
+        transport.timeSigDen = tempoDen.load(std::memory_order_relaxed);
+      }
     }
     transport.playing = host.valid && host.playing;
     spb = sr * 60.0 / transport.bpm;
@@ -457,6 +510,18 @@ struct Core {
 
   void block(float* const* outs, int nOut, int offset, int n, const MidiEvent* ev, int nEv, const HostTransport& host) {
     frames = n;
+    // The kit's All notes off and panic reach the synth's processEvents too,
+    // as CC 123 and CC 120 at the block start, so a synth keeping its own
+    // note state (couplers, a held phrase) can let go as well.
+    int injected = 0;
+    MidiEvent inject[2];
+    auto channelMode = [&](int number) {
+      MidiEvent e = CC{number, 0.f, 0};
+      e.sample = 0;
+      inject[injected++] = e;
+    };
+    if (reqPanic.load(std::memory_order_relaxed)) channelMode(120);
+    if (reqAllOff.load(std::memory_order_relaxed)) channelMode(123);
     if (reqPanic.exchange(0)) {
       for (auto& s : slots) resetSlot(s);
       heldCount = 0;
@@ -474,12 +539,21 @@ struct Core {
     updateTransport(offset, n, host, jumped);
 
     inCount = 0;
+    for (int i = 0; i < injected; ++i) {
+      inject[i].beat = blockStart;
+      inEv[static_cast<std::size_t>(inCount++)] = inject[i];
+    }
     for (int i = 0; i < nEv; ++i) {
       if (inCount >= static_cast<int>(inEv.size())) { statDropped.fetch_add(1); break; }
       MidiEvent e = ev[i];
       e.sample = std::clamp(e.sample < 0 ? 0 : e.sample - offset, 0, n - 1);
       e.beat = blockStart + e.sample / spb;
       inEv[static_cast<std::size_t>(inCount++)] = e;
+      // Controllers mapped to parameters (ParamDef::cc) move them; the synth
+      // still sees the CC.
+      if (e.type == MidiEvent::Type::CC)
+        for (auto& r : ccRoutes)
+          if (r.cc == e.cc) moveParam(r.param, store->spec(r.param).fromNorm(r.nlo + (r.nhi - r.nlo) * e.value));
     }
 
     outCount = 0;
@@ -1032,6 +1106,7 @@ dsp::Rng EventContext::rng(const MidiEvent& e, bool perKey) {
 const Transport& EventContext::transport() const { return core_->transport; }
 float EventContext::get(Param p) const { return core_->gvals[p.index]; }
 void EventContext::setSource(ModSource s, float v) { core_->mod.setGlobalSource(s.index, v); }
+void EventContext::setParam(Param p, double value) { core_->moveParam(p.index, value); }
 void EventContext::trigger(int shape) {
   auto& held = core_->heldScratch;
   held.clear();
@@ -1152,6 +1227,29 @@ bool Engine::sendMessage(int index, const float* values, int count) {
 }
 bool Engine::takeMessage(Message& out) { return core_->msgToPage.pop(out); }
 
+bool Engine::takeParamChange(int& index) {
+  auto& c = *core_;
+  const int tail = c.changeTail.load(std::memory_order_relaxed);
+  if (tail == c.changeHead.load(std::memory_order_acquire)) return false;
+  index = c.changeRing[static_cast<std::size_t>(tail)].load(std::memory_order_relaxed);
+  c.changeTail.store((tail + 1) % detail::Core::kChangeRing, std::memory_order_release);
+  return true;
+}
+
+bool Engine::patchTempo(double& bpm, int& num, int& den) const {
+  if (!core_->tempoSet.load()) return false;
+  bpm = core_->tempoBpm.load();
+  num = core_->tempoNum.load();
+  den = core_->tempoDen.load();
+  return true;
+}
+void Engine::setPatchTempo(double bpm, int num, int den) {
+  core_->tempoBpm.store(std::clamp(bpm, 20.0, 400.0));
+  core_->tempoNum.store(std::clamp(num, 1, 32));
+  core_->tempoDen.store(den == 2 || den == 4 || den == 8 || den == 16 ? den : 4);
+  core_->tempoSet.store(true);
+}
+
 Json Engine::savePatch() const {
   Json p = Json::object();
   p["synthkit"] = 1;
@@ -1171,6 +1269,12 @@ Json Engine::savePatch() const {
   }
   if (core_->mod.modSlots() > 0) p["mod"] = core_->mod.saveMatrix();
   if (core_->mod.shapeCount() > 0) p["shapes"] = core_->mod.saveShapes();
+  if (core_->info.features.tempoInPatch && core_->tempoSet.load()) {
+    Json t = Json::object();
+    t["bpm"] = core_->tempoBpm.load();
+    t["timeSig"] = std::array<int, 2>{core_->tempoNum.load(), core_->tempoDen.load()};
+    p["tempo"] = t;
+  }
   for (auto& m : core_->extra.members()) p[m.first] = m.second;
   return p;
 }
@@ -1217,6 +1321,15 @@ LoadResult Engine::loadPatch(const Json& in) {
   else if (j.contains("mod")) core_->extra["mod"] = j["mod"];
   if (core_->mod.shapeCount() > 0) core_->mod.loadShapes(j["shapes"], &r.warnings);
   else if (j.contains("shapes")) core_->extra["shapes"] = j["shapes"];
+  // The patch's tempo (features.tempoInPatch); a patch without one leaves the
+  // tempo as it was. Carried through unchanged by synths without the feature.
+  if (core_->info.features.tempoInPatch) {
+    const Json& t = j["tempo"];
+    if (t["bpm"].isNumber()) setPatchTempo(t["bpm"].number(), static_cast<int>(t["timeSig"][0].number(4)), static_cast<int>(t["timeSig"][1].number(4)));
+    else core_->tempoSet.store(false);
+  } else if (j.contains("tempo")) {
+    core_->extra["tempo"] = j["tempo"];
+  }
   return r;
 }
 

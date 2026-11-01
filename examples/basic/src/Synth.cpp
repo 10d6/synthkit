@@ -50,7 +50,8 @@ struct Basic : Synth {
     drift = b.add("drift").name("Drift").range(0, 1).def(0.2).group("Oscillators");
 
     filterType = b.add("filter.type").name("Filter Type").choices({"Ladder", "SVF Low", "SVF High", "SVF Band"}).group("Filter");
-    cutoff = b.add("filter.cutoff").name("Cutoff").range(20, 20000).log().def(2400).unit("Hz").modulatable().group("Filter");
+    cutoff = b.add("filter.cutoff").name("Cutoff").range(20, 20000).log().def(2400).unit("Hz").modulatable().group("Filter")
+                 .cc(74);   // a keyboard's brightness knob (API.md §3)
     reso = b.add("filter.reso").name("Resonance").range(0, 1).def(0.25).modulatable().group("Filter");
     drive = b.add("filter.drive").name("Drive").range(0, 24).def(0).unit("dB").modulatable().group("Filter");
     keytrack = b.add("filter.keytrack").name("Key Track").range(0, 1).def(0.5).group("Filter");

@@ -33,7 +33,9 @@ class App {
     // Messages to and from the synth (API.md §9b).
     this.messageIds = m.info.messages || [];
     this.messageSubs = new Map();
-    this.midiTaps = new Set();
+    this.midiTaps = new Set();        // a page taking MIDI messages (sk.takeMidi)
+    this.midiListeners = new Set();   // a page listening to MIDI (sk.onMidi)
+    this.spacePlays = true;           // Space starts the tempo clock (a page can turn it off)
 
     this.presets = new PresetBar(this);
     this.midi = new MidiInput(this);
@@ -68,6 +70,13 @@ class App {
     rootEl.removeAttribute("aria-busy");
     this.keyboard.layout();
 
+    // Tempo saved in patches (features.tempoInPatch): a patch that has one
+    // sets the browser's tempo controls.
+    this.tempoInPatch = !!m.info.synth.tempoInPatch;
+    m.onPatch(() => this.applyPatchTempo());
+    // Parameters the engine moved (mapped MIDI controllers, ctx.setParam).
+    this.audio.onParams = (changes) => { for (const [i, v] of changes) this.model.applyHost(i, v); };
+
     this.presets.restoreSession();
     if (this.host) {
       // The plugin makes the sound: changes go straight to it.
@@ -85,6 +94,7 @@ class App {
       this.pageProblems = problems;
       try { ownPage(this.pageApi(), pageRoot); }
       catch (err) { console.error(err); problems.push({ msg: `ui/page.js failed: ${err.message}`, kind: "error" }); }
+      this.buildHostBar(pageRoot);
     }
 
     this.refreshLearned();
@@ -95,10 +105,11 @@ class App {
     this.pageProblems = null;
     for (const p of problems.concat(this.pending || [])) this.toast(p.msg || p, p.kind || "warn");
 
-    // Browsers only allow audio after the first click or key press.
-    const kick = () => { this.startAudio(); };
-    document.addEventListener("pointerdown", kick, { once: true, capture: true });
-    document.addEventListener("keydown", kick, { once: true, capture: true });
+    // Browsers only allow audio during a click or key press: every one starts
+    // (or resumes) it until it's running.
+    const kick = () => { if (!this.audio.running) this.startAudio(); };
+    document.addEventListener("pointerdown", kick, { capture: true });
+    document.addEventListener("keydown", kick, { capture: true });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") { this.midi.cancelLearn(); this.closeMenu(); } });
 
     if (this.clockSource === "midi" && !this.host) this.setClockSource("midi");
@@ -160,9 +171,12 @@ class App {
       }
     }
   }
-  // MIDI from Web MIDI, before the synth sees it: a tap returning true keeps it.
+  // MIDI from Web MIDI, before the synth sees it. Listeners (sk.onMidi) see
+  // every message; a taker (sk.takeMidi) returning true takes it, and the
+  // synth doesn't get it.
   tapMidi(d) {
-    for (const fn of this.midiTaps) { try { if (fn(d)) return true; } catch (err) { console.error(err); } }
+    for (const fn of this.midiListeners) { try { fn(d); } catch (err) { console.error(err); } }
+    for (const fn of this.midiTaps) { try { if (fn(d) === true) return true; } catch (err) { console.error(err); } }
     return false;
   }
 
@@ -175,11 +189,11 @@ class App {
     this.bpm = h("input", { class: "bpm-input", type: "number", min: 30, max: 300, step: 1, value: t.bpm, "aria-label": "Tempo in BPM" });
     this.bpm.addEventListener("change", () => {
       const v = Math.min(300, Math.max(30, Number(this.bpm.value) || 120));
-      this.bpm.value = v; t.bpm = v; this.sendTransport();
+      this.bpm.value = v; t.bpm = v; this.sendTransport(); this.recordTempo();
     });
     this.bpm.addEventListener("keydown", (e) => e.stopPropagation());
     this.sig = h("select", { class: "sig-select", "aria-label": "Time signature", onchange: () => {
-      const [n, d] = this.sig.value.split("/").map(Number); t.num = n; t.den = d; this.buildBeats(); this.sendTransport();
+      const [n, d] = this.sig.value.split("/").map(Number); t.num = n; t.den = d; this.buildBeats(); this.sendTransport(); this.recordTempo();
       for (const fn of this.transportSubs) fn(t);
     } }, ...["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "12/8"].map((s) => h("option", { value: s, text: s })));
     this.clockSel = h("select", { class: "sig-select", "aria-label": "Tempo source", onchange: () => this.setClockSource(this.clockSel.value) },
@@ -188,7 +202,7 @@ class App {
     this.sig.value = `${t.num}/${t.den}`;
     this.play = h("button", { type: "button", class: "btn play-btn", "aria-pressed": "false", title: "Start the tempo clock (space)", onclick: () => this.togglePlay() }, "Play");
     document.addEventListener("keydown", (e) => {
-      if (this.host || !this.tempoShown) return;   // the DAW's transport, or no tempo on the page
+      if (this.host || !this.tempoShown || !this.spacePlays) return;   // the DAW's transport, no tempo on the page, or the page uses Space
       if (e.code === "Space" && !/INPUT|SELECT|TEXTAREA|BUTTON/.test(e.target.tagName)) { e.preventDefault(); this.togglePlay(); }
     });
     this.beats = h("div", { class: "beats", "aria-hidden": "true" });
@@ -247,7 +261,45 @@ class App {
   sendTransport() {
     const t = this.transport;
     skStore.set("synthkit:transport", { bpm: t.bpm, num: t.num, den: t.den });
-    this.audio.send({ t: "transport", bpm: t.bpm, playing: t.playing, num: t.num, den: t.den });
+    this.audio.send({ t: "transport", bpm: t.bpm, playing: t.playing, num: t.num, den: t.den, source: this.clockSource === "midi" ? "midi" : "internal" });
+  }
+
+  // Tempo in patches (features.tempoInPatch): the tempo controls write the
+  // patch's tempo, and loading a patch with one sets them.
+  recordTempo() {
+    if (!this.tempoInPatch || this.host) return;
+    const t = this.transport;
+    this.model.setPatchTempo(t.bpm, t.num, t.den);
+  }
+  applyPatchTempo() {
+    if (!this.tempoInPatch || this.host || this.clockSource === "midi") return;
+    const pt = this.model.patchTempo();
+    if (!pt) return;
+    const t = this.transport;
+    if (t.bpm === pt.bpm && t.num === pt.num && t.den === pt.den) return;
+    t.bpm = pt.bpm; t.num = pt.num; t.den = pt.den;
+    if (this.bpm) { this.bpm.value = pt.bpm; this.sig.value = `${pt.num}/${pt.den}`; this.buildBeats(); }
+    if (this.audio.node) this.sendTransport();
+    for (const fn of this.transportSubs) fn(t);
+  }
+
+  // The host bar: on a synth's own page, the parts a DAW would provide (start
+  // the sound, MIDI input, tempo, stop all sound) that the page didn't place
+  // itself. At the top of the page, or where the page mounted "hostbar";
+  // sk.hostBar(false) or { midi / tempo / panic: false } leave parts out.
+  buildHostBar(pageRoot) {
+    const o = this.hostBarOpts || {};
+    if (o === false || this.hostBarOpts === false) return;
+    const parts = [];
+    if (!this.host) parts.push(this.banner);
+    if (!this.host && o.midi !== false && !this.midi.root.parentNode) parts.push(this.midi.root);
+    if (o.tempo !== false && !this.noTempo && !this.tempoShown) parts.push(this.tempoEl());
+    if (o.panic !== false && !this.panicBtn.parentNode) parts.push(this.panicBtn);
+    if (o.space === false) this.spacePlays = false;
+    this.banner.classList.add("in-hostbar");
+    const bar = h("div", { class: "sk-hostbar" }, ...parts);
+    if (this.hostBarEl) this.hostBarEl.append(bar);
+    else pageRoot.prepend(bar);
   }
 
   cycleTheme() {
@@ -450,7 +502,11 @@ class App {
       noteOn: (n, v = 100) => app.noteOn(n, v),
       noteOff: (n) => app.noteOff(n),
       midi: (bytes) => app.sendMidi(bytes),
-      onMidi: (fn) => { app.midiTaps.add(fn); return () => app.midiTaps.delete(fn); },
+      onMidi: (fn) => { app.midiListeners.add(fn); return () => app.midiListeners.delete(fn); },
+      takeMidi: (fn) => { app.midiTaps.add(fn); return () => app.midiTaps.delete(fn); },
+      hostBar: (opts) => { app.hostBarOpts = opts === false ? false : { ...(app.hostBarOpts || {}), ...(opts || {}) }; },
+      transport: () => ({ ...app.transport, source: app.host ? "daw" : app.clockSource === "midi" ? "midiClock" : "browser" }),
+      onTransport: (fn) => app.onTransport(fn),
       connectMidi: () => app.midi.connect(),
       allNotesOff: () => app.audio.send({ t: "allOff" }),
       panic: () => app.panic(),
@@ -470,6 +526,18 @@ class App {
         init: () => pr.init(),
         exportFile: () => pr.exportFile(),
         importFile: () => pr.startImport(),
+        // A patch the page made (from an older format, say): loaded, then
+        // saved as one of your presets under its own name (made unique).
+        importPatch: (patch) => {
+          const res = m.loadPatch({ ...patch, synth: m.info.synth.id });
+          if (!res.ok) return { ok: false, error: res.error };
+          const base = String(patch.name || "Imported").trim() || "Imported";
+          const taken = new Set(pr.entries().map((e) => e.name));
+          let name = base;
+          for (let k = 2; taken.has(name); k++) name = `${base} (${k})`;
+          pr.store(name);
+          return { ok: true, name, warnings: res.warnings || [] };
+        },
         onChange: (fn) => { pr.listeners.add(fn); return () => pr.listeners.delete(fn); },
       },
 
@@ -498,13 +566,19 @@ class App {
           // The keyboard's bar takes the tempo and MIDI controls unless the
           // page placed them elsewhere (or asked for no tempo).
           const bar = [];
+          if (opts.tempo === false) this.noTempo = true;   // an instrument without a clock
           if (opts.tempo !== false && !this.tempoShown) bar.push(this.tempoEl());
           if (!this.host && opts.midi !== false && !this.midi.root.parentNode) bar.push(this.midi.root);
           if (bar.length) this.keyboard.addToBar(...bar);
         }
         break;
       case "midi": part = this.host ? null : this.midi.root; break;   // the DAW routes MIDI in the plugin
-      case "tempo": part = this.tempoEl(); break;
+      case "tempo": part = this.tempoEl(); if (opts.space === false) this.spacePlays = false; break;
+      case "hostbar":
+        // Filled in once mount() returns, with whatever the page didn't place.
+        if (opts) this.hostBarOpts = { ...(this.hostBarOpts || {}), ...opts };
+        this.hostBarEl = el;
+        return el;
       case "output": part = this.outputEl; break;
       case "panic": part = this.panicBtn; break;
       case "theme": part = this.themeBtn; break;

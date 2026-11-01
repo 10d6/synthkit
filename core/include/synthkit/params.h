@@ -30,6 +30,10 @@ struct ParamSpec {
   bool hidden = false;
   bool kit = false;          // added by synthkit, not the synth
   double smoothingMs = -1;   // -1 = default (10 ms float, 0 otherwise)
+  // MIDI controllers that move this parameter (API.md §3): CC value 0…127
+  // maps across lo…hi (real units; by knob travel, so a log range stays even).
+  struct Controller { int cc = 0; double lo = 0, hi = 1; };
+  std::vector<Controller> controllers;
 
   double clamp(double v) const;           // clamp + quantise to step
   double toNorm(double v) const;          // real units -> 0..1 knob travel
@@ -73,6 +77,11 @@ class ParamDef {
   ParamDef& smoothing(double ms);
   ParamDef& group(std::string g);
   ParamDef& hidden(bool h = true);
+  // A MIDI controller moves this parameter, in the browser and in a DAW
+  // alike; the page and the host follow (API.md §3). cc(n) uses the whole
+  // range; cc(n, lo, hi) a part of it. Call again for more controllers.
+  ParamDef& cc(int number);
+  ParamDef& cc(int number, double lo, double hi);
 
   operator Param() const { return Param{first_}; }
   operator ParamArray() const { return ParamArray{first_, count_}; }
