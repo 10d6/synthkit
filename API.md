@@ -1,18 +1,17 @@
 # synthkit API
 
-> **Status: v0.7.** Every section marked **✓** is implemented and used by
-> [examples/basic](examples/basic), [examples/reed](examples/reed) (a synth
-> with its own page) or [10d6/aleatory](https://github.com/10d6/aleatory).
-
 This page is everything you need to build a synth on synthkit. A synth should
 not need to read synthkit's source; if it does, this page is missing something.
+[examples/basic](examples/basic) uses most of it, and
+[examples/reed](examples/reed) is a synth with its own page, messages and
+Web Audio blocks.
 
 Include `<synthkit/synth.h>`; everything is in namespace `sk` (DSP blocks in
 `sk::dsp`, and Web Audio's nodes in `sk::wa`, §8a).
 
 ---
 
-## 1. What a synth repo contains ✓
+## 1. What a synth repo contains
 
 Start one with the scaffold, in an empty folder or a freshly cloned empty repo:
 
@@ -78,15 +77,15 @@ move with the submodule.
 synthkit checkout <commit>`, commit the new submodule pointer, and let CI
 check the synth against it.
 
-## 2. `synth.json`: identity ✓
+## 2. `synth.json`: identity
 
 ```json
 {
-  "id": "aleatory",
-  "name": "Aleatory",
+  "id": "glass-rain",
+  "name": "Glass Rain",
   "vendor": "10d6",
   "version": "0.1.0",
-  "pluginCode": "Alea",
+  "pluginCode": "Glra",
   "vendorCode": "Tend",
   "patchVersion": 1,
   "features": {
@@ -108,7 +107,7 @@ check the synth against it.
   `id` uses letters, digits, `-` and `_`.
 - `pluginCode` / `vendorCode`: exactly 4 ASCII characters. `vendorCode` needs
   at least one uppercase letter. `pluginCode` should be one uppercase letter
-  followed by three lowercase (`Alea`), which GarageBand requires.
+  followed by three lowercase (`Glra`), which GarageBand requires.
 - `patchVersion`: bump when a change needs migration (§5).
 - `name`, `vendor` and `version` are what DAWs show. `version` should go up
   with each release you install.
@@ -128,7 +127,7 @@ check the synth against it.
 | `modSlots` | 0 | matrix routes; also adds `sk.pitch`, `sk.level` (§6) |
 | `shapes` | 0 | drawn, tempo-locked curves (§6a) |
 
-## 3. Parameters ✓
+## 3. Parameters
 
 Declared once, in code. The UI, patches, host automation, MIDI learn and the
 mod matrix are all generated from this list.
@@ -204,15 +203,29 @@ element.
 **Kit-provided parameters**, added after the synth's own, according to
 `features`:
 
-| ID | When | Range |
-|---|---|---|
-| `master` | always | −60…+6 dB, default 0 |
-| `voiceMode` | more than one voice mode | the listed modes |
-| `glide` | a mono or legato mode exists | 0…5 s |
-| `bendRange` | always | 0…24 st, default 2 |
-| `unison`, `unisonDetune`, `unisonSpread` | `unison: true` | 1…8; 0…100 ct; 0…1 |
-| `sk.a4` | always | 400…480 Hz, default 440 |
-| `envN.attack/decay/sustain/release/velocity` | per standard envelope | velocity = how much velocity scales the envelope |
+| ID | When | Range | Default |
+|---|---|---|---|
+| `master` | always | −60…+6 dB | 0 |
+| `voiceMode` | more than one voice mode | choices: the `voiceModes` in the order listed (`["poly", "mono", "legato"]` → 0 Poly, 1 Mono, 2 Legato) | 0 |
+| `glide` | a mono or legato mode exists | 0…5 s | 0 |
+| `bendRange` | always | 0…24 st, integer | 2 |
+| `unison` | `unison: true` | 1…8, integer | 1 |
+| `unisonDetune` | `unison: true` | 0…100 ct | 12 |
+| `unisonSpread` | `unison: true` | 0…1 | 0.5 |
+| `sk.a4` | always | 400…480 Hz | 440 |
+| `envN.attack` | per standard envelope | 0.0005…10 s | 0.005 (amp env), 0.01 |
+| `envN.decay` | | 0.001…20 s | 0.3 (amp env), 0.5 |
+| `envN.sustain` | | 0…1 | 0.8 (amp env), 0.3 |
+| `envN.release` | | 0.002…20 s | 0.25 (amp env), 0.4 |
+| `envN.velocity` | | 0…1: how much velocity scales the envelope | 0.5 (amp env), 0 |
+
+"Amp env" is `env1` when `ampEnv` is on; other envelopes get the second
+default.
+
+The modulation parameters (`sk.pitch`, `sk.level`, `sk.ageSpan`, `lfoN.*`,
+`shapeN.*`) are listed in §6 and §6a. Choice parameters are stored as 0-based
+indices (in patches, `ctx.choice`, scenarios' `params`), so the choice lists
+in this page are given in index order.
 
 Those IDs, and any ID starting with `sk.`, `env<n>.`, `lfo<n>.` or
 `shape<n>.`, are reserved. Otherwise `.` is fine for grouping (`osc2.level`).
@@ -241,7 +254,7 @@ matrix should reach it, make it a parameter. If it's bulk data (a 128-key
 table, a step sequence, a sample map) or structure rather than a value, use
 custom state (§5a).
 
-## 4. Engine: voices and global processing ✓
+## 4. Engine: voices and global processing
 
 ```cpp
 struct MySynth;
@@ -385,7 +398,7 @@ needs something unusual:
 If an escape hatch is used in a second synth for the same reason, that's the
 signal to turn it into a kit feature.
 
-## 4a. Event processing in musical time ✓
+## 4a. Event processing in musical time
 
 An optional stage that sits between incoming MIDI and the voices. It sees
 every event with its position in beats, and can pass it on, change it, drop it,
@@ -461,7 +474,7 @@ The setup calls of the Web Audio blocks allocate, so they belong in
 `wa::WaveShaper::setCurve`, `wa::Delay::prepare` and `wa::Param::reserve`
 (§8a). Messages (`ctx.messages()`, `ctx.post`) never allocate.
 
-## 5. Patches ✓
+## 5. Patches
 
 A patch is JSON, stored in **real units** so changing a range doesn't corrupt
 old patches.
@@ -469,7 +482,7 @@ old patches.
 ```json
 {
   "synthkit": 1,
-  "synth": "aleatory",
+  "synth": "glass-rain",
   "patchVersion": 1,
   "name": "Glass Rain",
   "author": "",
@@ -508,7 +521,7 @@ old patches.
 - `"mod"` holds the matrix routes (§6) and `"shapes"` the shape curves (§6a).
   A synth without those features keeps them unchanged through load and save.
 
-## 5a. Custom state ✓
+## 5a. Custom state
 
 For synth-specific settings that aren't parameters. Stored in the patch under
 `"custom": { "<id>": … }` and saved with the DAW project like everything else.
@@ -534,17 +547,28 @@ double tune(int note, const NoteContext&) override {
   `modify([](KeyTable& k) { … })` are for other threads (UI, patch load). They
   build a new copy and swap it in whole, so the audio thread never sees half a
   table.
-- `sk::Json` is a small JSON value: `Json::tryParse(text, out, &error)`, `j["key"]`, `j[i]`, `number()`,
-  `string()`, `boolean()`, `items()`, `members()`, `to(array)`, and assignment
-  from numbers, strings, `std::array` and `std::vector`. Missing keys read as
-  null, never throw.
+- `sk::Json` is a small JSON value:
+  - reading: `j["key"]`, `j[i]`, `number(fallback = 0)`, `string()` /
+    `string(fallback)`, `boolean(fallback = false)`, `items()` (an array's
+    elements), `members()` (an object's key/value pairs), `size()`,
+    `contains(key)`, `isNull()`, `isNumber()`, `isString()`, `isBool()`,
+    `isArray()`, `isObject()`, and `to(array)` / `to(vector)` for a list of
+    numbers. Through a `const Json&` (as in `load`), missing keys and wrong
+    types read as null or the fallback, never fail.
+  - writing: assign numbers, bools, strings, `std::array` and `std::vector`;
+    `Json::object()`, `Json::array()`, `push(value)`, `erase(key)`. On a
+    non-const value, `j["key"]` and `j[i]` create what's missing and turn a
+    null into an object or array; used on a value of another type they (and
+    `push`) are an error (`sk::fail`).
+  - text: `Json::tryParse(text, out, &error)` for input that may be malformed,
+    and `dump(indent = 2)`.
 - Custom state isn't automatable or modulatable. If one element needs that,
   promote it to a parameter (`ParamArray` covers per-pitch-class cases).
 - The UI edits it through custom widgets (§9): `ctx.custom("keys")`,
   `ctx.setCustom("keys", value)`, `ctx.onCustom("keys", fn)`.
 - `migratePatch` (above) can rewrite `"custom"` too.
 
-## 6. Modulation ✓
+## 6. Modulation
 
 Turned on by `features`: `modSlots` (matrix routes), `standardLfos` and
 `shapes` (§6a). A synth makes a parameter a destination with
@@ -579,14 +603,15 @@ add, and the result is clamped to the parameter's range.
 
 **Kit destinations,** added with `modSlots`:
 
-| ID | |
-|---|---|
-| `sk.pitch` | pitch offset, ±12 semitones (vibrato, pitch envelopes). Every voice's `pitch()`/`pitchHz()` includes it. |
-| `sk.level` | voice level 0…1, applied by the kit after the amp envelope (tremolo, gates, pedal pumps) |
-| `lfoN.rate`, `lfoN.phase`, `lfoN.depth` | LFOs modulating LFOs |
-| `shapeN.rate`, `shapeN.offset`, `shapeN.depth` | |
+| ID | Range | Default | |
+|---|---|---|---|
+| `sk.pitch` | −12…+12 st | 0 | pitch offset (vibrato, pitch envelopes). Every voice's `pitch()`/`pitchHz()` includes it. |
+| `sk.level` | 0…1 | 1 | voice level, applied by the kit after the amp envelope (tremolo, gates, pedal pumps) |
+| `lfoN.rate`, `lfoN.phase`, `lfoN.depth` | | | LFOs modulating LFOs (below) |
+| `shapeN.rate`, `shapeN.offset`, `shapeN.depth` | | | §6a |
 
-`sk.ageSpan` (1–32 beats) sets the span of `note.age`.
+`sk.ageSpan` (1–32 beats, integer, default 4; not modulatable), also added
+with `modSlots`, sets the span of `note.age`.
 
 **Where modulation applies.** Voices see their own modulated values through
 `ctx.get()`. `processGlobal`, `processEvents` (`ctx.get`) and the master level
@@ -619,20 +644,23 @@ matrix.
 
 **Standard LFOs** (`standardLfos: 2` adds `lfo1`, `lfo2`):
 
-| Param | |
-|---|---|
-| `lfoN.shape` | Sine, Triangle, Saw Up, Saw Down, Square, S&H, Drift (smooth random) |
-| `lfoN.rate` | 0.01–40 Hz, when not synced |
-| `lfoN.sync`, `lfoN.division` | lock to the beat: 8 bars … 1/32, with dotted and triplet values. A synced global LFO's phase comes from the song position, so it lines up with the bar whenever notes start. |
-| `lfoN.mode` | Global (one LFO shared by all voices) or Per Voice (restarts with each note) |
-| `lfoN.phase` | phase offset / start phase |
-| `lfoN.depth` | output scale |
-| `lfoN.fade` | per-voice fade-in after each note (classic delayed vibrato) |
+| Param | Values (choices in index order) | Default | |
+|---|---|---|---|
+| `lfoN.shape` | 0 Sine, 1 Triangle, 2 Saw Up, 3 Saw Down, 4 Square, 5 S&H, 6 Drift (smooth random) | Sine | |
+| `lfoN.rate` | 0.01–40 Hz, modulatable | 2 Hz | used when `sync` is off |
+| `lfoN.sync` | toggle | off | lock to the beat, at `division` |
+| `lfoN.division` | 0 8 bars, 1 4 bars, 2 2 bars, 3 1 bar, 4 1/2, 5 1/4., 6 1/4, 7 1/4T, 8 1/8., 9 1/8, 10 1/8T, 11 1/16, 12 1/16T, 13 1/32 | 6 (1/4) | one LFO cycle. A synced global LFO's phase comes from the song position, so it lines up with the bar whenever notes start. |
+| `lfoN.mode` | 0 Global (one LFO shared by all voices), 1 Per Voice (restarts with each note) | Global | |
+| `lfoN.phase` | 0…1, modulatable | 0 | phase offset / start phase |
+| `lfoN.depth` | 0…1, modulatable | 1 | output scale |
+| `lfoN.fade` | 0…10 s | 0 | per-voice fade-in after each note (classic delayed vibrato) |
+
+Bar lengths follow the time signature; `.` is dotted and `T` triplet.
 
 The patch stores routes as `"mod": [{ "src", "dst", "amt", "via"? }]`.
 Unknown sources and non-modulatable destinations are dropped with a warning.
 
-## 6a. Shapes: drawn, tempo-locked modulation ✓
+## 6a. Shapes: drawn, tempo-locked modulation
 
 A shape is a curve you draw (points with adjustable curvature, or steps),
 like an automation lane, that a note or the bar line plays back. It's a mod
@@ -645,19 +673,21 @@ for existing patches and projects; lowering it isn't (patches using the
 removed shapes lose them). Each shape has these parameters, so they're
 automatable, and rate, offset and depth are modulatable too:
 
-| Param | Options |
-|---|---|
-| `shapeN.length` | 16 bars … 1/16 (with dotted and triplet values), when `sync` is on |
-| `shapeN.sync`, `shapeN.time` | off: the length is `time` seconds (0.01–30) instead |
-| `shapeN.trigger` | **Note** (per voice), **First Note** (global, restarts when a note starts with no other key held), **Bar**, **Beat** (restarts every bar or beat), **Free** (runs continuously, locked to song position), **Manual** (only `ctx.trigger`) |
-| `shapeN.start` | Immediately, or wait for the next 1/16, 1/8, 1/4 or bar (for Note, First Note and Manual) |
-| `shapeN.loop` | **Once** (holds the end), **Loop**, **While Held** (loops while the key is down, then finishes the cycle), **Ping-Pong**, **Release** (plays to the curve's release point and holds there, then plays the tail on key up) |
-| `shapeN.rate` | playback speed, 0.25–4× |
-| `shapeN.offset` | phase offset 0…1 |
-| `shapeN.depth` | output scale |
-| `shapeN.smooth` | slew, for softening steps |
-| `shapeN.keyLow/keyHigh`, `shapeN.velLow/velHigh` | which notes may trigger it (Note and First Note) |
-| `shapeN.curve` | which of up to 8 stored curves plays (so curve changes can be automated) |
+| Param | Values (choices in index order) | Default |
+|---|---|---|
+| `shapeN.length` | 0 16 bars, 1 8 bars, 2 4 bars, 3 2 bars, 4 1 bar, 5 1/2, 6 1/4., 7 1/4, 8 1/4T, 9 1/8, 10 1/8T, 11 1/16; used when `sync` is on | 4 (1 bar) |
+| `shapeN.sync` | toggle; off: the length is `time` instead | on |
+| `shapeN.time` | 0.01–30 s | 1 s |
+| `shapeN.trigger` | 0 **Note** (per voice), 1 **First Note** (global, restarts when a note starts with no other key held), 2 **Bar**, 3 **Beat** (restarts every bar or beat), 4 **Free** (runs continuously, locked to song position), 5 **Manual** (only `ctx.trigger`) | Note |
+| `shapeN.start` | 0 Immediately, 1 Next 1/16, 2 Next 1/8, 3 Next 1/4, 4 Next Bar (waits before starting; for Note, First Note and Manual) | Immediately |
+| `shapeN.loop` | 0 **Once** (holds the end), 1 **Loop**, 2 **While Held** (loops while the key is down, then finishes the cycle), 3 **Ping-Pong**, 4 **Release** (plays to the curve's release point and holds there, then plays the tail on key up) | Once |
+| `shapeN.rate` | playback speed, 0.25–4×, modulatable | 1 |
+| `shapeN.offset` | phase offset 0…1, modulatable | 0 |
+| `shapeN.depth` | output scale 0…1, modulatable | 1 |
+| `shapeN.smooth` | slew 0…1, for softening steps | 0 |
+| `shapeN.keyLow`, `shapeN.keyHigh` | 0–127: which keys may trigger it (Note and First Note) | 0, 127 |
+| `shapeN.velLow`, `shapeN.velHigh` | 1–127: which velocities may trigger it | 1, 127 |
+| `shapeN.curve` | 1–8: which stored curve plays (so curve changes can be automated) | 1 |
 
 - The curves are stored in the patch under `"shapes"`, one entry per shape:
   ```json
@@ -695,7 +725,7 @@ automatable, and rate, offset and depth are modulatable too:
   (1-based) now, for its global instance and every held voice. This is the way
   to decide in code which notes fire it.
 
-## 7. Tempo ✓
+## 7. Tempo
 
 `ctx.transport()` → `Transport { bpm, playing, beat, barStart, timeSigNum,
 timeSigDen, source }`, plus `beatsPerBar()`, `secondsPerBeat()` and
@@ -723,9 +753,12 @@ with it, and used only when the host gives none (`Own`).
 Synced values use `sk::Division`: `Division::Whole`, `Half`, `Quarter`,
 `Eighth`, `Sixteenth`, `ThirtySecond` and `Bar`, with `.triplet()` and
 `.dotted()`. `d.length(transport)` gives beats. `Division::parse("1/8T", d)`
-and `d.name()` convert to and from text.
+and `d.name()` convert to and from text: `"1/4"`, `"1/8T"` (triplet),
+`"1/4."` (dotted), `"1 bar"` / `"2 bars"` (case and spaces ignored);
+`parse` returns false for anything else. These are the same names the
+`lfoN.division` and `shapeN.length` choices use.
 
-## 8. DSP building blocks ✓
+## 8. DSP building blocks
 
 All in `sk::dsp` (`#include <synthkit/synth.h>` brings them in), header-only,
 allocation-free after `prepare`. Every block has `prepare(sampleRate)` (call it
@@ -753,7 +786,7 @@ a seed for `Rng`), `flushDenormal(x)`, `kPi`, `kTwoPi`.
 New blocks are added to the kit when a second synth needs them; until then they
 live in the synth repo.
 
-## 8a. Web Audio blocks ✓
+## 8a. Web Audio blocks
 
 Synths often start as a browser sketch built from Web Audio nodes. The blocks
 in `sk::wa` compute what those nodes compute, **sample for sample**, so a port
@@ -798,7 +831,7 @@ Porting a node graph:
 
   The two scripts are a template for a synth's own comparison with its sketch.
 
-## 9. UI layout ✓
+## 9. UI layout
 
 `ui/layout.json` arranges the synth's panel. It's optional: without it, the
 kit builds one section per parameter `group`, followed by the voice, envelope
@@ -823,6 +856,13 @@ and output panels.
   "keyboard": true
 }
 ```
+
+| Top-level field | |
+|---|---|
+| `sections` | the panels, in order (below) |
+| `theme` | `{ "accent": "#rrggbb" }`: the controls' colour (dark mode derives a lighter shade) |
+| `keyboard` | `false` leaves out the on-screen keyboard and computer-key playing (default `true`) |
+| `paramInfo` | info text per parameter ID (below) |
 
 | Control field | |
 |---|---|
@@ -875,8 +915,6 @@ panels and "More". A control's own `info` wins.
 Info text is plain text (line breaks are kept). It shows on hover or keyboard
 focus, and stays up after a click or tap until the next click elsewhere.
 
-- `theme.accent` colours the controls. Dark mode derives a lighter shade
-  from it automatically.
 - Parameters the layout doesn't mention (other than kit and hidden ones) get a
   "More" panel, so nothing is unreachable. Mistakes in the layout (unknown
   parameter IDs or control types, malformed tabs) show as warnings when the
@@ -915,7 +953,7 @@ the plugin. The kit's colours are CSS variables (`--bg`, `--panel`, `--edge`,
 `--ink`, `--ink-soft`, `--accent`, `--field`, `--track`, `--cap`, …), so a
 synth can retheme everything, or style its own widgets and page (§9a).
 
-## 9a. A synth's own page ✓
+## 9a. A synth's own page
 
 When the kit's panels aren't the instrument (a cabinet with treadles, a
 sequencer you draw in), a synth brings its own page and uses the kit's parts
@@ -996,7 +1034,7 @@ export function mount(sk, root) {
 - [`examples/reed`](examples/reed) is a complete example: a walnut cabinet
   with a wind gauge and two treadles, built this way.
 
-## 9b. Messages ✓
+## 9b. Messages
 
 Messages carry things between the page and the engine that aren't
 parameters: a treadle being held, a "new reeds" button, the engine saying a
@@ -1040,7 +1078,7 @@ and the page (or a custom widget) sends and listens: `sk.send("treadle.left",
 - Render scenarios (§10) can send them: `{ "t": 0.5, "msg": "treadle.left",
   "values": [1] }`.
 
-## 10. Testing a synth ✓
+## 10. Testing a synth
 
 Scenarios in `tests/*.json` render offline and are checked in CI:
 
@@ -1111,16 +1149,15 @@ basic_render --params                                # list every parameter
 
 CI runs `--check` on every PR and attaches the rendered WAVs.
 
-## 11. The browser build ✓
+## 11. The browser build
 
 ```
 cmake -S . -B build-web -G Ninja -DCMAKE_TOOLCHAIN_FILE=synthkit/cmake/wasm32-wasi.cmake
 cmake --build build-web          # → build-web/web/<name>.html
 ```
 
-This needs clang 18+, `lld` and the wasm32 sysroot. On Ubuntu 24.04:
-`wasi-libc libc++-18-dev-wasm32 libclang-rt-18-dev-wasm32 lld-18`. CI
-installs them.
+This needs clang 18+, `lld` and the wasm32 sysroot (Linux only). On Ubuntu,
+`synthkit/tools/ci/deps.sh web` installs them, as CI does.
 
 The result is **one self-contained HTML file** with the synth (WebAssembly),
 the UI, the layout, `ui/style.css`, the synth's own page if it has one (§9a)
@@ -1144,7 +1181,7 @@ better).
 mistakes with `sk::fail("message")`, which throws in native builds and stops
 with the message in the browser.
 
-## 12. Plugins ✓
+## 12. Plugins
 
 ```
 cmake -S . -B build-plugin -DSYNTHKIT_PLUGIN=ON -DSYNTHKIT_WEB_UI_DIR=build-web/web
@@ -1210,10 +1247,12 @@ code-signed: macOS needs the one-time `xattr` step in the install notes.
 
 ## 13. Targets
 
-| Target | Used in | Phase |
-|---|---|---|
-| Web (WASM + AudioWorklet, single HTML file) ✓ | development, quick play | 3 |
-| VST3 (Windows, macOS, Linux) ✓ | Ableton Live, Reaper | 5 |
-| AU (macOS) ✓ | GarageBand, Logic, Reaper | 5 |
-| Standalone app ✓ | playing without a DAW | 5 |
-| CLAP | Reaper, Bitwig | optional, later |
+| Target | Used in |
+|---|---|
+| Web (WASM + AudioWorklet, single HTML file) | development, quick play |
+| VST3 (Windows, macOS, Linux) | Ableton Live, Reaper |
+| AU (macOS) | GarageBand, Logic, Reaper |
+| Standalone app | playing without a DAW |
+
+CLAP isn't built (Live 11 doesn't load it); it could be added later for
+Reaper or Bitwig.

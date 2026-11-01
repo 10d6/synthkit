@@ -26,23 +26,23 @@ renders every test scenario and preset to `renders/` and runs the kit's checks.
 
 ## Playing it in the browser
 
-Every PR's CI run has a **web-basic** artifact: download it, unzip, and
-double-click `basic.html` (or `reed.html`, the example with its own page).
-Each is the whole synth in one file, with no server needed. Click once to start the sound, then play with the mouse, your computer
+CI publishes `main` at <https://10d6.github.io/synthkit/> and each PR at
+`https://10d6.github.io/synthkit/pr/<number>/` (the reed example is
+`…/reed.html`), and links the preview on the PR. Each PR's CI run also has a
+**web-basic** artifact with the same pages as files: unzip and double-click
+`basic.html` or `reed.html`. Each is the whole synth in one file, with no
+server needed.
+
+Click once to start the sound, then play with the mouse, your computer
 keyboard (A–K), or a MIDI keyboard (**Connect MIDI**).
 
-To build it yourself (Ubuntu 24.04: `sudo apt install clang-18 lld-18 wasi-libc
-libc++-18-dev-wasm32 libclang-rt-18-dev-wasm32`):
+To build it yourself (Ubuntu; `tools/ci/deps.sh web` installs clang 18 and the
+wasm32 sysroot):
 
 ```
 cmake -S . -B build-web -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/wasm32-wasi.cmake
 cmake --build build-web        # → build-web/web/basic.html, reed.html
 ```
-
-**Preview links.** Once the repo is public, CI also publishes each PR to
-`https://10d6.github.io/synthkit/pr/<number>/` (and `main` at the site root),
-with the reed example at `…/reed.html`, and links it on the PR. It needs one setting: Settings → Pages → Build and
-deployment → Deploy from a branch → `gh-pages` / root.
 
 ## Starting a new synth
 
@@ -64,9 +64,8 @@ Every PR's CI run also has a plugin zip per system: **synthkit-basic-windows**,
 version (`v0.2.0`) publishes the zips as a GitHub release.
 
 The plugin window is the same page as the browser version, including a
-synth's own page. The sound is saved
-in your DAW project, and your own presets are shared by every copy of the synth
-on the computer.
+synth's own page. The sound is saved in your DAW project, and your own
+presets are shared by every copy of the synth on the computer.
 
 ## How it fits together
 
@@ -81,22 +80,5 @@ on the computer.
    WASM + AudioWorklet           JUCE → VST3 / AU
    HTML UI, Web MIDI             same HTML UI in a WebView
    (kit page or synth's own)
-   GitHub Pages                  CI builds for Windows / macOS
+   GitHub Pages                  CI builds for Windows / macOS / Linux
 ```
-
-## Roadmap
-
-| Phase | Delivers | You can… |
-|---|---|---|
-| 1 ✓ | `API.md`, `CLAUDE.md` | review the contract |
-| 2 ✓ | core library, DSP blocks, example synth, render tool, Linux CI | listen to rendered WAVs on the PR |
-| 3 ✓ | browser build (one HTML file), UI from layout.json, Web MIDI, presets, previews | play the example synth in the browser |
-| 4 ✓ | mod matrix, LFOs, drawn tempo-locked shapes, musical-time sources, MIDI clock | build richer, tempo-aware patches |
-| 5 ✓ | JUCE plugin adapter (VST3, AU, Standalone; the page as its window), Windows/macOS/Linux CI, pluginval, releases | load it in Live / GarageBand |
-| 6 ✓ | synth template + scaffold script (`tools/new-synth.py`), shared CI scripts | start a new synth in one step |
-| 7 ✓ | the first real synth, [10d6/aleatory](https://github.com/10d6/aleatory), ported from its browser sketch using only `API.md` | play it in the browser and in Live |
-| 8 ✓ | `sk::wa`: Web Audio's nodes (biquad, compressor, convolver, periodic-wave oscillator, wave shaper, panner, delay, AudioParam automation) as DSP blocks, checked sample for sample against Chromium | port a browser sketch by translation |
-| 9 ✓ | a synth's own page (`ui/page.js`) using the kit's parts where it wants them; messages between page and engine; `ui/style.css`; [`examples/reed`](examples/reed) | keep an instrument's own look in the browser and the DAW |
-| 10 ✓ | the DAW's stand-ins on every page: a host bar (start prompt, Connect MIDI, tempo, Stop all sound) on a synth's own page; MIDI controllers mapped to parameters in the synth (`cc()`), the same in the browser and a DAW; the tempo's source, and tempo saved in patches; sound that starts on the first click whatever happened before; a browser test that plays every synth under the real autoplay rule with a MIDI keyboard | play any synth from a MIDI keyboard and in time, in the browser as in Live |
-
-The reed organ is ported as [10d6/parlour](https://github.com/10d6/parlour), built on phases 8–10.

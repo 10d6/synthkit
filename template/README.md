@@ -6,7 +6,8 @@ browser and as a VST3 / AU plugin.
 ## Playing it
 
 - **In the browser:** every PR gets a preview link (posted on the PR), and
-  `main` is at the repo's GitHub Pages site.
+  `main` is at the repo's GitHub Pages site. This needs GitHub Pages turned
+  on once: Settings → Pages → Deploy from a branch → `gh-pages` / root.
 - **In your DAW:** each PR's CI run has a **plugin-windows**, **plugin-macos**
   and **plugin-linux** download (under *Checks → CI → Summary → Artifacts*).
   Unzip it and follow `INSTALL.md` inside. Tagging a version (`v0.2.0`)

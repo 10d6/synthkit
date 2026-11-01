@@ -7,7 +7,7 @@
 // The treadles fill a reservoir and playing drains it. Pressure sets the
 // loudness, tilts the reeds' harmonics and pulls their pitch slightly flat.
 // With no wind there is no sound; a helper pump (on by default) keeps some
-// wind coming, like reedorgan's default pumping, so keys always sound.
+// wind coming, so keys always sound.
 #include <synthkit/synth.h>
 
 #include <cmath>
