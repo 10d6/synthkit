@@ -120,7 +120,7 @@ function(_synthkit_add_plugin name dir)
   juce_add_console_app(${name}_plugin_check PRODUCT_NAME "${name}_plugin_check" VERSION "${_sk_version}")
   target_sources(${name}_plugin_check PRIVATE "${SYNTHKIT_ROOT}/plugin/test/PluginCheck.cpp")
   target_compile_definitions(${name}_plugin_check PRIVATE
-    JUCE_PLUGINHOST_VST3=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_MODAL_LOOPS_PERMITTED=0)
+    JUCE_PLUGINHOST_VST3=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_MODAL_LOOPS_PERMITTED=1)   # runDispatchLoopUntil, for the plugin's message-thread work
   target_link_libraries(${name}_plugin_check PRIVATE
     ${name}_synth juce::juce_audio_processors juce::juce_audio_utils juce::juce_recommended_config_flags)
   add_dependencies(${name}_plugin_check ${name}_plugin_VST3)
