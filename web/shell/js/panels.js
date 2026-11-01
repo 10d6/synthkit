@@ -103,13 +103,12 @@ class Panels {
     const out = [...groups].map(([title, controls]) => ({ title, controls }));
     out.push({ kit: "voices" });
     for (let n = 1; n <= this.model.info.synth.standardEnvelopes; n++) out.push({ kit: "env" + n });
-    const lfos = [], shapes = [];
-    for (let n = 1; n <= this.model.mod.lfos; n++) lfos.push({ kit: "lfo" + n });
+    const lfos = this.model.mod.lfos ? [{ kit: "lfos" }] : [], shapes = [];
     for (let n = 1; n <= this.model.mod.shapes; n++) shapes.push({ kit: "shape" + n });
     // LFOs and shapes together make a long page: give each kind a tab.
     if (lfos.length && shapes.length) {
       out.push({ tabs: [
-        { title: lfos.length > 1 ? "LFOs" : "LFO", sections: lfos },
+        { title: this.model.mod.lfos > 1 || this.model.param("sk.lfos") ? "LFOs" : "LFO", sections: lfos },
         { title: shapes.length > 1 ? "Shapes" : "Shape", sections: shapes }] });
     } else out.push(...lfos, ...shapes);
     if (this.model.mod.slots) out.push({ kit: "modMatrix" });
@@ -129,17 +128,44 @@ class Panels {
     if (!spec || typeof spec !== "object") { this.problems.push(`layout.json has a section that isn't an object: ${JSON.stringify(spec)}.`); return null; }
     if ("tabs" in spec) return this.tabs(spec);
     if ("accordion" in spec) return this.accordion(spec);
+    if (spec.kit === "lfos") return this.lfos(spec, collapsible);
     const el = this.section(spec);
     if (el) this.decorate(el, spec, collapsible);
     return el;
+  }
+
+  // Every LFO panel, plus (when the player adds LFOs) an Add LFO button. Its
+  // children sit in the surrounding row as if listed one by one.
+  lfos(spec, collapsible) {
+    if (!this.model.mod.lfos) return this.missing("lfos");
+    const wrap = h("div", { class: "lfo-group" });
+    for (let n = 1; n <= this.model.mod.lfos; n++) {
+      const el = this.section({ kit: "lfo" + n });
+      this.decorate(el, { ...spec, kit: "lfo" + n, id: spec.id && `${spec.id}.${n}`, title: undefined }, collapsible);
+      wrap.append(el);
+    }
+    const cap = this.model.param("sk.lfos");
+    if (cap) {
+      const add = h("button", { type: "button", class: "lfo-add", onclick: () => skAddLfo(this.app) }, h("span", { class: "lfo-add-plus", "aria-hidden": "true", text: "+" }), "Add LFO");
+      const show = (v) => {
+        add.hidden = Math.round(v) >= cap.max;
+        add.lastChild.textContent = Math.round(v) ? "Add LFO" : "Add an LFO";
+      };
+      this.model.on("sk.lfos", show);
+      show(this.model.get("sk.lfos"));
+      wrap.append(add);
+    }
+    return wrap;
   }
 
   // Info icon and folding for a panel (the kit's own panels included).
   decorate(sec, spec, collapsible) {
     const title = sec.querySelector(":scope > .panel-title");
     if (!title) return;
-    if (spec.title && !title.textContent) title.textContent = spec.title;
-    const text = title.textContent;
+    if (spec.title && !title.textContent.trim()) title.prepend(spec.title);
+    // The title's text; buttons already in it (an LFO's remove) stay put.
+    const text = [...title.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join("").trim();
+    const extras = [...title.children];
     if (collapsible || typeof spec.collapsed === "boolean") {
       if (!text) this.problems.push("A collapsible panel in layout.json needs a title to click.");
       const body = h("div", { class: "panel-body", id: `sk-panel-${++this.ids}` });
@@ -147,7 +173,7 @@ class Panels {
       sec.append(body);
       const btn = h("button", { type: "button", class: "panel-toggle", "aria-controls": body.id }, SK_CHEVRON(), h("span", { text }));
       title.textContent = "";
-      title.append(btn);
+      title.append(btn, ...extras);
       sec.classList.add("is-collapsible");
       const key = "open:" + (spec.id || spec.kit || text);
       sec.skOpen = (open, save) => {
@@ -163,7 +189,7 @@ class Panels {
       title.addEventListener("click", (e) => { if (!e.target.closest(".panel-toggle, .info-btn")) sec.skOpen(body.hidden, true); });
       sec.skOpen(typeof this.ui[key] === "boolean" ? this.ui[key] : spec.collapsed !== true, false);
     }
-    if (spec.info) title.append(skInfoButton(spec.info, text));
+    if (spec.info) title.insertBefore(skInfoButton(spec.info, text), extras[0] || null);
   }
 
   // { "accordion": [ sections… ], "single": true }: panels stacked in one

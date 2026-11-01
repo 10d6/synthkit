@@ -19,7 +19,9 @@ struct SynthInfo {
     bool unison = false;
     int standardEnvelopes = 1;
     bool ampEnv = true;     // env1 shapes each voice's output
-    int standardLfos = 0;
+    int standardLfos = 0;   // LFOs the synth has (with userLfos: the most the player can add)
+    bool userLfos = false;  // the player adds and removes LFOs (sk.lfos says how many are in use)
+    int lfosStart = 0;      // with userLfos: how many a new patch starts with
     int modSlots = 0;
     int shapes = 0;
     int eventQueue = 256;

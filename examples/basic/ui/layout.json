@@ -134,10 +134,7 @@
           "title": "LFOs",
           "sections": [
             {
-              "kit": "lfo1"
-            },
-            {
-              "kit": "lfo2"
+              "kit": "lfos"
             }
           ]
         },

@@ -133,6 +133,41 @@ async function main() {
           await page.mouse.move(2, 2);
           const unhov = await page.evaluate(() => document.querySelector(".info-pop").hidden);
           if (!hov || !unhov) fail(`info on hover: shows ${hov}, hides ${unhov}`); else pass("info shows on hover");
+          // LFOs the player adds and removes (standardLfos: { max: 4, start: 2 }).
+          await page.click('.tab:text-is("LFOs")');
+          const lfoState = () => page.evaluate(() => {
+            const m = window.synthkit.model;
+            return {
+              inUse: m.get("sk.lfos"),
+              shown: [...document.querySelectorAll(".lfo-panel")].filter((e) => e.getClientRects().length).length,
+              add: !!document.querySelector(".lfo-add") && document.querySelector(".lfo-add").getClientRects().length > 0,
+              routes: m.routes().map((r) => `${r.src}>${r.dst}`).join(" "),
+              offered: [...document.querySelectorAll('.route select option')].map((o) => o.value).filter((v) => /^lfo\d/.test(v)),
+            };
+          });
+          const l0 = await lfoState();
+          const keptRoutes = await page.evaluate(() => window.synthkit.model.routes());
+          await page.click(".lfo-add");
+          await page.click(".lfo-add");
+          const l1 = await lfoState();
+          if (l0.inUse !== 2 || l0.shown !== 2 || !l0.add) fail(`LFOs at start: ${JSON.stringify(l0)}`);
+          else if (l1.inUse !== 4 || l1.shown !== 4 || l1.add) fail(`after adding two LFOs: ${JSON.stringify(l1)}`);
+          else pass("Add LFO shows another LFO, up to the synth's maximum");
+          // Remove LFO 2: LFO 3 and its route move down; LFO 2's route goes.
+          await page.evaluate(() => {
+            const m = window.synthkit.model;
+            m.set("lfo2.rate", 3, "ui"); m.set("lfo3.rate", 7, "ui");
+            m.setRoutes([{ src: "lfo2", dst: "filter.cutoff", amt: 0.3 }, { src: "lfo3", dst: "filter.reso", amt: 0.2 }, { src: "lfo1", dst: "lfo4.rate", amt: 0.1 }]);
+          });
+          await page.click('button[aria-label="Remove LFO 2"]');
+          const l2 = await lfoState();
+          const rate2 = await page.evaluate(() => window.synthkit.model.get("lfo2.rate"));
+          if (l2.inUse !== 3 || l2.shown !== 3 || !l2.add || Math.abs(rate2 - 7) > 0.01 || l2.routes !== "lfo2>filter.reso lfo1>lfo3.rate")
+            fail(`removing LFO 2: ${JSON.stringify(l2)}, lfo2.rate ${rate2}`);
+          else if (l2.offered.includes("lfo4") || l2.offered.includes("lfo4.rate")) fail(`the matrix still offers LFO 4: ${l2.offered}`);
+          else pass("removing an LFO moves the later ones (and their routes) down");
+          await page.evaluate((r) => { const m = window.synthkit.model; m.setRoutes(r); m.set("sk.lfos", 2, "ui"); }, keptRoutes);
+          await page.click('.tab:text-is("Shapes")');
         }
         // Add a point in the first shape editor.
         const pts = await page.evaluate(() => window.synthkit.model.shapes()[0].curves[0].points.length);

@@ -164,7 +164,19 @@ SynthInfo SynthInfo::fromJson(const Json& j) {
   o.unison = f["unison"].boolean(o.unison);
   o.standardEnvelopes = std::clamp(static_cast<int>(f["standardEnvelopes"].number(o.standardEnvelopes)), 0, 8);
   o.ampEnv = f["ampEnv"].boolean(o.standardEnvelopes > 0) && o.standardEnvelopes > 0;
-  o.standardLfos = std::clamp(static_cast<int>(f["standardLfos"].number(0)), 0, 8);
+  // standardLfos: a number (fixed), or { "max", "start" } (the player adds them).
+  const Json& lf = f["standardLfos"];
+  if (lf.isObject()) {
+    o.userLfos = true;
+    double mx = lf["max"].number(8), st = lf["start"].number(1);
+    if (mx < 1 || mx > 16) fail("synth.json: standardLfos.max must be 1 to 16");
+    o.standardLfos = static_cast<int>(mx);
+    o.lfosStart = std::clamp(static_cast<int>(st), 0, o.standardLfos);
+  } else {
+    double n = lf.number(0);
+    if (n < 0 || n > 16) fail("synth.json: standardLfos must be 0 to 16");
+    o.standardLfos = static_cast<int>(n);
+  }
   o.modSlots = std::clamp(static_cast<int>(f["modSlots"].number(0)), 0, 64);
   o.shapes = std::clamp(static_cast<int>(f["shapes"].number(0)), 0, 32);
   o.eventQueue = std::clamp(static_cast<int>(f["eventQueue"].number(o.eventQueue)), 16, 8192);
