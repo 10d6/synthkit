@@ -23,6 +23,7 @@ struct SynthInfo {
     int modSlots = 0;
     int shapes = 0;
     int eventQueue = 256;
+    bool tempoInPatch = false;   // the browser's tempo and time signature are saved in patches
   } features;
 
   static SynthInfo fromJson(const Json& j);  // throws std::invalid_argument
@@ -91,6 +92,15 @@ class Engine {
   bool sendMessage(int index, const float* values, int count);
   // To the page: one consumer thread. False when there are none waiting.
   bool takeMessage(Message& out);
+
+  // Parameters the audio thread moved (MIDI controllers, ctx.setParam), for
+  // adapters to tell the host and the page. One consumer thread.
+  bool takeParamChange(int& index);
+
+  // The tempo saved in the current patch (features.tempoInPatch). False when
+  // the patch has none.
+  bool patchTempo(double& bpm, int& num, int& den) const;
+  void setPatchTempo(double bpm, int num, int den);
 
   EngineStats takeStats();
   const Transport& transport() const;

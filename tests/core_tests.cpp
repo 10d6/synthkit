@@ -713,6 +713,130 @@ TEST(messages_ids_are_checked) {
   CHECK_THROWS(Engine(std::make_unique<Bad2>(), testInfo()));
 }
 
+
+// ------------------------------------------------------------ the DAW's stand-ins
+
+struct CtlSynth : Synth {
+  Param swell, vol, step;
+  std::vector<int> ccSeen;   // CC numbers processEvents saw
+  bool moveOnCC7 = false;
+  void defineParams(ParamBuilder& b) override {
+    swell = b.add("swell").range(0, 100).def(0).cc(11).cc(4);
+    vol = b.add("vol").range(0, 150).def(100).cc(7, 0, 100);
+    step = b.add("step").range(0, 4).integer().def(0);
+  }
+  std::unique_ptr<Voice> makeVoice() override { return std::make_unique<MsgVoice>(); }
+  void prepare(const PrepareInfo&) override { ccSeen.reserve(64); }
+  void processEvents(EventContext& ctx) override {
+    for (auto& e : ctx.in()) {
+      if (e.type == MidiEvent::Type::CC) {
+        ccSeen.push_back(e.cc);
+        if (moveOnCC7 && e.cc == 7) ctx.setParam(step, 3);
+      }
+      ctx.out(e);
+    }
+  }
+};
+
+static MidiEvent ccEvent(int n, float v) { MidiEvent e = CC{n, v, 0}; e.sample = 0; return e; }
+
+TEST(controllers_move_parameters) {
+  auto s = std::make_unique<CtlSynth>();
+  CtlSynth* syn = s.get();
+  Engine eng(std::move(s), testInfo());
+  eng.prepare(48000, 128);
+  std::vector<float> l(128), r(128);
+  float* outs[2] = {l.data(), r.data()};
+  HostTransport ht;
+  const MidiEvent evs[2] = {ccEvent(11, 1.f), ccEvent(7, 0.5f)};
+  eng.process(outs, 2, 128, evs, 2, ht);
+  CHECK_NEAR(eng.params().get(syn->swell.index), 100, 1e-3);   // the whole range
+  CHECK_NEAR(eng.params().get(syn->vol.index), 50, 1e-3);      // cc(7, 0, 100): half way is 50, not 75
+  CHECK(syn->ccSeen.size() == 2);                              // the synth still sees them
+  int i = -1, n = 0;
+  bool sawSwell = false, sawVol = false;
+  while (eng.takeParamChange(i)) { ++n; sawSwell |= i == syn->swell.index; sawVol |= i == syn->vol.index; }
+  CHECK(n == 2 && sawSwell && sawVol);
+  // A second controller on the same parameter, and nothing queued when nothing moves.
+  const MidiEvent cc4 = ccEvent(4, 0.f);
+  eng.process(outs, 2, 128, &cc4, 1, ht);
+  CHECK_NEAR(eng.params().get(syn->swell.index), 0, 1e-3);
+  eng.process(outs, 2, 128, &cc4, 1, ht);
+  n = 0;
+  while (eng.takeParamChange(i)) ++n;
+  CHECK(n == 1);
+  // ctx.setParam: a synth's own mapping, in effect at once and queued the same way.
+  syn->moveOnCC7 = true;
+  const MidiEvent cc7 = ccEvent(7, 1.f);
+  eng.process(outs, 2, 128, &cc7, 1, ht);
+  CHECK_NEAR(eng.params().get(syn->step.index), 3, 1e-6);
+  bool sawStep = false;
+  while (eng.takeParamChange(i)) sawStep |= i == syn->step.index;
+  CHECK(sawStep);
+}
+
+TEST(controllers_are_checked) {
+  struct Bad : CtlSynth {
+    void defineParams(ParamBuilder& b) override { b.add("x").cc(123); }
+  };
+  CHECK_THROWS(Engine(std::make_unique<Bad>(), testInfo()));
+}
+
+TEST(all_notes_off_and_panic_reach_process_events) {
+  auto s = std::make_unique<CtlSynth>();
+  CtlSynth* syn = s.get();
+  Engine eng(std::move(s), testInfo());
+  eng.prepare(48000, 128);
+  std::vector<float> l(128), r(128);
+  float* outs[2] = {l.data(), r.data()};
+  HostTransport ht;
+  eng.allNotesOff();
+  eng.process(outs, 2, 128, nullptr, 0, ht);
+  eng.panic();
+  eng.process(outs, 2, 128, nullptr, 0, ht);
+  eng.process(outs, 2, 128, nullptr, 0, ht);   // once each
+  CHECK(syn->ccSeen.size() == 2 && syn->ccSeen[0] == 123 && syn->ccSeen[1] == 120);
+}
+
+TEST(tempo_source_and_tempo_in_patches) {
+  SynthInfo info = testInfo();
+  info.features.tempoInPatch = true;
+  Engine eng(std::make_unique<CtlSynth>(), info);
+  eng.prepare(48000, 128);
+  std::vector<float> l(128), r(128);
+  float* outs[2] = {l.data(), r.data()};
+  double bpm = 0;
+  int num = 0, den = 0;
+  CHECK(!eng.patchTempo(bpm, num, den));
+  CHECK(!eng.savePatch().contains("tempo"));
+  // Saved and loaded with the patch.
+  eng.setPatchTempo(74, 6, 8);
+  Json p = eng.savePatch();
+  CHECK(p["tempo"]["bpm"].number() == 74 && p["tempo"]["timeSig"][0].number() == 6 && p["tempo"]["timeSig"][1].number() == 8);
+  Engine other(std::make_unique<CtlSynth>(), info);
+  CHECK(other.loadPatch(p).ok);
+  CHECK(other.patchTempo(bpm, num, den) && bpm == 74 && num == 6 && den == 8);
+  // With no tempo information, the kit's clock runs at the patch's tempo.
+  HostTransport none;
+  eng.process(outs, 2, 128, nullptr, 0, none);
+  CHECK(eng.transport().source == TempoSource::Own && eng.transport().bpm == 74 && eng.transport().timeSigNum == 6);
+  // A DAW's tempo wins, and says where it came from.
+  HostTransport daw;
+  daw.valid = true;
+  daw.bpm = 128;
+  daw.source = TempoSource::Daw;
+  eng.process(outs, 2, 128, nullptr, 0, daw);
+  CHECK(eng.transport().source == TempoSource::Daw && eng.transport().bpm == 128);
+  // A patch without a tempo clears it.
+  Json q = eng.savePatch();
+  q.erase("tempo");
+  CHECK(eng.loadPatch(q).ok && !eng.patchTempo(bpm, num, den));
+  // Synths without the feature carry a patch's tempo through unchanged.
+  Engine plain(std::make_unique<CtlSynth>(), testInfo());
+  CHECK(plain.loadPatch(p).ok);
+  CHECK(plain.savePatch()["tempo"]["bpm"].number() == 74);
+}
+
 // ------------------------------------------------------------ sk::wa blocks
 // (Bit-level agreement with the browser is checked by
 // web/test/webaudio-parity.cjs; these check the blocks on their own.)

@@ -29,6 +29,7 @@ class SynthkitProcessor extends AudioWorkletProcessor {
     this.num = tr.num || 4;
     this.den = tr.den || 4;
     this.beat = 0;
+    this.source = tr.source === "midi" ? 1 : 0;   // the page's tempo controls, or MIDI clock
 
     this.queue = [];                   // live MIDI: [status, d1, d2]
     this.schedule = o.schedule || [];  // offline renders: {sample, d}
@@ -56,6 +57,7 @@ class SynthkitProcessor extends AudioWorkletProcessor {
         // Follow external MIDI clock: big differences are jumps, small ones
         // are absorbed gradually so the engine never sees a false jump.
         this.bpm = m.bpm;
+        this.source = 1;
         if (m.playing && !this.playing) { this.beat = m.beat; this.clockCorr = 0; }
         this.playing = m.playing;
         const err = m.beat - this.beat;
@@ -65,6 +67,7 @@ class SynthkitProcessor extends AudioWorkletProcessor {
       case "transport":
         if (m.playing && !this.playing) this.beat = 0;  // start from the top
         this.bpm = m.bpm; this.playing = m.playing; this.num = m.num; this.den = m.den;
+        this.source = m.source === "midi" ? 1 : 0;
         break;
       case "msg": {
         const v = m.v || [];
@@ -103,7 +106,7 @@ class SynthkitProcessor extends AudioWorkletProcessor {
         x.sk_midi(Math.max(0, ev.sample - at), ev.d[0], ev.d[1] | 0, ev.d[2] | 0);
       }
       const len = end - done;
-      x.sk_process(len, this.bpm, this.playing ? 1 : 0, this.beat, this.num, this.den);
+      x.sk_process(len, this.bpm, this.playing ? 1 : 0, this.beat, this.num, this.den, this.source);
       // Views must be re-created if the module's memory grew.
       const buf = this.x.memory.buffer;
       L.set(new Float32Array(buf, x.sk_left(), len), done);
@@ -121,6 +124,16 @@ class SynthkitProcessor extends AudioWorkletProcessor {
     }
     this.pos += n;
     const l = L, r = R;
+
+    // Parameters the engine moved (mapped MIDI controllers, ctx.setParam):
+    // the page's copy follows (API.md §3).
+    const nc = x.sk_take_param_changes();
+    if (nc) {
+      const ids = new Int32Array(this.x.memory.buffer, x.sk_param_change_buffer(), nc);
+      const seen = new Set(), changes = [];
+      for (const i of ids) if (!seen.has(i)) { seen.add(i); changes.push([i, x.sk_get_param(i)]); }
+      this.port.postMessage({ t: "params", changes });
+    }
 
     // Messages the synth posted for the page (API.md §9b).
     const nm = x.sk_take_messages();

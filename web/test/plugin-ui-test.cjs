@@ -73,7 +73,9 @@ async function main() {
   await page.mouse.down();
   await page.mouse.move(dial.x + dial.width / 2, dial.y - 40, { steps: 5 });
   await page.mouse.up();
-  const drag = await sent();
+  // (The preset bar's "meta" note can arrive at any moment from its own
+  // timer; it isn't part of the drag.)
+  const drag = (await sent()).filter((m) => m.t !== "meta");
   const idx = await page.evaluate(() => window.synthkit.model.param("filter.cutoff").index);
   const kinds = drag.map((m) => m.t);
   const ok3 = kinds[0] === "gesture" && drag[0].on === true && drag[0].i === idx && kinds[kinds.length - 1] === "gesture" &&

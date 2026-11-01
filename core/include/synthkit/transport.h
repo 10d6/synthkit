@@ -8,6 +8,16 @@
 
 namespace sk {
 
+// Where the tempo comes from (API.md §7).
+enum class TempoSource {
+  Daw,        // the plugin's host: its tempo, time signature and position
+  Browser,    // the browser page's tempo controls (and, with tempoInPatch, the patch's tempo)
+  MidiClock,  // the browser page following incoming MIDI clock
+  Offline,    // the render tool (a scenario's transport, or the patch's tempo)
+  Own,        // no tempo information (a host without a play head): the kit's own clock
+};
+const char* tempoSourceName(TempoSource s);
+
 // Musical time as the engine sees it. `beat` always advances, even when the
 // host is stopped (the kit keeps its own clock at the current tempo), so
 // tempo-locked behaviour works while you're just playing the keyboard.
@@ -18,6 +28,7 @@ struct Transport {
   Beats barStart = 0;       // position of the current bar's downbeat
   int timeSigNum = 4;
   int timeSigDen = 4;
+  TempoSource source = TempoSource::Own;
 
   double beatsPerBar() const { return timeSigNum * 4.0 / timeSigDen; }
   double secondsPerBeat() const { return 60.0 / bpm; }
@@ -27,6 +38,7 @@ struct Transport {
 // What an adapter (plugin host, browser shell, render tool) passes in.
 struct HostTransport {
   bool valid = false;       // false: no host info; kit runs its own clock
+  TempoSource source = TempoSource::Own;   // what valid info comes from
   double bpm = 120;
   bool playing = false;
   Beats beat = 0;           // position at the first sample of the block

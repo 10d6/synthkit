@@ -27,7 +27,8 @@ struct {{CLASS}} : Synth {
 
   void defineParams(ParamBuilder& b) override {
     wave = b.add("osc.wave").name("Wave").choices({"Saw", "Square", "Triangle", "Sine"}).group("Oscillator");
-    cutoff = b.add("filter.cutoff").name("Cutoff").range(20, 20000).log().def(3000).unit("Hz").modulatable().group("Filter");
+    cutoff = b.add("filter.cutoff").name("Cutoff").range(20, 20000).log().def(3000).unit("Hz").modulatable().group("Filter")
+              .cc(74);   // a keyboard's brightness knob moves it (API.md §3)
     reso = b.add("filter.reso").name("Resonance").range(0, 1).def(0.2).modulatable().group("Filter");
   }
 

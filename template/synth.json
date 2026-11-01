@@ -11,6 +11,7 @@
     "voiceModes": ["poly", "mono", "legato"],
     "standardEnvelopes": 1,
     "standardLfos": 1,
-    "modSlots": 4
+    "modSlots": 4,
+    "tempoInPatch": true
   }
 }

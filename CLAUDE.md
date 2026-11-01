@@ -221,11 +221,16 @@ browser and Linux plugin checks.
 
 ## Status
 
-See README → Roadmap. Phases 1–9 are done (contract; core, DSP, render tool,
+See README → Roadmap. Phases 1–10 are done (contract; core, DSP, render tool,
 example synth; browser build; modulation; plugins; template + scaffold; the
-first real synth; `sk::wa`; own pages and messages). `10d6/aleatory` (the
-aleatoric synth) was ported from its browser sketch using only `API.md`; gaps
-found in synth repos get fixed in API.md here. Next: port `10d6/reedorgan`, a
-Web Audio reed organ with its own page, using `sk::wa` and §9a/§9b
-(`examples/reed` is the small version). Aleatory's hand-written band-pass and
-compressor can move to `wa::BiquadFilter` and `wa::DynamicsCompressor`.
+first real synth; `sk::wa`; own pages and messages; the DAW's stand-ins: host
+bar, `cc()` mappings and `ctx.setParam`, tempo source and tempo in patches,
+first-click audio start). `10d6/aleatory` and `10d6/parlour` (reedorgan's
+organ, with its own page) are built on the kit; gaps found in synth repos get
+fixed in API.md here. Aleatory's hand-written band-pass and compressor can
+move to `wa::BiquadFilter` and `wa::DynamicsCompressor`.
+
+The browser test emulates a real browser's autoplay rule. Playwright's
+`evaluate()` and `waitForFunction()` count as user gestures (for a few
+seconds), so a test of "nothing may start before a click" must not touch the
+page until it clicks.

@@ -5,6 +5,7 @@
 // - the plugin plays exactly what sk::Engine plays for the same notes,
 //   tempo and automation (bit for bit at the same block size)
 // - host automation reaches the sound
+// - a MIDI controller mapped to a parameter moves it, and the host hears it
 // Exit code 0 = all good.
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
@@ -179,6 +180,33 @@ int main(int argc, char** argv) {
   check(finite && energy > 1.0, "plays sound (no NaN/inf)", "silent or non-finite output");
   check(maxDiff == 0, "plays exactly what the engine plays (tempo, notes, mod wheel, automation)",
         "differs from the engine by up to " + juce::String(maxDiff, 8));
+
+  // A MIDI controller mapped to a parameter (ParamDef::cc) moves it, and the
+  // host hears about it, as it would from a knob in the window.
+  for (int i = 0; i < store.size(); ++i) {
+    if (store.spec(i).controllers.empty()) continue;
+    const auto c = store.spec(i).controllers[0];
+    struct Heard : juce::AudioProcessorParameter::Listener {
+      int count = 0;
+      void parameterValueChanged(int, float) override { ++count; }
+      void parameterGestureChanged(int, bool) override {}
+    } heard;
+    params[i]->addListener(&heard);
+    const double before = store.spec(i).fromNorm(params[i]->getValue());
+    const bool up = std::fabs(before - c.hi) > std::fabs(before - c.lo);
+    const uint8_t bytes[3] = {0xB0, static_cast<uint8_t>(c.cc), static_cast<uint8_t>(up ? 127 : 0)};
+    juce::MidiBuffer midi;
+    midi.addEvent(bytes, 3, 0);
+    buf.clear();
+    plugin->processBlock(buf, midi);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(400);   // the plugin tells the host from its message thread
+    const double now = store.spec(i).fromNorm(params[i]->getValue()), want = up ? c.hi : c.lo;
+    params[i]->removeListener(&heard);
+    check(heard.count > 0 && std::fabs(now - want) <= std::fabs(want) * 1e-3 + 1e-6,
+          "CC " + juce::String(c.cc) + " moves " + juce::String(store.spec(i).id.c_str()) + ", and the host hears it",
+          "CC " + juce::String(c.cc) + " gave " + juce::String(now) + " (wanted " + juce::String(want) + "), host told " + juce::String(heard.count) + " times");
+    break;
+  }
 
   plugin->releaseResources();
   if (failures) std::printf("FAILED: %d\n", failures);

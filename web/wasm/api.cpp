@@ -54,6 +54,17 @@ sk::Json specJson(const sk::ParamSpec& s) {
   j["modulatable"] = s.modulatable;
   j["hidden"] = s.hidden;
   j["kit"] = s.kit;
+  if (!s.controllers.empty()) {
+    sk::Json cs = sk::Json::array();
+    for (auto& c : s.controllers) {
+      sk::Json cj = sk::Json::object();
+      cj["cc"] = c.cc;
+      cj["lo"] = c.lo;
+      cj["hi"] = c.hi;
+      cs.push(cj);
+    }
+    j["controllers"] = cs;
+  }
   return j;
 }
 
@@ -87,6 +98,7 @@ SK_EXPORT(sk_info) const char* sk_info() {
   s["voiceModes"] = sk::Json(info.features.voiceModes);
   s["standardEnvelopes"] = info.features.standardEnvelopes;
   s["ampEnv"] = info.features.ampEnv;
+  s["tempoInPatch"] = info.features.tempoInPatch;
   j["synth"] = s;
   sk::Json params = sk::Json::array();
   auto& ps = gEngine->params();
@@ -140,9 +152,11 @@ SK_EXPORT(sk_midi) void sk_midi(int sample, int status, int d1, int d2) {
   if (sk::MidiEvent::fromBytes(b, 3, sample, e)) gEvents.push_back(e);
 }
 
-SK_EXPORT(sk_process) void sk_process(int frames, double bpm, int playing, double beat, int num, int den) {
+// source: 0 the page's tempo controls, 1 MIDI clock (API.md §7).
+SK_EXPORT(sk_process) void sk_process(int frames, double bpm, int playing, double beat, int num, int den, int source) {
   sk::HostTransport t;
   t.valid = true;
+  t.source = source == 1 ? sk::TempoSource::MidiClock : sk::TempoSource::Browser;
   t.bpm = bpm;
   t.playing = playing != 0;
   t.beat = beat;
@@ -247,6 +261,31 @@ SK_EXPORT(sk_take_messages) int sk_take_messages() {
   return n;
 }
 SK_EXPORT(sk_message_buffer) float* sk_message_buffer() { return gMsgOut; }
+
+// Parameters the engine moved (mapped MIDI controllers, ctx.setParam): up to
+// kChangeBatch indices into sk_param_change_buffer(); the page reads their
+// values with sk_get_param.
+constexpr int kChangeBatch = 256;
+static int gChangeOut[kChangeBatch];
+SK_EXPORT(sk_take_param_changes) int sk_take_param_changes() {
+  int n = 0, i = 0;
+  while (n < kChangeBatch && gEngine->takeParamChange(i)) gChangeOut[n++] = i;
+  return n;
+}
+SK_EXPORT(sk_param_change_buffer) int* sk_param_change_buffer() { return gChangeOut; }
+
+// The patch's tempo (features.tempoInPatch): "" when it has none.
+SK_EXPORT(sk_patch_tempo) const char* sk_patch_tempo() {
+  double bpm;
+  int num, den;
+  if (!gEngine->patchTempo(bpm, num, den)) return ret(std::string());
+  sk::Json t = sk::Json::object();
+  t["bpm"] = bpm;
+  t["num"] = num;
+  t["den"] = den;
+  return ret(t.dump(0));
+}
+SK_EXPORT(sk_set_patch_tempo) void sk_set_patch_tempo(double bpm, int num, int den) { gEngine->setPatchTempo(bpm, num, den); }
 
 SK_EXPORT(sk_all_notes_off) void sk_all_notes_off() { gEngine->allNotesOff(); }
 SK_EXPORT(sk_panic) void sk_panic() { gEngine->panic(); }
