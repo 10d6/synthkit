@@ -192,6 +192,58 @@ button, input, select { font: inherit; color: inherit; }
 .env-line { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .env-fill { fill: var(--accent); opacity: 0.1; }
 
+/* Tabs: a row of tab buttons over the panels of the chosen tab. */
+.tabs { flex: 1 1 100%; min-width: 0; }
+.tab-list {
+  display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
+  border-bottom: 1px solid var(--edge); margin-bottom: 14px;
+}
+.tab-list::-webkit-scrollbar { display: none; }
+.tab {
+  flex: none; border: 0; background: none; cursor: pointer; white-space: nowrap;
+  padding: 7px 14px 8px; margin-bottom: -1px; border-bottom: 2px solid transparent;
+  font-weight: 600; font-variation-settings: "wdth" 80; color: var(--ink-soft);
+  border-radius: 7px 7px 0 0;
+}
+.tab:hover { color: var(--ink); background: color-mix(in srgb, var(--panel) 60%, transparent); }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tab:focus-visible { outline-offset: -2px; }
+
+/* Accordions: panels stacked in a column, each folding at its title. */
+.accordion { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.accordion.is-wide { flex-basis: 100%; }
+.accordion > .panel { flex: none; }
+.panel.is-collapsible > .panel-title { display: flex; align-items: center; cursor: pointer; }
+.panel-toggle {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; text-align: left;
+  border: 0; background: none; padding: 2px 0; margin: -2px 0; cursor: pointer;
+  font: inherit; font-weight: inherit; color: inherit;
+}
+.panel-chevron { width: 12px; height: 12px; flex: none; transition: transform 0.15s; }
+.panel-chevron path { fill: none; stroke: var(--ink-soft); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.panel.is-collapsed > .panel-title .panel-chevron { transform: rotate(-90deg); }
+.panel.is-collapsed { padding-bottom: 12px; }
+.panel.is-collapsed > .panel-title { margin-bottom: 0; }
+.panel-title:hover .panel-chevron path { stroke: var(--ink); }
+
+/* Info icons and their popover. */
+.info-btn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 22px; height: 22px; padding: 3px; margin: -4px -4px -4px 0; vertical-align: middle;
+  border: 0; border-radius: 50%; background: none; cursor: help; color: var(--ink-soft);
+}
+.info-btn svg { width: 14px; height: 14px; display: block; }
+.info-ring { fill: none; stroke: currentColor; stroke-width: 1.3; }
+.info-stem { stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.info-dot { fill: currentColor; }
+.info-btn:hover, .info-btn[aria-expanded="true"] { color: var(--accent); }
+.panel-title .info-btn { margin-left: 2px; }
+.info-pop {
+  position: fixed; z-index: 25; max-width: min(280px, calc(100vw - 16px)); padding: 8px 11px;
+  border-radius: 8px; background: var(--cap); color: #f1f3ef; font-size: 12px; line-height: 1.4;
+  border: 1px solid var(--cap-hi); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22); white-space: pre-line;
+}
+
 /* ---- controls -------------------------------------------------------- */
 .ctl { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 62px; position: relative; }
 .ctl-label { font-size: 12px; color: var(--ink-soft); text-align: center; max-width: 9em; line-height: 1.2; }
@@ -1298,6 +1350,73 @@ function svg(tag, attrs = {}) {
   return e;
 }
 
+// Info icons: a small (i) beside a control's label or a panel's title. Its
+// text shows in a popover while the mouse is over it or it has keyboard
+// focus, and stays up after a click or tap until the next click elsewhere.
+const skInfo = {
+  pop: null, btn: null, pinned: false,
+  init() {
+    this.pop = h("div", { class: "info-pop", role: "tooltip", id: "sk-info-pop", hidden: true });
+    document.body.append(this.pop);
+    document.addEventListener("pointerdown", (e) => { if (this.btn && !this.btn.contains(e.target) && !this.pop.contains(e.target)) this.hide(); }, true);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") this.hide(); });
+    window.addEventListener("scroll", () => { if (this.btn) this.place(); }, true);
+    window.addEventListener("resize", () => this.hide());
+  },
+  show(btn, pinned) {
+    if (!this.pop) this.init();
+    if (this.btn && this.btn !== btn) this.release();
+    this.btn = btn;
+    this.pinned = pinned;
+    this.pop.textContent = btn.skInfo;
+    this.pop.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    btn.setAttribute("aria-describedby", this.pop.id);
+    this.place();
+  },
+  place() {
+    const r = this.btn.getBoundingClientRect(), p = this.pop, m = 8;
+    if (!r.width) { this.hide(); return; }   // its panel was hidden
+    p.style.left = "0px"; p.style.top = "0px";
+    const w = p.offsetWidth, ht = p.offsetHeight;
+    const x = Math.max(m, Math.min(window.innerWidth - w - m, r.left + r.width / 2 - w / 2));
+    let y = r.bottom + 6;
+    if (y + ht > window.innerHeight - m && r.top - 6 - ht >= m) y = r.top - 6 - ht;
+    p.style.left = x.toFixed(0) + "px"; p.style.top = y.toFixed(0) + "px";
+  },
+  release() {
+    this.btn.setAttribute("aria-expanded", "false");
+    this.btn.removeAttribute("aria-describedby");
+  },
+  // hide(btn) only hides if btn is the one showing.
+  hide(btn) {
+    if (!this.btn || (btn && btn !== this.btn)) return;
+    this.release();
+    this.pop.hidden = true;
+    this.btn = null;
+    this.pinned = false;
+  },
+};
+
+function skInfoButton(text, about) {
+  const b = h("button", { type: "button", class: "info-btn", "aria-label": about ? `About ${about}` : "More information", "aria-expanded": "false" });
+  const s = svg("svg", { viewBox: "0 0 16 16", "aria-hidden": "true" });
+  s.append(svg("circle", { cx: 8, cy: 8, r: 6.6, class: "info-ring" }), svg("path", { d: "M8 7.2v4.4", class: "info-stem" }), svg("circle", { cx: 8, cy: 4.7, r: 1.05, class: "info-dot" }));
+  b.append(s);
+  b.skInfo = String(text);
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (skInfo.btn === b && skInfo.pinned) skInfo.hide(); else skInfo.show(b, true);
+  });
+  b.addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse" && !skInfo.pinned) skInfo.show(b, false); });
+  b.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse" && !skInfo.pinned) skInfo.hide(b); });
+  b.addEventListener("focus", () => { if (b.matches(":focus-visible") && !skInfo.pinned) skInfo.show(b, false); });
+  b.addEventListener("blur", () => { if (!skInfo.pinned) skInfo.hide(b); });
+  // Keys on the button belong to it, not to the computer keyboard's notes.
+  b.addEventListener("keydown", (e) => e.stopPropagation());
+  return b;
+}
+
 const KNOB_START = -135, KNOB_END = 135;
 
 function arcPath(cx, cy, r, a0, a1) {
@@ -1350,6 +1469,7 @@ class Control {
     this.p = param;
     this.opts = opts;
     this.label = opts.label || param.name;
+    this.info = opts.info || (app.paramInfo && app.paramInfo[param.id]) || "";
     this.discrete = param.type !== "float";
     this.steps = this.discrete ? Math.round((param.max - param.min) / (param.step || 1)) : 0;
     this.stepScale = this.discrete ? Math.max(1, 100 / Math.max(1, this.steps)) : 1;
@@ -1367,6 +1487,12 @@ class Control {
   }
   set(v) { this.model.set(this.p.index, v, "ui"); }
   reset() { this.model.reset(this.p.index); }
+  // The label under (or beside) a control, with its info icon if it has one.
+  labelEl() {
+    const el = h("div", { class: "ctl-label" }, this.label);
+    if (this.info) el.append(skInfoButton(this.info, this.label));
+    return el;
+  }
   focus() { const f = this.root.querySelector("[tabindex]"); if (f) f.focus({ preventScroll: true }); }
   text(v) { return this.model.format(this.p.index, v); }
 
@@ -1436,7 +1562,7 @@ class Knob extends Control {
     this.dial.addEventListener("keydown", (e) => this.keyHandler(e));
     attachDrag(this.dial, this);
     this.value = this.valueField();
-    this.root.append(this.dial, h("div", { class: "ctl-label", text: this.label }), this.value);
+    this.root.append(this.dial, this.labelEl(), this.value);
   }
   update(v) {
     const n = this.model.toNorm(this.p.index, v);
@@ -1470,7 +1596,7 @@ class Slider extends Control {
     this.track.addEventListener("keydown", (e) => this.keyHandler(e));
     attachDrag(this.track, this, "x");
     this.value = this.valueField();
-    this.root.append(h("div", { class: "ctl-row" }, h("div", { class: "ctl-label", text: this.label }), this.value), this.track);
+    this.root.append(h("div", { class: "ctl-row" }, this.labelEl(), this.value), this.track);
   }
   update(v) {
     const n = this.model.toNorm(this.p.index, v);
@@ -1490,7 +1616,7 @@ class Segmented extends Control {
       h("button", { type: "button", class: "seg-btn", role: "radio", text: c, onclick: () => this.set(this.p.min + i) }));
     this.group.append(...this.buttons);
     this.group.addEventListener("keydown", (e) => this.keyHandler(e));
-    this.root.append(h("div", { class: "ctl-label", text: this.label }), this.group);
+    this.root.append(this.labelEl(), this.group);
   }
   update(v) {
     const idx = Math.round(v - this.p.min);
@@ -1510,7 +1636,7 @@ class Menu extends Control {
       const v = this.p.min + i * (this.p.step || 1);
       this.select.append(h("option", { value: v, text: this.p.choices ? this.p.choices[i] : this.text(v) }));
     }
-    this.root.append(h("label", { class: "ctl-label", text: this.label }), this.select);
+    this.root.append(this.labelEl(), this.select);
   }
   update(v) { this.select.value = String(Math.round(v)); }
 }
@@ -1520,7 +1646,7 @@ class Toggle extends Control {
   build() {
     this.btn = h("button", { type: "button", class: "toggle", role: "switch", "aria-label": this.label, onclick: () => this.set(this.model.get(this.p.index) >= 0.5 ? 0 : 1) },
       h("span", { class: "toggle-knob" }));
-    this.root.append(this.btn, h("div", { class: "ctl-label", text: this.label }));
+    this.root.append(this.btn, this.labelEl());
   }
   update(v) { this.btn.setAttribute("aria-checked", v >= 0.5 ? "true" : "false"); }
 }
@@ -1532,7 +1658,10 @@ class XYPad {
     this.dot = h("div", { class: "xy-dot" });
     this.pad = h("div", { class: "xy-pad", role: "group", tabindex: 0, "aria-label": `${px.name} and ${py.name}` }, this.dot);
     this.readout = h("div", { class: "ctl-value is-static" });
-    this.root = h("div", { class: "ctl ctl-xy" }, this.pad, h("div", { class: "ctl-label", text: opts.label || `${px.name} / ${py.name}` }), this.readout);
+    const label = opts.label || `${px.name} / ${py.name}`;
+    const labelEl = h("div", { class: "ctl-label" }, label);
+    if (opts.info) labelEl.append(skInfoButton(opts.info, label));
+    this.root = h("div", { class: "ctl ctl-xy" }, this.pad, labelEl, this.readout);
     const move = (e) => {
       const r = this.pad.getBoundingClientRect();
       this.model.setNorm(px.index, (e.clientX - r.left) / r.width, "ui");
@@ -1631,25 +1760,48 @@ class EnvPreview {
   }
 }
 
+// Opens whatever tab or collapsed panel is hiding an element, so it can be
+// shown (e.g. the matrix after Modulate\u2026).
+function skReveal(el) {
+  const chain = [];
+  for (let n = el; n; n = n.parentElement) if (n.skReveal) chain.push(n.skReveal);
+  for (const fn of chain.reverse()) fn();
+}
+
+const SK_CHEVRON = () => {
+  const s = svg("svg", { class: "panel-chevron", viewBox: "0 0 12 12", "aria-hidden": "true" });
+  s.append(svg("path", { d: "M3 4.5 6 7.5 9 4.5" }));
+  return s;
+};
+
 class Panels {
   constructor(app) {
     this.app = app;
     this.model = app.model;
     this.problems = [];
     this.placed = new Set();
+    this.ids = 0;
     this.root = h("div", { class: "panels" });
   }
 
   build(layout) {
-    const sections = layout && Array.isArray(layout.sections) ? layout.sections : this.autoSections();
-    for (const s of sections) {
-      const el = this.section(s);
-      if (el) this.root.append(el);
-    }
+    // Info text for parameters wherever they appear (kit panels included).
+    const info = layout && layout.paramInfo;
+    this.app.paramInfo = info && typeof info === "object" ? info : {};
+    for (const id of Object.keys(this.app.paramInfo)) if (!this.model.param(id)) this.problems.push(`layout.json has paramInfo for "${id}", which isn't a parameter.`);
+    // Which tabs were showing and which panels were folded, per synth.
+    this.storeKey = `synthkit:${this.model.info.synth.id}:ui`;
+    this.ui = skStore.get(this.storeKey, {}) || {};
+    this.blocks(layout && Array.isArray(layout.sections) ? layout.sections : this.autoSections(), this.root);
     // Anything the layout forgot still gets a place, so no parameter is unreachable.
     const rest = this.model.params.filter((p) => !p.hidden && !p.kit && !this.placed.has(p.id));
     if (rest.length) this.root.append(this.section({ title: "More", controls: rest.map((p) => ({ param: p.id })) }));
     return this.root;
+  }
+
+  remember(key, value) {
+    this.ui[key] = value;
+    skStore.set(this.storeKey, this.ui);
   }
 
   autoSections() {
@@ -1663,11 +1815,139 @@ class Panels {
     const out = [...groups].map(([title, controls]) => ({ title, controls }));
     out.push({ kit: "voices" });
     for (let n = 1; n <= this.model.info.synth.standardEnvelopes; n++) out.push({ kit: "env" + n });
-    for (let n = 1; n <= this.model.mod.lfos; n++) out.push({ kit: "lfo" + n });
-    for (let n = 1; n <= this.model.mod.shapes; n++) out.push({ kit: "shape" + n });
+    const lfos = [], shapes = [];
+    for (let n = 1; n <= this.model.mod.lfos; n++) lfos.push({ kit: "lfo" + n });
+    for (let n = 1; n <= this.model.mod.shapes; n++) shapes.push({ kit: "shape" + n });
+    // LFOs and shapes together make a long page: give each kind a tab.
+    if (lfos.length && shapes.length) {
+      out.push({ tabs: [
+        { title: lfos.length > 1 ? "LFOs" : "LFO", sections: lfos },
+        { title: shapes.length > 1 ? "Shapes" : "Shape", sections: shapes }] });
+    } else out.push(...lfos, ...shapes);
     if (this.model.mod.slots) out.push({ kit: "modMatrix" });
     out.push({ kit: "master" });
     return out;
+  }
+
+  blocks(list, into) {
+    for (const spec of list) {
+      const el = this.block(spec);
+      if (el) into.append(el);
+    }
+  }
+
+  // One entry of "sections": a panel, a row of tabs, or an accordion.
+  block(spec, collapsible = false) {
+    if (!spec || typeof spec !== "object") { this.problems.push(`layout.json has a section that isn't an object: ${JSON.stringify(spec)}.`); return null; }
+    if ("tabs" in spec) return this.tabs(spec);
+    if ("accordion" in spec) return this.accordion(spec);
+    const el = this.section(spec);
+    if (el) this.decorate(el, spec, collapsible);
+    return el;
+  }
+
+  // Info icon and folding for a panel (the kit's own panels included).
+  decorate(sec, spec, collapsible) {
+    const title = sec.querySelector(":scope > .panel-title");
+    if (!title) return;
+    if (spec.title && !title.textContent) title.textContent = spec.title;
+    const text = title.textContent;
+    if (collapsible || typeof spec.collapsed === "boolean") {
+      if (!text) this.problems.push("A collapsible panel in layout.json needs a title to click.");
+      const body = h("div", { class: "panel-body", id: `sk-panel-${++this.ids}` });
+      while (title.nextSibling) body.append(title.nextSibling);
+      sec.append(body);
+      const btn = h("button", { type: "button", class: "panel-toggle", "aria-controls": body.id }, SK_CHEVRON(), h("span", { text }));
+      title.textContent = "";
+      title.append(btn);
+      sec.classList.add("is-collapsible");
+      const key = "open:" + (spec.id || spec.kit || text);
+      sec.skOpen = (open, save) => {
+        body.hidden = !open;
+        sec.classList.toggle("is-collapsed", !open);
+        btn.setAttribute("aria-expanded", String(open));
+        if (save) this.remember(key, open);
+        if (open && save && sec.skSiblings) for (const o of sec.skSiblings) if (o !== sec && !o.querySelector(":scope > .panel-body").hidden) o.skOpen(false, true);
+      };
+      sec.skReveal = () => { if (body.hidden) sec.skOpen(true, true); };
+      btn.addEventListener("click", () => sec.skOpen(body.hidden, true));
+      // The whole title row folds it (the button is there for the keyboard).
+      title.addEventListener("click", (e) => { if (!e.target.closest(".panel-toggle, .info-btn")) sec.skOpen(body.hidden, true); });
+      sec.skOpen(typeof this.ui[key] === "boolean" ? this.ui[key] : spec.collapsed !== true, false);
+    }
+    if (spec.info) title.append(skInfoButton(spec.info, text));
+  }
+
+  // { "accordion": [ sections\u2026 ], "single": true }: panels stacked in one
+  // column, each folding at its title; "single" keeps one open at a time.
+  accordion(spec) {
+    if (!Array.isArray(spec.accordion)) { this.problems.push(`"accordion" in layout.json should be a list of sections.`); return null; }
+    const wrap = h("div", { class: "accordion" + (spec.wide ? " is-wide" : "") });
+    const items = [];
+    for (const item of spec.accordion) {
+      if (item && ("tabs" in item || "accordion" in item)) { this.problems.push("An accordion in layout.json holds panels, not tabs or other accordions."); continue; }
+      const el = this.block(item, true);
+      if (el) { wrap.append(el); if (el.skOpen) items.push(el); }
+    }
+    if (!wrap.children.length) return null;
+    if (spec.single) {
+      let seen = false;
+      for (const el of items) {
+        el.skSiblings = items;
+        const open = !el.querySelector(":scope > .panel-body").hidden;
+        if (open && seen) el.skOpen(false, false);
+        seen = seen || open;
+      }
+    }
+    return wrap;
+  }
+
+  // { "tabs": [ { "title": "\u2026", "sections": [ \u2026 ] }, \u2026 ] }: one tab's
+  // sections show at a time. Takes a full row.
+  tabs(spec) {
+    if (!Array.isArray(spec.tabs)) { this.problems.push(`"tabs" in layout.json should be a list of { "title", "sections" }.`); return null; }
+    const wrap = h("div", { class: "tabs" });
+    const list = h("div", { class: "tab-list", role: "tablist", "aria-label": spec.title || "Sections" });
+    const buttons = [], panes = [];
+    for (const t of spec.tabs) {
+      if (!t || !t.title || !Array.isArray(t.sections)) { this.problems.push(`Each tab in layout.json needs a "title" and a list of "sections" (got ${JSON.stringify(t)}).`); continue; }
+      const id = ++this.ids;
+      const pane = h("div", { class: "tab-pane panels", role: "tabpanel", id: `sk-tabpane-${id}`, "aria-labelledby": `sk-tab-${id}` });
+      this.blocks(t.sections, pane);
+      if (!pane.children.length) continue;   // e.g. only panels this synth doesn't enable
+      const i = buttons.length;
+      const b = h("button", { type: "button", class: "tab", role: "tab", id: `sk-tab-${id}`, "aria-controls": pane.id, text: t.title });
+      b.addEventListener("click", () => select(i, true));
+      buttons.push(b);
+      panes.push(pane);
+      pane.skReveal = () => select(i, true);
+    }
+    if (!panes.length) return null;
+    const key = "tab:" + (spec.id || spec.title || spec.tabs.map((t) => t && t.title).join("|"));
+    const select = (i, save) => {
+      buttons.forEach((b, j) => {
+        b.setAttribute("aria-selected", String(j === i));
+        b.tabIndex = j === i ? 0 : -1;
+        panes[j].hidden = j !== i;
+      });
+      if (save) this.remember(key, buttons[i].textContent);
+    };
+    list.addEventListener("keydown", (e) => {
+      const at = buttons.indexOf(document.activeElement);
+      if (at < 0) return;
+      const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: buttons.length - 1 }[e.key];
+      if (to === undefined) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const n = (to + buttons.length) % buttons.length;
+      select(n, true);
+      buttons[n].focus();
+    });
+    list.append(...buttons);
+    wrap.append(list, ...panes);
+    const stored = buttons.findIndex((b) => b.textContent === this.ui[key]);
+    select(stored >= 0 ? stored : 0, false);
+    return wrap;
   }
 
   section(spec) {
@@ -1686,7 +1966,7 @@ class Panels {
       if (m) s = envPanel(Number(m[1]), this.model);
       else if (KIT_PANELS[spec.kit]) s = KIT_PANELS[spec.kit];
       else return this.missing(spec.kit);
-      s = { ...s, title: spec.title || s.title, controls: s.controls.map(([param, label]) => ({ param, label })) };
+      s = { ...s, title: spec.title || s.title, wide: spec.wide, controls: s.controls.map(([param, label]) => ({ param, label })) };
     }
     const controls = h("div", { class: "controls" });
     for (const c of s.controls || []) {
@@ -3671,7 +3951,7 @@ class App {
     routes.push({ src: src.id, dst: ctl.p.id, amt: 0.25 });
     this.model.setRoutes(routes);
     this.toast(`${src.name} now modulates ${ctl.label} by 25%. Adjust it in the Modulation panel.`);
-    if (this.matrix) this.matrix.root.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (this.matrix) { skReveal(this.matrix.root); this.matrix.root.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
   }
 
   refreshLearned() { for (const c of this.controls) c.learned(this.midi.ccFor(c.p.id)); }
