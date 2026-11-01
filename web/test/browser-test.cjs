@@ -406,7 +406,10 @@ async function main() {
       const preset = sk.model.info.presets.find((p) => p.path.endsWith("/" + sc.patch + ".json"));
       if (!sk.model.loadPatch(preset.patch).ok) throw new Error("patch load failed");
       for (const [k, v] of Object.entries(sc.params || {})) sk.model.set(k, v);
-      const bpm = (sc.transport || {}).bpm || 120;
+      // The scenario's tempo, else the patch's (features.tempoInPatch), else
+      // 120, as the native render tool does.
+      const pt = sk.model.info.synth.tempoInPatch ? sk.model.patchTempo() : null;
+      const bpm = (sc.transport || {}).bpm || (pt && pt.bpm) || 120;
       const toSec = (e) => (e.beat !== undefined ? (e.beat * 60) / bpm : e.t);
       const events = sc.events.map((e) => (e.msg !== undefined
         ? { t: toSec(e), m: [sk.model.info.messages.indexOf(e.msg), e.values || []] }
@@ -418,7 +421,7 @@ async function main() {
       const seconds = sc.lengthBeats ? (sc.lengthBeats * 60) / bpm : sc.length;
       const tr = sc.transport || {};
       const r = await sk.renderOffline({ events, seconds, sampleRate: 48000,
-        transport: { bpm, playing: !!tr.playing, num: (tr.timeSig || [4])[0], den: (tr.timeSig || [4, 4])[1] } });
+        transport: { bpm, playing: !!tr.playing, num: (tr.timeSig || [pt ? pt.num : 4])[0], den: (tr.timeSig || [4, pt ? pt.den : 4])[1] } });
       return { left: Array.from(r.left), right: Array.from(r.right) };
     }, sc);
     const n = out.left.length;
