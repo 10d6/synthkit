@@ -775,6 +775,76 @@ TEST(controllers_move_parameters) {
   CHECK(sawStep);
 }
 
+// A mapped controller moves its parameter at the CC's own sample, so the
+// host's block size doesn't change when it's heard.
+struct LevelVoice : Voice {
+  Param level;
+  explicit LevelVoice(Param p) : level(p) {}
+  void start(const NoteOn&, const StartInfo&) override {}
+  void render(VoiceContext& ctx, Buffer& out) override {
+    for (int i = 0; i < out.frames; ++i) out.add(i, ctx.get(level));
+  }
+};
+struct LevelSynth : Synth {
+  Param level, transpose;
+  void defineParams(ParamBuilder& b) override {
+    level = b.add("level").range(0, 1).def(0.1).smoothing(0).cc(1, 0.1, 0.4);
+    transpose = b.add("transpose").range(-12, 12).integer().def(0).cc(2);
+  }
+  std::unique_ptr<Voice> makeVoice() override { return std::make_unique<LevelVoice>(level); }
+  double lastTuned = 0;
+  double tune(int note, const NoteContext& n) override { return lastTuned = note + n.get(transpose); }
+};
+
+TEST(controllers_move_parameters_at_their_sample) {
+  auto render = [](int block) {
+    Engine eng(std::make_unique<LevelSynth>(), testInfo());
+    eng.prepare(48000, block);
+    HostTransport ht;
+    std::vector<float> out, l(static_cast<std::size_t>(block)), r(static_cast<std::size_t>(block));
+    for (long pos = 0; pos < 8192; pos += block) {
+      std::vector<MidiEvent> ev;
+      if (pos == 0) { MidiEvent e = on(60); e.sample = 0; ev.push_back(e); }
+      if (3000 >= pos && 3000 < pos + block) { MidiEvent e = ccEvent(1, 1.f); e.sample = static_cast<int>(3000 - pos); ev.push_back(e); }
+      float* o[2] = {l.data(), r.data()};
+      eng.process(o, 2, block, ev.data(), static_cast<int>(ev.size()), ht);
+      out.insert(out.end(), l.begin(), l.end());
+    }
+    return out;
+  };
+  auto first = [](const std::vector<float>& x) {
+    for (std::size_t i = 0; i < x.size(); ++i) if (x[i] > 0.15f) return static_cast<long>(i);
+    return -1L;
+  };
+  auto a = render(4096), b = render(64), c = render(37 * 8);
+  CHECK(first(a) == first(b) && first(a) == first(c));
+  CHECK(first(a) >= 3000 && first(a) < 3000 + 64);
+  double worst = 0;
+  for (std::size_t i = 0; i < 8192; ++i) worst = std::max({worst, static_cast<double>(std::fabs(a[i] - b[i])), static_cast<double>(std::fabs(a[i] - c[i]))});
+  CHECK(worst < 1e-6);
+}
+
+TEST(tune_reads_parameters) {
+  auto s = std::make_unique<LevelSynth>();
+  LevelSynth* syn = s.get();
+  Engine eng(std::move(s), testInfo());
+  eng.prepare(48000, 128);
+  std::vector<float> l(128), r(128);
+  float* o[2] = {l.data(), r.data()};
+  HostTransport ht;
+  eng.params().set(syn->transpose.index, 5);
+  MidiEvent n1 = on(60);
+  n1.sample = 0;
+  eng.process(o, 2, 128, &n1, 1, ht);
+  CHECK_NEAR(syn->lastTuned, 65, 1e-6);
+  // A controller and a note on the same sample: the note hears the moved value.
+  MidiEvent evs[2] = {ccEvent(2, 0.f), on(62)};
+  evs[1].sample = 40;
+  evs[0].sample = 40;
+  eng.process(o, 2, 128, evs, 2, ht);
+  CHECK_NEAR(syn->lastTuned, 50, 1e-6);
+}
+
 TEST(controllers_are_checked) {
   struct Bad : CtlSynth {
     void defineParams(ParamBuilder& b) override { b.add("x").cc(123); }
