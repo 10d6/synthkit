@@ -436,6 +436,10 @@ TEST(synth_json_validation) {
   CHECK_THROWS(SynthInfo::fromJson(Json::parse(R"({"name":"x"})")));
   CHECK_THROWS(SynthInfo::fromJson(Json::parse(R"({"id":"x","pluginCode":"toolong"})")));
   CHECK_THROWS(SynthInfo::fromJson(Json::parse(R"({"id":"x","features":{"voiceModes":["chord"]}})")));
+  CHECK_THROWS(SynthInfo::fromJson(Json::parse(R"({"id":"x","features":{"standardLfos":{"max":20}}})")));
+  CHECK_THROWS(SynthInfo::fromJson(Json::parse(R"({"id":"x","features":{"standardLfos":17}})")));
+  auto u = SynthInfo::fromJson(Json::parse(R"({"id":"x","features":{"standardLfos":{}}})"));
+  CHECK(u.features.userLfos && u.features.standardLfos == 8 && u.features.lfosStart == 1);
   auto i = SynthInfo::fromJson(Json::parse(R"({"id":"x"})"));
   CHECK(i.features.voices == 8 && i.features.ampEnv);
 }
@@ -491,6 +495,33 @@ TEST(synced_lfo_is_locked_to_the_beat) {
   CHECK_NEAR(modAt(1.2), 1.0, 1e-3);   // first half of each beat: +1
   CHECK_NEAR(modAt(1.7), 0.0, 1e-3);   // second half: -1
   CHECK_NEAR(modAt(3.25), 1.0, 1e-3);
+}
+
+// The player adds LFOs (standardLfos: { max, start }): sk.lfos says how many
+// are in use, and the rest are silent.
+TEST(user_lfos_in_use) {
+  Harness h(256, R"(,"standardLfos":{"max":3,"start":1},"modSlots":8)");
+  auto& ps = h.eng->params();
+  CHECK(h.param("lfo3.rate") >= 0);
+  int n = h.param("sk.lfos");
+  CHECK(n >= 0 && ps.spec(n).hidden && ps.get(n) == 1);
+  for (const char* l : {"lfo1", "lfo2"}) {
+    ps.set(h.param((std::string(l) + ".shape").c_str()), 4);   // square, synced to 1/4
+    ps.set(h.param((std::string(l) + ".sync").c_str()), 1);
+    ps.set(h.param((std::string(l) + ".division").c_str()), 6);
+  }
+  loadMod(h, R"({"mod":[{"src":"lfo2","dst":"mod","amt":0.5}]})");
+  ps.set(h.param("mod"), 0.5);
+  h.run(48000, {{0, on(60)}});
+  CHECK_NEAR(modAt(0.25), 0.5, 1e-3);   // lfo2 not in use: no movement
+  ps.set(n, 2);
+  h.run(48000, {});
+  CHECK_NEAR(modAt(2.25), 1.0, 1e-3);   // in use: it moves
+  // The count is saved with the patch.
+  Json p = h.eng->savePatch();
+  ps.set(n, 0);
+  CHECK(h.eng->loadPatch(p).ok);
+  CHECK(ps.get(n) == 2);
 }
 
 TEST(per_voice_lfo_and_fade) {

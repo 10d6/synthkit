@@ -75,6 +75,60 @@ function skAddControls(app, target, specs) {
   return out;
 }
 
+// ---- LFOs the player adds (synth.json standardLfos: { max, start }) --------------
+// sk.lfos says how many are in use; the rest are silent and out of sight.
+
+function skLfosInUse(model) { return model.param("sk.lfos") ? Math.round(model.get("sk.lfos")) : model.mod.lfos; }
+// False for an LFO (or one of its parameters) that isn't in use.
+function skLfoInUse(model, id) {
+  const m = /^lfo(\d+)(\.|$)/.exec(id || "");
+  return !m || Number(m[1]) <= skLfosInUse(model);
+}
+function skLfoParams(model, n) { return model.params.filter((p) => p.id.startsWith(`lfo${n}.`)); }
+
+function skAddLfo(app) {
+  const m = app.model, n = skLfosInUse(m), cap = m.param("sk.lfos");
+  if (!cap || n >= cap.max) return;
+  for (const p of skLfoParams(m, n + 1)) m.reset(p.index);   // a fresh LFO
+  m.set("sk.lfos", n + 1, "ui");
+}
+
+// Removing LFO k moves the ones after it down a place (settings, routes and
+// MIDI-learned controllers go with them), so the LFOs in use stay 1…n.
+function skRemoveLfo(app, k) {
+  const m = app.model, n = skLfosInUse(m);
+  if (!m.param("sk.lfos") || k < 1 || k > n) return;
+  const names = skLfoParams(m, k).map((p) => p.id.slice(`lfo${k}.`.length));
+  for (let j = k; j < n; j++) for (const s of names) m.set(`lfo${j}.${s}`, m.get(`lfo${j + 1}.${s}`), "ui");
+  for (const s of names) m.reset(`lfo${n}.${s}`);
+  // lfo(k+1) → lfo(k), …; lfo(k) itself → null (gone).
+  const move = (id) => {
+    const x = /^lfo(\d+)(\..+)?$/.exec(id || "");
+    if (!x) return id;
+    const i = Number(x[1]);
+    return i === k ? null : i > k ? `lfo${i - 1}${x[2] || ""}` : id;
+  };
+  let dropped = 0;
+  if (m.mod.slots) {
+    const routes = [];
+    for (const r of m.routes()) {
+      const src = move(r.src), dst = move(r.dst), via = r.via ? move(r.via) : undefined;
+      if (src === null || dst === null || via === null) { dropped++; continue; }
+      routes.push(via ? { ...r, src, dst, via } : { ...r, src, dst });
+    }
+    m.setRoutes(routes);
+  }
+  if (app.midi && app.midi.map) {
+    const map = {};
+    for (const [cc, id] of Object.entries(app.midi.map)) { const to = move(id); if (to) map[cc] = to; }
+    app.midi.map = map;
+    skStore.set(app.midi.key, map);
+    app.refreshLearned();
+  }
+  m.set("sk.lfos", n - 1, "ui");
+  app.toast(`Removed LFO ${k}` + (dropped ? ` and ${dropped === 1 ? "its route" : `its ${dropped} routes`}` : "") + (k < n ? `. LFO${n - k > 1 ? "s" : ""} after it moved up one.` : "."));
+}
+
 // ---- LFO panel --------------------------------------------------------------------
 
 class LfoPanel {
@@ -108,6 +162,13 @@ class LfoPanel {
     });
     this.dot.setAttribute("visibility", "hidden");
     this.root = root;
+    // The player adds and removes LFOs: show this one only while it's in use.
+    if (m.param("sk.lfos")) {
+      root.querySelector(".panel-title").append(h("button", { type: "button", class: "panel-remove", "aria-label": `Remove LFO ${n}`, title: `Remove LFO ${n}`, onclick: () => skRemoveLfo(app, n) }, "×"));
+      const show = (v) => { root.hidden = n > Math.round(v); };
+      m.on("sk.lfos", show);
+      show(m.get("sk.lfos"));
+    }
   }
   draw() {
     const shape = Math.round(this.m.get(this.pre + "shape"));
@@ -735,7 +796,10 @@ function skSourceSelect(model, value, onchange, allowNone) {
   const used = new Set();
   for (const [label, test] of SK_SOURCE_GROUPS) {
     const og = h("optgroup", { label });
-    for (const s of model.mod.sources) if (test(s)) { og.append(h("option", { value: s.id, text: s.name })); used.add(s.id); }
+    for (const s of model.mod.sources) if (test(s)) {
+      used.add(s.id);
+      if (skLfoInUse(model, s.id) || s.id === value) og.append(h("option", { value: s.id, text: s.name }));
+    }
     if (og.children.length) sel.append(og);
   }
   const custom = model.mod.sources.filter((s) => !used.has(s.id));
@@ -822,6 +886,8 @@ class MatrixPanel {
     // Rows edit the matrix themselves; rebuilding them mid-drag would end the
     // drag, so only rebuild for changes made elsewhere (presets, Modulate…).
     this.m.onMod(() => { if (!this.editing) this.build(); });
+    // Sources and destinations follow the LFOs in use.
+    this.m.on("sk.lfos", () => this.build());
     app.modMeters.on((mm) => this.meter(mm));
     this.build();
   }
@@ -835,6 +901,7 @@ class MatrixPanel {
     }
     const dsts = this.m.modulatable();
     routes.forEach((r, i) => {
+      const shown = dsts.filter((p) => skLfoInUse(this.m, p.id) || p.id === r.dst);
       const update = (patch) => { const next = this.m.routes(); Object.assign(next[i], patch); if (patch.via === "") delete next[i].via; this.m.setRoutes(next); };
       const setAmt = (v) => {
         const next = this.m.routes();
@@ -846,7 +913,7 @@ class MatrixPanel {
       src.setAttribute("aria-label", `Route ${i + 1} source`);
       const dst = h("select", { class: "menu-select", "aria-label": `Route ${i + 1} destination`, onchange: () => update({ dst: dst.value }) });
       const groups = new Map();
-      for (const p of dsts) {
+      for (const p of shown) {
         const g = p.group || "Sound";
         if (!groups.has(g)) groups.set(g, h("optgroup", { label: g }));
         groups.get(g).append(h("option", { value: p.id, text: p.name }));
@@ -870,8 +937,9 @@ class MatrixPanel {
   addRoute(src, dst, amt = 0.25) {
     const routes = this.m.routes();
     if (routes.length >= this.m.mod.slots) { this.app.toast(`All ${this.m.mod.slots} modulation routes are in use. Remove one to add another.`); return false; }
-    const firstLfo = this.m.mod.sources.find((s) => s.id.startsWith("lfo")) || this.m.mod.sources[0];
-    routes.push({ src: src || firstLfo.id, dst: dst || this.m.modulatable()[0].id, amt });
+    const firstLfo = this.m.mod.sources.find((s) => /^lfo\d/.test(s.id) && skLfoInUse(this.m, s.id)) || this.m.mod.sources[0];
+    const firstDst = this.m.modulatable().find((p) => skLfoInUse(this.m, p.id));
+    routes.push({ src: src || firstLfo.id, dst: dst || firstDst.id, amt });
     this.m.setRoutes(routes);
     return true;
   }

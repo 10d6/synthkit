@@ -124,7 +124,7 @@ check the synth against it.
 | `ampEnv` | true | `env1` shapes every voice's output (see §4) |
 | `eventQueue` | 256 | capacity for scheduled events (§4a) |
 | `tempoInPatch` | false | the browser's tempo and time signature are saved in patches and restored with them (§7) |
-| `standardLfos` | 0 | standard LFOs (§6) |
+| `standardLfos` | 0 | standard LFOs (§6): a number (that many, fixed), or `{ "max": 8, "start": 1 }` so the player adds and removes them; up to 16 |
 | `modSlots` | 0 | matrix routes; also adds `sk.pitch`, `sk.level` (§6) |
 | `shapes` | 0 | drawn, tempo-locked curves (§6a) |
 
@@ -212,6 +212,7 @@ element.
 | `bendRange` | always | 0…24 st, default 2 |
 | `unison`, `unisonDetune`, `unisonSpread` | `unison: true` | 1…8; 0…100 ct; 0…1 |
 | `sk.a4` | always | 400…480 Hz, default 440 |
+| `sk.lfos` | `standardLfos: { … }` | LFOs in use, 0…max, default `start`; hidden (§6) |
 | `envN.attack/decay/sustain/release/velocity` | per standard envelope | velocity = how much velocity scales the envelope |
 
 Those IDs, and any ID starting with `sk.`, `env<n>.`, `lfo<n>.` or
@@ -617,7 +618,27 @@ global value.
 and `ctx.shape(n)` give the global ones. This is for logic that doesn't fit the
 matrix.
 
-**Standard LFOs** (`standardLfos: 2` adds `lfo1`, `lfo2`):
+**Standard LFOs** (`standardLfos: 2` adds `lfo1`, `lfo2`). Or let the player
+add them as needed:
+
+```json
+"standardLfos": { "max": 8, "start": 1 }
+```
+
+`max` (1…16, default 8) is how many the synth has, `start` (default 1) how
+many a new patch begins with. The hidden parameter `sk.lfos` says how many
+are in use; it's saved in patches, so each sound keeps its own LFOs. LFOs
+past that number are silent (`ctx.lfo(n)` reads 0) and restart from scratch
+when added. Their parameters still exist, with fixed IDs, as a DAW needs a
+fixed parameter list. On the kit's page (§9, `{ "kit": "lfos" }`) each LFO has
+a remove button, and an **Add LFO** button shows the next one, reset to its
+defaults. Removing LFO 2 of 4 moves LFOs 3 and 4 down to 2 and 3, with their
+settings, matrix routes and MIDI-learned controllers; routes to or from the
+removed one are deleted. A synth that reads a particular LFO in code
+(`ctx.lfo(3)`, a `cc()` mapping to `lfo3.rate`) should use a fixed count
+instead. Raising `max` in a later release is safe; lowering it, or going from
+player-added back to fixed, removes parameters that saved projects use.
+
 
 | Param | |
 |---|---|
@@ -835,7 +856,7 @@ and output panels.
 | Section field | |
 |---|---|
 | `title`, `controls` | a panel of controls |
-| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4) |
+| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `lfos` (every LFO, plus Add LFO and remove buttons when the player adds them; use this rather than `lfo1`… for player-added LFOs), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4) |
 | `wide` | `true` makes the panel take a full row |
 | `info` | text for an ⓘ icon beside the panel's title (kit panels too) |
 | `collapsed` | makes the panel fold at its title: `true` starts folded, `false` starts open |
@@ -845,7 +866,7 @@ can hold:
 
 ```json
 { "tabs": [
-    { "title": "LFOs",   "sections": [ { "kit": "lfo1" }, { "kit": "lfo2" } ] },
+    { "title": "LFOs",   "sections": [ { "kit": "lfos" } ] },
     { "title": "Shapes", "sections": [ { "kit": "shape1" }, { "kit": "shape2" } ] }
 ] },
 { "accordion": [ { "kit": "voices", "collapsed": true }, { "kit": "master" } ], "single": true }

@@ -15,7 +15,7 @@
     ],
     "unison": true,
     "standardEnvelopes": 2,
-    "standardLfos": 2,
+    "standardLfos": { "max": 4, "start": 2 },
     "modSlots": 8,
     "shapes": 2,
     "tempoInPatch": true

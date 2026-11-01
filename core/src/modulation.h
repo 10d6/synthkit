@@ -184,6 +184,7 @@ class Modulation {
   std::vector<LfoP> lfoP_;
   std::vector<ShapeP> shapeP_;
   int pPitch_ = -1, pLevel_ = -1, pAgeSpan_ = -1;
+  int pLfos_ = -1;   // sk.lfos: LFOs in use, when the player adds them
 
   double sr_ = 48000;
   std::vector<float> gsrc_, gvals_, gprev_;

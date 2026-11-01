@@ -409,7 +409,7 @@ class App {
   modulateMenu(ctl, x, y) {
     const items = [];
     for (const [label, test] of SK_SOURCE_GROUPS) {
-      const group = this.model.mod.sources.filter(test);
+      const group = this.model.mod.sources.filter((s) => test(s) && skLfoInUse(this.model, s.id));
       if (!group.length) continue;
       if (items.length) items.push(null);
       for (const s of group) items.push({ label: s.name, run: () => this.addModulation(s, ctl) });

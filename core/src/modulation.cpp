@@ -97,6 +97,8 @@ void Modulation::addKitParams(ParamBuilder& b, const SynthInfo& info) {
     pLevel_ = b.count(); b.addKit("sk.level").name("Voice Level").range(0, 1).def(1).modulatable().group("Modulation");
     pAgeSpan_ = b.count(); b.addKit("sk.ageSpan").name("Note Age Span").range(1, 32).integer().def(4).unit("beats").group("Modulation");
   }
+  if (f.userLfos)
+    pLfos_ = b.count(), b.addKit("sk.lfos").name("LFOs in Use").range(0, f.standardLfos).integer().def(f.lfosStart).hidden().group("Modulation");
   for (int n = 1; n <= f.standardLfos; ++n) {
     std::string p = "lfo" + std::to_string(n) + ".", nm = "LFO " + std::to_string(n) + " ", g = "LFO " + std::to_string(n);
     LfoP l{};
@@ -335,10 +337,18 @@ void Modulation::applyRoutes(const float* src, const float* values, float* out, 
 void Modulation::beginBlock(const float* values, const Transport& t, double, int len, float modwheel, float bend, float aftertouch) {
   curValues_ = values;
   double dt = len / sr_;
+  int inUse = pLfos_ >= 0 ? std::clamp(static_cast<int>(std::lround(values[pLfos_])), 0, nLfo_) : nLfo_;
   for (int l = 0; l < nLfo_; ++l) {
     const auto& P = lfoP_[static_cast<std::size_t>(l)];
     auto& r = glfo_[static_cast<std::size_t>(l)];
     int idx = firstLfo_ + l;
+    if (l >= inUse) {
+      // Not in use: silent, and starts afresh when it's added.
+      srcVoice_[static_cast<std::size_t>(idx)] = 0;
+      gsrc_[static_cast<std::size_t>(idx)] = 0;
+      r = LfoRun{};
+      continue;
+    }
     bool perVoice = choiceAt(values, P.mode) == LfoVoice;
     srcVoice_[static_cast<std::size_t>(idx)] = perVoice || values[P.fade] > 0.0005f;
     if (perVoice) { gsrc_[static_cast<std::size_t>(idx)] = 0; continue; }

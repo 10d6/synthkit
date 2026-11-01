@@ -4,7 +4,7 @@
     { "title": "Oscillator", "controls": [ { "param": "osc.wave" } ] },
     { "title": "Filter", "controls": [ { "param": "filter.cutoff", "size": "large" }, { "param": "filter.reso" } ] },
     { "kit": "env1", "title": "Amp envelope" },
-    { "kit": "lfo1" },
+    { "kit": "lfos" },
     { "kit": "modMatrix", "wide": true },
     { "kit": "voices" },
     { "kit": "master" }
