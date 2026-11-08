@@ -1457,6 +1457,23 @@ std::vector<std::string> Engine::setModMatrix(const Json& routes) {
   core_->mod.loadMatrix(routes, &w);
   return w;
 }
+Json arpGeneratePattern(const Json& s) {
+  detail::ArpGenSettings g;
+  g.steps = static_cast<int>(s["steps"].number(g.steps));
+  g.density = static_cast<float>(s["density"].number(g.density));
+  g.range = static_cast<int>(s["range"].number(g.range));
+  g.leaps = static_cast<float>(s["leaps"].number(g.leaps));
+  g.repetition = static_cast<float>(s["repetition"].number(g.repetition));
+  g.ties = static_cast<float>(s["ties"].number(g.ties));
+  g.chords = static_cast<float>(s["chords"].number(g.chords));
+  g.seed = static_cast<uint64_t>(std::max(0.0, s["seed"].number(1)));
+  auto bank = std::make_unique<detail::ArpBank>();
+  detail::arpGenerate(g, bank->patterns[0]);
+  Json all = Json::object();
+  detail::arpSaveBank(*bank, all);
+  return all["patterns"][0];
+}
+
 Json Engine::shapes() const { return core_->mod.saveShapes(); }
 std::vector<std::string> Engine::setShapes(const Json& s) {
   std::vector<std::string> w;

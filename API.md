@@ -503,6 +503,7 @@ Legato glides between steps.
 | `arp.on` | toggle | off |
 | `arp.mode` | 0 Up, 1 Down, 2 Up/Down, 3 Down/Up, 4 As Played, 5 Random (never the same note twice in a row), 6 Chord (every held note, each step), 7 **Pattern** (a drawn pattern, below) | Up |
 | `arp.pattern` | 1–8: which drawn pattern Pattern mode plays (so pattern changes can be automated) | 1 |
+| `arp.evolve` | 0–100 %: Pattern mode varies the pattern as it repeats (below) | 0 |
 | `arp.octaves` | 1–4: the held notes repeat this many octaves up (Chord moves the whole chord up an octave each step; Pattern ignores it, since its rows reach any octave) | 1 |
 | `arp.rate` | 0 1/1, 1 1/2, 2 1/4., 3 1/4, 4 1/4T, 5 1/8., 6 1/8, 7 1/8T, 8 1/16., 9 1/16, 10 1/16T, 11 1/32 | 1/16 |
 | `arp.gate` | 5–200 %: each note's length, as a share of a step | 50 % |
@@ -550,6 +551,42 @@ selected one, Shift+←/→ change its length, Delete removes it. The lane
 underneath sets velocity or chance per step. **Edit…** clears, copies and
 pastes patterns, shifts them in time or by a chord tone, reverses, flips and
 doubles them. A playhead follows the pattern while a phrase is playing.
+
+**Generating patterns.** **Generate…** in the piano roll draws a pattern that
+is random but shaped like a played line, from a seed (so an idea can be
+found again):
+
+- **Rhythm** leans on the strong steps: downbeats almost always play, and
+  **Density** decides how far it fills in between (sixteenths last).
+- **Motifs and form:** the pattern is built from short motifs (4 steps, or 8
+  in patterns of 32 or more) arranged in a form: AABA or AAAB with high
+  **Repetition**, ABAB or ABAC in the middle, ABCB or ABCD with low. Repeats
+  come back slightly changed (shifted a chord tone, a new last note, an
+  offbeat added or dropped) more often with less repetition.
+- **Melody:** each motif follows a contour (rising, falling, arch or valley)
+  over chord tones within **Range**, mostly by step; **Leaps** makes jumps,
+  and a leap is followed by a step back. The first motif starts on the
+  lowest chord tone, on the downbeat; later ones start at a contrasting
+  height; the last note leans back towards the start so the loop joins up.
+- **Accents** follow the beat (with a little humanising), **Ties** hold notes
+  into the rests after them, and **Chords** adds a second chord tone on
+  strong steps.
+
+**New idea** draws from a new seed; after that, moving a slider (or changing
+the length) redraws the same idea, until the pattern is edited by hand.
+**Undo** brings back the pattern from before. The result is an ordinary
+pattern: edit it, save it with the patch. Pages and custom widgets can call
+the same generator: `sk::arpGeneratePattern(settings)` (in `engine.h`) takes
+`{ steps, density, range, leaps, repetition, ties, chords, seed }` and
+returns one pattern in the `"sk.arp"` format.
+
+**Evolve** (`arp.evolve`) changes the pattern as it plays: each time it comes
+round, there's a chance (rising with the amount) that a note or two moves a
+chord tone, a step earlier or later, drops out (or comes back), or gets
+louder or softer. Changes accumulate, but at most about half the notes (at
+100 %) differ from the drawn pattern at once, so it stays recognisable. The
+drawn pattern itself doesn't change, and each phrase starts from it again.
+It's deterministic per phrase, like everything else here.
 
 **Two envelopes.** Both are applied by the kit, like the amp envelope (§4):
 

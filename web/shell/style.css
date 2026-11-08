@@ -412,6 +412,13 @@ button, input, select { font: inherit; color: inherit; }
 .arp-lane-bar.is-sel { opacity: 1; stroke: var(--ink); stroke-width: 1; }
 .arp-head { fill: var(--ink); opacity: 0.08; pointer-events: none; }
 .arp-hint { margin: 6px 0 0; }
+.arp-gen { border: 1px solid var(--edge); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: flex-end; }
+.arp-gen-sliders { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.arp-gen-field { display: flex; flex-direction: column; gap: 2px; min-width: 120px; }
+.arp-gen-field .arp-label { display: inline-flex; align-items: center; gap: 4px; }
+.arp-gen-field input[type=range] { width: 130px; accent-color: var(--accent); }
+.arp-gen-actions { display: flex; align-items: center; gap: 8px; }
+.arp-gen-seed { color: var(--ink-soft); font-size: 12px; }
 
 .matrix { display: flex; flex-direction: column; gap: 8px; }
 .matrix-empty { margin: 0; color: var(--ink-soft); }

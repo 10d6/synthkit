@@ -49,6 +49,22 @@ struct ArpBank {
   std::array<ArpPattern, kArpPatterns> patterns{};
 };
 
+// The pattern generator (arpgen.cpp): a seeded, musical random pattern.
+struct ArpGenSettings {
+  int steps = 16;
+  float density = 0.6f;      // how many steps play (strong steps first)
+  int range = 5;             // how many chord tones the line spans
+  float leaps = 0.3f;        // jumps rather than steps
+  float repetition = 0.6f;   // motifs repeat (AABA) rather than vary (ABCD)
+  float ties = 0.2f;         // notes held into the rests after them
+  float chords = 0.f;        // a second chord tone on strong steps
+  uint64_t seed = 1;
+};
+void arpGenerate(const ArpGenSettings& g, ArpPattern& out);
+// Evolve: change a note or two of `work` (a copy of `original`) for the next
+// cycle, keeping it recognisable. Allocation-free.
+void arpEvolve(const ArpPattern& original, ArpPattern& work, float amount, dsp::Rng& r);
+
 ArpBank arpDefaultBank();
 void arpSaveBank(const ArpBank& b, Json& j);
 void arpLoadBank(const Json& j, ArpBank& b);
@@ -57,7 +73,7 @@ enum ArpSync { ArpSyncGrid, ArpSyncKey };
 
 struct ArpParams {
   int on = -1, mode = -1, octaves = -1, rate = -1, gate = -1, swing = -1, latch = -1, sync = -1;
-  int velMode = -1, velFixed = -1, pattern = -1;
+  int velMode = -1, velFixed = -1, pattern = -1, evolve = -1;
   int envMode = -1, a = -1, d = -1, s = -1, r = -1;      // note envelope
   int pa = -1, pd = -1, ps = -1, pr = -1;                // phrase envelope
 };
@@ -154,6 +170,11 @@ class Arp {
   int nStepMarks_ = 0;
   uint64_t phraseCount_ = 0;
   std::array<Off, kMaxOffs> offs_{};
+  // Evolve: the pattern as it's playing now, varied cycle by cycle.
+  ArpPattern evolved_{};
+  int evolvedFrom_ = -1;                  // pattern index it was copied from
+  uint32_t evolvedGen_ = 0;               // the bank's generation then
+  dsp::Rng evolveRng_{0xE70};
   int nOffs_ = 0;
 };
 

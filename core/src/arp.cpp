@@ -101,6 +101,7 @@ void Arp::addParams(ParamBuilder& b) {
   P.velMode = b.count(); b.addKit("arp.velMode").name("Arp Velocity").choices({"Played", "Fixed"}).group(g);
   P.velFixed = b.count(); b.addKit("arp.velFixed").name("Arp Fixed Velocity").range(1, 127).integer().def(100).group(g);
   P.pattern = b.count(); b.addKit("arp.pattern").name("Arp Pattern").range(1, kArpPatterns).integer().def(1).group(g);
+  P.evolve = b.count(); b.addKit("arp.evolve").name("Arp Evolve").range(0, 100).def(0).unit("%").group(g);
   P.envMode = b.count(); b.addKit("arp.envMode").name("Arp Envelope").choices({"Off", "Multiply", "Replace"}).def(ArpEnvMultiply).group(ge);
   P.a = b.count(); b.addKit("arp.attack").name("Arp Attack").range(0.0005, 10).log().def(0.002).unit("s").group(ge);
   P.d = b.count(); b.addKit("arp.decay").name("Arp Decay").range(0.001, 20).log().def(0.3).unit("s").group(ge);
@@ -315,6 +316,8 @@ void Arp::newPhrase(const MidiEvent& e) {
   rng_.seed(dsp::hashSeed(phraseCount_, 0xA4Fu, static_cast<uint64_t>(e.note)));
   lastRandom_ = -1;
   start(blockStart_ + std::clamp(e.sample, 0, frames_ - 1) / spb_);
+  evolvedFrom_ = -1;   // each phrase starts from the pattern as drawn
+  evolveRng_.seed(dsp::hashSeed(phraseCount_, 0xE70u, 0));
 }
 
 void Arp::addNote(const MidiEvent& e) {
@@ -439,9 +442,22 @@ void Arp::step(int sample) {
     if (mode == ArpPatternMode) {
       // The drawn pattern: each note's row picks a chord tone.
       const ArpPattern* pat = nullptr;
-      if (bank_) pat = &bank_->read().patterns[static_cast<std::size_t>(std::clamp(static_cast<int>(std::lround(get(P.pattern))) - 1, 0, kArpPatterns - 1))];
+      const int pi = std::clamp(static_cast<int>(std::lround(get(P.pattern))) - 1, 0, kArpPatterns - 1);
+      if (bank_) pat = &bank_->read().patterns[static_cast<std::size_t>(pi)];
       const int steps = pat ? std::clamp(pat->steps, 1, kArpMaxSteps) : 1;
       const int p = static_cast<int>(k % steps);
+      // Evolve: play a copy that changes a little each time round.
+      const float evolve = std::clamp(get(P.evolve) / 100.f, 0.f, 1.f);
+      if (pat && evolve > 0) {
+        if (evolvedFrom_ != pi || evolvedGen_ != bank_->generation()) {
+          evolved_ = *pat;
+          evolvedFrom_ = pi;
+          evolvedGen_ = bank_->generation();
+        } else if (p == 0 && k > 0) {
+          arpEvolve(*pat, evolved_, evolve, evolveRng_);
+        }
+        pat = &evolved_;
+      }
       if (pat)
         for (int i = 0; i < std::min(pat->count, kArpMaxPatternNotes); ++i) {
           const ArpPatternNote& n = pat->notes[static_cast<std::size_t>(i)];

@@ -1363,6 +1363,105 @@ TEST(arp_without_a_matrix) {
   CHECK(found);
 }
 
+static Json gen(double density, double leaps, double repetition, int seed, int steps = 16, int range = 5) {
+  Json s = Json::object();
+  s["steps"] = steps; s["density"] = density; s["leaps"] = leaps; s["repetition"] = repetition; s["seed"] = seed; s["range"] = range;
+  return arpGeneratePattern(s);
+}
+
+TEST(arp_generator_is_seeded_and_bounded) {
+  CHECK(gen(0.5, 0.3, 0.6, 7) == gen(0.5, 0.3, 0.6, 7));
+  int differ = 0;
+  for (int seed = 1; seed < 20; ++seed) differ += !(gen(0.5, 0.3, 0.6, seed) == gen(0.5, 0.3, 0.6, seed + 100));
+  CHECK(differ >= 17);
+  for (int seed = 1; seed < 200; ++seed) {
+    Json p = gen(seed % 10 / 9.0, seed % 7 / 6.0, seed % 5 / 4.0, seed, 4 + seed % 61, 2 + seed % 9);
+    const int steps = static_cast<int>(p["steps"].number());
+    bool downbeat = false;
+    for (auto& n : p["notes"].items()) {
+      const int st = static_cast<int>(n[0].number()), row = static_cast<int>(n[1].number()), len = static_cast<int>(n[2].number());
+      CHECK(st >= 0 && st < steps && len >= 1 && st + len <= steps);
+      CHECK(row >= 0 && row <= 2 + seed % 9 + 1);   // within the range (double stops two rows up)
+      downbeat |= st == 0 && row == 0;
+    }
+    CHECK(downbeat);   // every pattern starts on the first chord tone, on the downbeat
+  }
+}
+
+TEST(arp_generator_is_musical) {
+  // Over many seeds: strong steps play more often than weak ones; density
+  // adds notes; leaps make bigger jumps; more repetition repeats the motif.
+  double strong = 0, weak = 0, nLow = 0, nHigh = 0, leapSmall = 0, leapBig = 0, repLow = 0, repHigh = 0;
+  auto onsets = [](const Json& p) { std::vector<std::vector<int>> at(16); for (auto& n : p["notes"].items()) at[static_cast<std::size_t>(n[0].number())].push_back(static_cast<int>(n[1].number())); return at; };
+  auto bigJumps = [](const Json& p) {
+    int prev = -999, big = 0, all = 0;
+    for (auto& n : p["notes"].items()) { int r = static_cast<int>(n[1].number()); if (prev != -999) { ++all; big += std::abs(r - prev) >= 2; } prev = r; }
+    return all ? static_cast<double>(big) / all : 0.0;
+  };
+  for (int seed = 1; seed <= 300; ++seed) {
+    auto at = onsets(gen(0.5, 0.3, 0.6, seed));
+    for (int st = 0; st < 16; ++st) (st % 4 == 0 ? strong : weak) += at[static_cast<std::size_t>(st)].empty() ? 0 : (st % 4 == 0 ? 1.0 / 4 : 1.0 / 12);
+    nLow += gen(0.2, 0.3, 0.6, seed)["notes"].size();
+    nHigh += gen(0.9, 0.3, 0.6, seed)["notes"].size();
+    leapSmall += bigJumps(gen(0.6, 0.0, 0.6, seed, 16, 8));
+    leapBig += bigJumps(gen(0.6, 1.0, 0.6, seed, 16, 8));
+    for (double rep : {0.0, 1.0}) {
+      Json p = gen(0.6, 0.3, rep, seed);
+      auto a = onsets(p);
+      int same = 0;
+      for (int o = 0; o < 4; ++o) same += a[static_cast<std::size_t>(o)] == a[static_cast<std::size_t>(o + 4)];
+      (rep > 0.5 ? repHigh : repLow) += same;
+    }
+  }
+  CHECK(strong > 1.4 * weak);
+  CHECK(nHigh > 1.8 * nLow);
+  CHECK(leapBig > leapSmall + 0.15);
+  CHECK(repHigh > 1.3 * repLow);
+}
+
+TEST(arp_evolve_varies_but_stays_close) {
+  auto cycles = [](double evolve) {
+    Harness h(256, kArp);
+    arpOn(h, {{"arp.mode", 7}, {"arp.evolve", evolve}, {"arp.gate", 40}});
+    Json bank = h.eng->customState("sk.arp");
+    bank["patterns"][0] = gen(0.8, 0.3, 0.6, 11, 8);
+    CHECK(h.eng->setCustomState("sk.arp", bank));
+    h.run(6000 * 8 * 12, {{0, on(60)}, {0, on(64)}, {0, on(67)}});
+    std::vector<std::vector<int>> per(12);
+    for (auto& s : gLog.starts) per[static_cast<std::size_t>(std::min(11.0, std::floor(s.beat / 2.0 + 1e-6)))].push_back(s.note);
+    return per;
+  };
+  auto still = cycles(0);
+  for (auto& c : still) CHECK(c == still[0]);
+  auto moving = cycles(100);
+  CHECK(moving[0] == still[0]);            // the first time round is as drawn
+  int changed = 0;
+  for (std::size_t i = 1; i < moving.size(); ++i) changed += moving[i] != still[0];
+  CHECK(changed >= 6);
+  // Recognisable: each cycle still shares most of its notes with the original.
+  for (auto& c : moving) {
+    std::vector<int> x = c, y = still[0], both;
+    std::sort(x.begin(), x.end()); std::sort(y.begin(), y.end());
+    std::set_intersection(x.begin(), x.end(), y.begin(), y.end(), std::back_inserter(both));
+    CHECK(both.size() * 2 >= y.size());
+  }
+  // And it doesn't depend on the block size.
+  auto again = [&](int block) {
+    Harness h(block, kArp);
+    arpOn(h, {{"arp.mode", 7}, {"arp.evolve", 70}});
+    Json bank = h.eng->customState("sk.arp");
+    bank["patterns"][0] = gen(0.8, 0.3, 0.6, 11, 8);
+    h.eng->setCustomState("sk.arp", bank);
+    h.run(24000, {}, block);
+    const long p0 = h.pos;
+    return h.run(6000 * 40, {{p0, on(60)}, {p0, on(64)}, {p0, on(67)}}, block);
+  };
+  auto a = again(256), b = again(37);
+  double worst = 0;
+  for (std::size_t i = 0; i < a.size(); ++i) worst = std::max(worst, static_cast<double>(std::fabs(a[i] - b[i])));
+  CHECK(worst < 1e-5);
+}
+
 TEST(arp_sources_and_reserved_ids) {
   Harness h(256, kArp);
   bool env = false, phrase = false, step = false;
