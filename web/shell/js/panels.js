@@ -7,17 +7,38 @@ const KIT_PANELS = {
     ["unisonSpread", "Spread"], ["bendRange", "Bend"]] },
   master: { title: "Output", controls: [["master", "Level"], ["sk.a4", "A4"]] },
   // The arpeggiator (features.arp, API.md §4b).
-  arp: { title: "Arpeggiator", feature: "arp.on", info: "Plays held keys one after another, locked to the tempo. Latch keeps the chord after you let go; a new chord replaces it.", controls: [
-    ["arp.on", "On"], ["arp.mode", "Mode"], ["arp.rate", "Rate"], ["arp.octaves", "Octaves"], ["arp.gate", "Gate",
+  arp: { title: "Arp / Sequencer", feature: "arp.on",
+    info: "Arp plays the keys you hold one after another, locked to the tempo. Sequencer lets each key play as usual and adds its own copy of the pattern below: notes at intervals from that key. Latch keeps it going after you let go; the next key you press starts afresh.",
+    // Each mode shows only its own controls.
+    show: {
+      "arp.mode": (m) => Math.round(m.get("arp.on")) === 1, "arp.octaves": (m) => Math.round(m.get("arp.on")) === 1, "arp.sync": (m) => Math.round(m.get("arp.on")) === 1,
+      "arp.scaleKey": (m) => Math.round(m.get("arp.on")) === 2, "arp.scale": (m) => Math.round(m.get("arp.on")) === 2, "arp.seqSync": (m) => Math.round(m.get("arp.on")) === 2,
+      "arp.keyLevel": (m) => Math.round(m.get("arp.on")) === 2, "arp.seqLevel": (m) => Math.round(m.get("arp.on")) === 2,
+      "arp.evolve": (m) => Math.round(m.get("arp.on")) === 2 || (Math.round(m.get("arp.on")) === 1 && Math.round(m.get("arp.mode")) === 7),
+    },
+    controls: [
+    ["arp.on", "Type"], ["arp.mode", "Mode"], ["arp.scale", "Scale",
+      "Chromatic: the pattern's rows are semitones from each key. A scale: rows are steps along it, so every key's sequence stays in that one key (the key you play itself is never changed)."],
+    ["arp.scaleKey", "Key"], ["arp.rate", "Rate"], ["arp.octaves", "Octaves"], ["arp.gate", "Gate",
       "Each note's length, as a share of a step. Over 100% notes overlap (in Mono or Legato voice mode they glide)."],
     ["arp.swing", "Swing", "Delays every other step. At 100% the late steps sit a third of a step behind: a triplet feel."],
     ["arp.latch", "Latch"], ["arp.sync", "Sync", "Grid: steps fall on the song's grid. Key: steps count from the first key of a phrase."],
-    ["arp.velMode", "Velocity"], ["arp.velFixed", "Fixed vel."]] },
-  arpEnv: { title: "Arp note envelope", feature: "arp.on", env: ["arp.attack", "arp.decay", "arp.sustain", "arp.release"],
-    info: "An envelope for each note the arpeggiator plays. Multiply puts it on top of the synth's own envelope; Replace uses it instead of the kit's amp envelope (a synth that shapes its own attack keeps that, so Replace may not line up with every synth).",
-    controls: [["arp.envMode", "Mode"], ["arp.attack", "Attack"], ["arp.decay", "Decay"], ["arp.sustain", "Sustain"], ["arp.release", "Release"]] },
-  arpPhrase: { title: "Arp phrase envelope", feature: "arp.on", env: ["arp.phraseAttack", "arp.phraseDecay", "arp.phraseSustain", "arp.phraseRelease"],
-    info: "The arpeggiator's overall volume. It starts with the first key and releases after the last; the arpeggio keeps playing through the release, so it fades out instead of stopping. Only arpeggiated notes follow it.",
+    ["arp.seqSync", "Sync", "Key: each key's sequence starts from step 1 when you press it. Grid: it joins the pattern where the song's grid is, so every key's sequence lines up."],
+    ["arp.velMode", "Velocity"], ["arp.velFixed", "Fixed vel."],
+    ["arp.evolve", "Evolve", "Each time the pattern comes round, a note or two changes (a step up or down, a little earlier or later, left out, louder or softer), so it evolves while staying recognisable. Each phrase (each key, in Sequencer) starts from the pattern as drawn."],
+    ["arp.keyLevel", "Key level", "The keys you play, while the sequencer is on. The synth's master level applies to both."],
+    ["arp.seqLevel", "Seq level", "The notes the sequencer adds."]] },
+  arpEnv: { title: "Note envelope", feature: "arp.on", env: ["arp.attack", "arp.decay", "arp.sustain", "arp.release"],
+    info: "An envelope for each note the arpeggiator or sequencer plays. Multiply puts it on top of the synth's own envelope; Replace uses it instead of the kit's amp envelope (a synth that shapes its own attack keeps that, so Replace may not line up with every synth). Crossfade has no attack or release shape: each note fades in as the one before fades out, with equal-power curves; the same pitch twice in a row just carries on.",
+    show: {
+      "arp.attack": (m) => Math.round(m.get("arp.envMode")) === 1 || Math.round(m.get("arp.envMode")) === 2, "arp.decay": (m) => Math.round(m.get("arp.envMode")) === 1 || Math.round(m.get("arp.envMode")) === 2,
+      "arp.sustain": (m) => Math.round(m.get("arp.envMode")) === 1 || Math.round(m.get("arp.envMode")) === 2, "arp.release": (m) => Math.round(m.get("arp.envMode")) === 1 || Math.round(m.get("arp.envMode")) === 2,
+      "arp.xfade": (m) => Math.round(m.get("arp.envMode")) === 3, envPreview: (m) => Math.round(m.get("arp.envMode")) === 1 || Math.round(m.get("arp.envMode")) === 2,
+    },
+    controls: [["arp.envMode", "Mode"], ["arp.attack", "Attack"], ["arp.decay", "Decay"], ["arp.sustain", "Sustain"], ["arp.release", "Release"],
+      ["arp.xfade", "Crossfade", "How long each fade takes, as a share of a step. At 100% one note dissolves into the next across the whole step."]] },
+  arpPhrase: { title: "Phrase envelope", feature: "arp.on", env: ["arp.phraseAttack", "arp.phraseDecay", "arp.phraseSustain", "arp.phraseRelease"],
+    info: "The volume of what the arpeggiator or sequencer plays (the keys themselves don't follow it). It starts with a key and releases when you let go; the notes keep playing through the release, so they fade out instead of stopping. In Sequencer, each key has its own.",
     controls: [["arp.phraseAttack", "Attack"], ["arp.phraseDecay", "Decay"], ["arp.phraseSustain", "Sustain"], ["arp.phraseRelease", "Release"]] },
 };
 
@@ -280,9 +301,21 @@ class Panels {
     if (!controls.children.length) return null;
     const sec = h("section", { class: "panel" + (s.wide ? " is-wide" : "") },
       h("h2", { class: "panel-title", text: s.title || "" }));
-    if (s.env) sec.append(new EnvPreview(this.model, s.env).root);
+    const preview = s.env ? new EnvPreview(this.model, s.env).root : null;
+    if (preview) sec.append(preview);
     if (spec.kit && s.info) sec.skKitInfo = s.info;   // a kit panel's own ⓘ text, unless the layout gives one
     sec.append(controls);
+    if (s.show) {
+      // Controls that only apply in some modes come and go with them.
+      const update = () => {
+        for (const [id, fn] of Object.entries(s.show)) {
+          const el = id === "envPreview" ? preview : controls.querySelector(`[data-param="${id}"]`);
+          if (el) el.hidden = !fn(this.model);
+        }
+      };
+      for (const id of ["arp.on", "arp.mode", "arp.envMode"]) if (this.model.param(id)) this.model.on(id, update);
+      update();
+    }
     return sec;
   }
 

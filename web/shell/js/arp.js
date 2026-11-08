@@ -1,8 +1,10 @@
-// The arpeggiator's pattern editor (API.md §4b): a piano roll whose rows are
-// chord tones. Row 1 is the lowest held note, row 2 the next, and rows past
-// the held notes carry on an octave up (rows below 1, an octave down). The
-// patterns are custom state "sk.arp": { patterns: [{ steps, notes: [[step,
-// row, length, velocity, chance?], …] } × 8] }, and `arp.pattern` picks one.
+// The pattern editor for the arpeggiator and the sequencer (API.md §4b): a
+// piano roll. For the arpeggiator its rows are chord tones (row 1 the lowest
+// held note; rows past the held notes carry on an octave up). For the
+// sequencer they're intervals from each key: semitones, or scale steps with a
+// scale set. Each has its own bank of patterns, custom state "sk.arp" and
+// "sk.seq": { patterns: [{ steps, notes: [[step, row, length, velocity,
+// chance?], …] } × 8] }, and `arp.pattern` picks one.
 
 const SK_ARP = { patterns: 8, maxSteps: 64, rowLo: -24, rowHi: 47, patternMode: 7 };
 let skArpClipboard = null;
@@ -43,19 +45,24 @@ class ArpPatternPanel {
     laneSeg.append(...this.laneBtns);
 
     this.toolsBtn = h("button", { type: "button", class: "btn btn-small btn-quiet", onclick: (e) => this.toolsMenu(e) }, "Edit…");
+    this.genBtn = h("button", { type: "button", class: "btn btn-small", "aria-expanded": "false", onclick: () => this.toggleGen() }, "Generate…");
     this.useBtn = h("button", { type: "button", class: "btn btn-small arp-use", onclick: () => this.m.set("arp.mode", SK_ARP.patternMode) }, "Play this pattern");
     this.bar = h("div", { class: "shape-bar arp-bar" }, h("span", { class: "arp-label", text: "Pattern" }), this.slotSeg,
-      this.stepsBox, laneSeg, this.toolsBtn, this.useBtn);
+      this.stepsBox, laneSeg, this.toolsBtn, this.genBtn, this.useBtn);
+    this.buildGen();
 
     this.svg = svg("svg", { class: "arp-svg", "aria-hidden": "true" });
     this.area = h("div", { class: "shape-area arp-area", tabindex: 0, role: "application",
       "aria-label": "Arp pattern editor. Rows are chord tones: 1 is the lowest held note. Click to add a note, drag to move it, drag its right end to lengthen it, double-click to remove it. Arrow keys move the selected note, Shift with left and right changes its length, Delete removes it." }, this.svg);
     this.hint = h("p", { class: "shape-hint arp-hint", text: "Rows are chord tones: 1 is the lowest note you hold, 2 the next… Rows past the notes you hold play an octave up. Click to add a note; drag to move; drag its end to lengthen; double-click to remove." });
-    root.append(this.bar, this.area, this.hint);
+    root.append(this.bar, this.gen, this.area, this.hint);
 
     this.load();
-    this.m.onCustom("sk.arp", () => { if (!this.committing) { this.load(); this.draw(); } });
-    this.m.on("arp.pattern", () => { this.sel = -1; this.load(); this.syncBar(); this.draw(); });
+    for (const id of ["sk.arp", "sk.seq"]) this.m.onCustom(id, () => { if (!this.committing && id === this.bankId()) { this.load(); this.draw(); } });
+    const retype = () => { this.sel = -1; this.genLive = false; this.undo = null; this.load(); this.syncBar(); this.syncGen(); this.draw(); };
+    this.m.on("arp.on", retype);
+    if (this.m.param("arp.scale")) this.m.on("arp.scale", () => { this.syncBar(); this.draw(); });
+    this.m.on("arp.pattern", () => { this.sel = -1; this.genLive = false; this.undo = null; this.load(); this.syncBar(); this.syncGen(); this.draw(); });
     this.m.on("arp.mode", () => this.syncBar());
     // Playhead: while a phrase is running (its envelope above silence), even
     // between notes, from the arp.step and arp.phrase sources.
@@ -64,7 +71,7 @@ class ArpPatternPanel {
       const iStep = si.get("arp.step");
       this.app.modMeters.onSource("arp.phrase", (phrase) => {
         const mm = this.app.modMeters;
-        const playing = phrase > 1e-4 && Math.round(this.m.get("arp.mode")) === SK_ARP.patternMode && this.m.get("arp.on") >= 0.5;
+        const playing = phrase > 1e-4 && (this.isSeq() || (this.type() === 1 && Math.round(this.m.get("arp.mode")) === SK_ARP.patternMode));
         const step = playing ? Math.round(mm.latest[iStep] * this.pattern.steps) % this.pattern.steps : -1;
         if (step !== this.head) { this.head = step; this.drawHead(); }
       });
@@ -76,9 +83,13 @@ class ArpPatternPanel {
   }
 
   // Data ---------------------------------------------------------------------------
+  type() { return Math.round(this.m.get("arp.on")); }              // 0 off, 1 arp, 2 sequencer
+  isSeq() { return this.type() === 2 && this.m.custom("sk.seq") !== undefined; }
+  bankId() { return this.isSeq() ? "sk.seq" : "sk.arp"; }
+  scaled() { return this.isSeq() && this.m.param("arp.scale") && Math.round(this.m.get("arp.scale")) > 0; }
   index() { return Math.min(SK_ARP.patterns, Math.max(1, Math.round(this.m.get("arp.pattern")))) - 1; }
   load() {
-    const bank = this.m.custom("sk.arp") || {};
+    const bank = this.m.custom(this.bankId()) || {};
     const pats = Array.isArray(bank.patterns) ? bank.patterns : [];
     while (pats.length < SK_ARP.patterns) pats.push({ steps: 16, notes: [] });
     this.bank = { ...bank, patterns: pats };
@@ -87,19 +98,20 @@ class ArpPatternPanel {
     this.notes = (p.notes || []).map((n) => ({ s: n[0] | 0, r: Math.round(n[1] || 0), l: Math.max(1, n[2] | 0 || 1), v: n[3] === undefined ? 100 : n[3] | 0, c: n[4] === undefined ? 100 : n[4] | 0 }));
     if (this.sel >= this.notes.length) this.sel = -1;
   }
-  commit() {
+  commit(byHand) {
+    if (byHand && this.genLive) { this.genLive = false; this.syncGen(); }
     const notes = this.notes
       .filter((n) => n.s >= 0 && n.s < this.pattern.steps)
       .sort((a, b) => a.s - b.s || a.r - b.r)
       .map((n) => (n.c < 100 ? [n.s, n.r, n.l, n.v, n.c] : [n.s, n.r, n.l, n.v]));
     const selNote = this.notes[this.sel];
     // Write only this pattern into the latest bank.
-    const fresh = this.m.custom("sk.arp") || {};
+    const fresh = this.m.custom(this.bankId()) || {};
     const pats = Array.isArray(fresh.patterns) ? fresh.patterns : [];
     while (pats.length < SK_ARP.patterns) pats.push({ steps: 16, notes: [] });
     pats[this.index()] = { steps: this.pattern.steps, notes };
     this.committing = true;
-    this.m.setCustom("sk.arp", { ...fresh, patterns: pats });
+    this.m.setCustom(this.bankId(), { ...fresh, patterns: pats });
     this.committing = false;
     this.load();
     // Keep the selection on the same note after sorting.
@@ -110,8 +122,9 @@ class ArpPatternPanel {
     n = Math.min(SK_ARP.maxSteps, Math.max(1, Math.round(n)));
     if (n === this.pattern.steps) return;
     this.pattern.steps = n;
+    if (this.genLive) { this.generate(false); this.syncBar(); return; }   // a generated pattern is redrawn at the new length
     for (const note of this.notes) note.l = Math.min(note.l, Math.max(1, n - note.s));
-    this.commit();
+    this.commit(true);
     this.syncBar();
   }
 
@@ -120,15 +133,21 @@ class ArpPatternPanel {
     this.slotBtns.forEach((b, i) => b.setAttribute("aria-checked", String(i === idx)));
     this.laneBtns.forEach((b, i) => b.setAttribute("aria-checked", String(["vel", "chance"][i] === this.lane)));
     this.stepsOut.textContent = String(this.pattern.steps);
-    const on = Math.round(this.m.get("arp.mode")) === SK_ARP.patternMode;
-    this.useBtn.hidden = on;
+    // The arpeggiator plays patterns only in Pattern mode; the sequencer always does.
+    this.useBtn.hidden = this.type() !== 1 || Math.round(this.m.get("arp.mode")) === SK_ARP.patternMode;
+    this.hint.textContent = this.isSeq()
+      ? (this.scaled() ? "Rows are steps along the scale, up or down from each key you play (Key is the key itself). Every key gets its own copy of the pattern."
+                       : "Rows are semitones up or down from each key you play (Key is the key itself; ±12 the octaves). Every key gets its own copy of the pattern.")
+        + " Click to add a note; drag to move; drag its end to lengthen; double-click to remove."
+      : "Rows are chord tones: 1 is the lowest note you hold, 2 the next… Rows past the notes you hold play an octave up. Click to add a note; drag to move; drag its end to lengthen; double-click to remove.";
+    this.root.querySelector(".panel-title").textContent = this.isSeq() ? "Sequencer pattern" : "Arp pattern";
   }
 
   // Geometry -------------------------------------------------------------------------
   // Rows shown: always 1–12 and one below, growing to fit the pattern plus a
   // spare row, so a note on the edge row can be dragged further.
   rowRange() {
-    let lo = -1, hi = 11;
+    let [lo, hi] = this.isSeq() ? (this.scaled() ? [-3, 9] : [-5, 12]) : [-1, 11];
     for (const n of this.notes) { lo = Math.min(lo, n.r - 1); hi = Math.max(hi, n.r + 1); }
     return [Math.max(SK_ARP.rowLo, lo), Math.min(SK_ARP.rowHi, hi)];
   }
@@ -179,11 +198,13 @@ class ArpPatternPanel {
     for (let r = L.lo; r <= L.hi; r++) {
       const y = L.gridTop + (L.hi - r) * L.rowH;
       if (r % 2 === 0) g.append(svg("rect", { class: "arp-row-alt", x: L.labelW, y, width: this.W - L.labelW, height: L.rowH }));
-      const t = svg("text", { class: "arp-row-label" + (r === 0 ? " is-root" : ""), x: L.labelW - 6, y: y + L.rowH * 0.72, "text-anchor": "end" });
-      t.textContent = r >= 0 ? String(r + 1) : `−${-r}`;
+      const octave = this.isSeq() && r !== 0 && r % (this.scaled() ? this.scaleSize() : 12) === 0;
+      const t = svg("text", { class: "arp-row-label" + (r === 0 ? " is-root" : "") + (octave ? " is-octave" : ""), x: L.labelW - 6, y: y + L.rowH * 0.72, "text-anchor": "end" });
+      t.textContent = this.rowLabel(r);
       g.append(t);
     }
-    // A line under row 1: below it, the held notes an octave down.
+    // A line under row 1 (the key, for the sequencer): below it, the held
+    // notes an octave down (or intervals below the key).
     const yRoot = L.gridTop + (L.hi + 1) * L.rowH;   // bottom of row index 0
     g.append(svg("line", { class: "arp-root-line", x1: L.labelW, x2: this.W, y1: yRoot, y2: yRoot }));
     // Steps: beats (every 4 steps) stronger.
@@ -223,6 +244,16 @@ class ArpPatternPanel {
     this.svg.append(this.headEl);
     this.drawHead();
   }
+  // Notes per octave in the sequencer's scale (for marking the octave rows).
+  scaleSize() {
+    const name = this.m.param("arp.scale").choices[Math.round(this.m.get("arp.scale"))] || "";
+    return /Pentatonic/.test(name) ? 5 : /Blues|Whole/.test(name) ? 6 : /Chromatic/.test(name) ? 12 : 7;
+  }
+  rowLabel(r) {
+    if (!this.isSeq()) return r >= 0 ? String(r + 1) : `−${-r}`;
+    if (r === 0) return "Key";
+    return r > 0 ? `+${r}` : `−${-r}`;
+  }
   drawHead() {
     if (!this.headEl) return;
     const L = this.layout();
@@ -257,7 +288,7 @@ class ArpPatternPanel {
         this.notes.splice(hit.i, 1);
         this.sel = -1;
         this.area.releasePointerCapture(e.pointerId);
-        this.commit();
+        this.commit(true);
         return;
       }
       if (hit) {
@@ -296,7 +327,7 @@ class ArpPatternPanel {
       if (!drag) return;
       const d = drag;
       drag = null;
-      if (d.kind === "lane" || d.moved) this.dedupe(), this.commit();
+      if (d.kind === "lane" || d.moved) this.dedupe(), this.commit(true);
     };
     this.area.addEventListener("pointerup", end);
     this.area.addEventListener("pointercancel", end);
@@ -307,9 +338,9 @@ class ArpPatternPanel {
       this.sel = hit.i;
       this.draw();
       const n = this.notes[hit.i];
-      const chance = (c) => ({ label: `${c === n.c ? "✓ " : ""}Plays ${c}% of the time`, run: () => { n.c = c; this.commit(); } });
+      const chance = (c) => ({ label: `${c === n.c ? "✓ " : ""}Plays ${c}% of the time`, run: () => { n.c = c; this.commit(true); } });
       this.app.menu(e.clientX, e.clientY, [
-        { label: "Delete note", run: () => { this.notes.splice(hit.i, 1); this.sel = -1; this.commit(); } },
+        { label: "Delete note", run: () => { this.notes.splice(hit.i, 1); this.sel = -1; this.commit(true); } },
         null, chance(100), chance(75), chance(50), chance(25),
       ]);
     });
@@ -340,7 +371,7 @@ class ArpPatternPanel {
       if (e.key === "Delete" || e.key === "Backspace") {
         if (!n) return;
         e.preventDefault(); e.stopPropagation();
-        this.notes.splice(this.sel, 1); this.sel = -1; this.commit();
+        this.notes.splice(this.sel, 1); this.sel = -1; this.commit(true);
         return;
       }
       if (e.key === "," || e.key === ".") {
@@ -361,14 +392,85 @@ class ArpPatternPanel {
         n.r = Math.max(SK_ARP.rowLo, Math.min(SK_ARP.rowHi, n.r + d[1]));
       }
       this.dedupe();
-      this.commit();
+      this.commit(true);
     });
+  }
+
+  // Generator -------------------------------------------------------------------------
+  // Sliders for the kit's pattern generator (API.md §4b). "New idea" draws a
+  // pattern from a new seed; after that, moving a slider redraws it from the
+  // same seed, until the pattern is edited by hand. Undo brings back what was
+  // there before.
+  buildGen() {
+    this.genKey = `synthkit:${this.m.info.synth.id}:arpgen`;
+    const saved = skStore.get(this.genKey, {}) || {};
+    this.genSettings = { density: 0.6, range: 5, leaps: 0.3, repetition: 0.6, ties: 0.2, chords: 0, seed: 1, ...saved };
+    const specs = [
+      ["density", "Density", 0, 1, 0.01, "How many steps play. Low keeps the strong beats; high fills in between."],
+      ["range", "Range", 2, 12, 1, "How many chord tones the line spans (with three held notes, 4 reaches the octave)."],
+      ["leaps", "Leaps", 0, 1, 0.01, "Jumps rather than steps between chord tones. A leap is followed by a step back."],
+      ["repetition", "Repetition", 0, 1, 0.01, "Short motifs that repeat (AABA) or keep changing (ABCD)."],
+      ["ties", "Ties", 0, 1, 0.01, "Notes held into the rests after them."],
+      ["chords", "Chords", 0, 1, 0.01, "A second chord tone on strong steps."],
+    ];
+    this.genInputs = {};
+    const sliders = specs.map(([k, label, min, max, step, info]) => {
+      const input = h("input", { type: "range", min, max, step, value: this.genSettings[k], "aria-label": label,
+        oninput: () => { this.genSettings[k] = Number(input.value); this.saveGen(); if (this.genLive) this.generate(false); } });
+      this.genInputs[k] = input;
+      const name = h("span", { class: "arp-label", text: label });
+      name.append(skInfoButton(info, label));
+      return h("div", { class: "arp-gen-field" }, name, input);
+    });
+    this.seedOut = h("span", { class: "arp-gen-seed" });
+    this.undoBtn = h("button", { type: "button", class: "btn btn-small btn-quiet", disabled: true, onclick: () => this.undoGen() }, "Undo");
+    const idea = h("button", { type: "button", class: "btn btn-small arp-gen-go", onclick: () => this.generate(true) }, "New idea");
+    this.gen = h("div", { class: "arp-gen", hidden: true }, h("div", { class: "arp-gen-sliders" }, ...sliders),
+      h("div", { class: "arp-gen-actions" }, idea, this.undoBtn, this.seedOut));
+    this.syncGen();
+  }
+  toggleGen() {
+    this.gen.hidden = !this.gen.hidden;
+    this.genBtn.setAttribute("aria-expanded", String(!this.gen.hidden));
+  }
+  saveGen() { skStore.set(this.genKey, this.genSettings); }
+  syncGen() {
+    this.seedOut.textContent = this.genLive ? `Idea #${this.genSettings.seed}: the sliders reshape it` : "";
+    this.undoBtn.disabled = !this.undo;
+  }
+  generate(fresh) {
+    if (fresh) {
+      this.genSettings.seed = 1 + Math.floor(Math.random() * 999999);
+      this.saveGen();
+      // Undo returns to the pattern from before this run of ideas.
+      if (!this.genLive) this.undo = { steps: this.pattern.steps, notes: this.notes.map((n) => ({ ...n })) };
+    }
+    // What rows mean: chord tones, semitones or scale steps (API.md §4b).
+    const kind = this.isSeq() ? (this.scaled() ? 2 : 1) : 0;
+    const p = this.m.arpGenerate({ ...this.genSettings, steps: this.pattern.steps, kind });
+    if (!p || !Array.isArray(p.notes)) return;
+    this.notes = p.notes.map((n) => ({ s: n[0], r: n[1], l: n[2], v: n[3], c: n[4] === undefined ? 100 : n[4] }));
+    this.sel = -1;
+    this.commit();
+    this.genLive = true;
+    this.syncGen();
+  }
+  undoGen() {
+    if (!this.undo) return;
+    this.pattern.steps = this.undo.steps;
+    this.notes = this.undo.notes.map((n) => ({ ...n }));
+    this.undo = null;
+    this.genLive = false;
+    this.sel = -1;
+    this.commit();
+    this.syncBar();
+    this.syncGen();
   }
 
   toolsMenu(e) {
     const r = e.currentTarget.getBoundingClientRect();
     const steps = this.pattern.steps;
-    const edit = (fn) => () => { fn(); this.sel = -1; this.dedupe(); this.commit(); };
+    const edit = (fn) => () => { fn(); this.sel = -1; this.dedupe(); this.commit(true); };
     this.app.menu(r.left, r.bottom + 4, [
       { label: "Clear", run: edit(() => { this.notes = []; }) },
       { label: "Copy pattern", run: () => { skArpClipboard = { steps, notes: this.notes.map((n) => ({ ...n })) }; this.app.toast("Pattern copied"); } },

@@ -34,6 +34,16 @@ ArpBank arpDefaultBank() {
   return b;
 }
 
+ArpBank arpDefaultSeqBank() {
+  ArpBank b;
+  // Pattern 1: the octave, fifth, minor seventh and fourth over the key.
+  ArpPattern& p = b.patterns[0];
+  p.steps = 8;
+  const int notes[][3] = {{0, 12, 112}, {2, 7, 90}, {4, 10, 100}, {5, 7, 80}, {7, 5, 88}};
+  for (auto& n : notes) p.notes[static_cast<std::size_t>(p.count++)] = ArpPatternNote{static_cast<int16_t>(n[0]), static_cast<int16_t>(n[1]), 1, static_cast<uint8_t>(n[2]), 100};
+  return b;
+}
+
 void arpSaveBank(const ArpBank& b, Json& j) {
   Json pats = Json::array();
   for (const ArpPattern& p : b.patterns) {
@@ -79,6 +89,46 @@ void arpLoadBank(const Json& j, ArpBank& b) {
   b = out;
 }
 
+double arpRateBeats(int i) { return kRates[std::clamp(i, 0, kRateCount - 1)].beats; }
+
+namespace {
+const ArpScale kScales[] = {
+    {"Chromatic", 12, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}},
+    {"Major", 7, {0, 2, 4, 5, 7, 9, 11}},
+    {"Minor", 7, {0, 2, 3, 5, 7, 8, 10}},
+    {"Dorian", 7, {0, 2, 3, 5, 7, 9, 10}},
+    {"Phrygian", 7, {0, 1, 3, 5, 7, 8, 10}},
+    {"Lydian", 7, {0, 2, 4, 6, 7, 9, 11}},
+    {"Mixolydian", 7, {0, 2, 4, 5, 7, 9, 10}},
+    {"Locrian", 7, {0, 1, 3, 5, 6, 8, 10}},
+    {"Harmonic Minor", 7, {0, 2, 3, 5, 7, 8, 11}},
+    {"Melodic Minor", 7, {0, 2, 3, 5, 7, 9, 11}},
+    {"Major Pentatonic", 5, {0, 2, 4, 7, 9}},
+    {"Minor Pentatonic", 5, {0, 3, 5, 7, 10}},
+    {"Blues", 6, {0, 3, 5, 6, 7, 10}},
+    {"Whole Tone", 6, {0, 2, 4, 6, 8, 10}},
+};
+}  // namespace
+
+const ArpScale& arpScale(int i) { return kScales[std::clamp(i, 0, static_cast<int>(std::size(kScales)) - 1)]; }
+int arpScaleCount() { return static_cast<int>(std::size(kScales)); }
+
+int arpScalePitch(int key, int degrees, int scaleIndex, int scaleRoot) {
+  if (degrees == 0) return key;
+  const ArpScale& sc = arpScale(scaleIndex);
+  if (scaleIndex <= 0) return key + degrees;
+  // The key's place in the scale: the scale note at or below it.
+  const int rel = ((key - scaleRoot) % 12 + 12) % 12;
+  int d = 0;
+  for (int i = 0; i < sc.n; ++i)
+    if (sc.steps[i] <= rel) d = i;
+  const int base = key - rel;               // the scale's root at or below the key
+  const int target = d + degrees;
+  const int oct = target >= 0 ? target / sc.n : -((-target + sc.n - 1) / sc.n);
+  const int idx = target - oct * sc.n;
+  return base + 12 * oct + sc.steps[idx];
+}
+
 const std::vector<std::string>& arpRateNames() {
   static const std::vector<std::string> n = [] {
     std::vector<std::string> v;
@@ -90,7 +140,7 @@ const std::vector<std::string>& arpRateNames() {
 
 void Arp::addParams(ParamBuilder& b) {
   const std::string g = "Arpeggiator", ge = "Arp Note Envelope", gp = "Arp Phrase Envelope";
-  P.on = b.count(); b.addKit("arp.on").name("Arp").toggle().def(0).group(g);
+  P.on = b.count(); b.addKit("arp.on").name("Arp / Sequencer").choices({"Off", "Arp", "Sequencer"}).group(g);
   P.mode = b.count(); b.addKit("arp.mode").name("Arp Mode").choices({"Up", "Down", "Up/Down", "Down/Up", "As Played", "Random", "Chord", "Pattern"}).group(g);
   P.octaves = b.count(); b.addKit("arp.octaves").name("Arp Octaves").range(1, 4).integer().def(1).group(g);
   P.rate = b.count(); b.addKit("arp.rate").name("Arp Rate").choices(arpRateNames()).def(kRateDefault).group(g);
@@ -101,11 +151,20 @@ void Arp::addParams(ParamBuilder& b) {
   P.velMode = b.count(); b.addKit("arp.velMode").name("Arp Velocity").choices({"Played", "Fixed"}).group(g);
   P.velFixed = b.count(); b.addKit("arp.velFixed").name("Arp Fixed Velocity").range(1, 127).integer().def(100).group(g);
   P.pattern = b.count(); b.addKit("arp.pattern").name("Arp Pattern").range(1, kArpPatterns).integer().def(1).group(g);
-  P.envMode = b.count(); b.addKit("arp.envMode").name("Arp Envelope").choices({"Off", "Multiply", "Replace"}).def(ArpEnvMultiply).group(ge);
+  P.evolve = b.count(); b.addKit("arp.evolve").name("Arp Evolve").range(0, 100).def(0).unit("%").group(g);
+  std::vector<std::string> scales;
+  for (int i = 0; i < arpScaleCount(); ++i) scales.emplace_back(arpScale(i).name);
+  P.scale = b.count(); b.addKit("arp.scale").name("Seq Scale").choices(scales).group(g);
+  P.scaleKey = b.count(); b.addKit("arp.scaleKey").name("Seq Key").choices({"C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"}).group(g);
+  P.keyLevel = b.count(); b.addKit("arp.keyLevel").name("Seq Key Level").range(-60, 6).def(0).unit("dB").group(g);
+  P.seqLevel = b.count(); b.addKit("arp.seqLevel").name("Seq Level").range(-60, 6).def(0).unit("dB").group(g);
+  P.seqSync = b.count(); b.addKit("arp.seqSync").name("Seq Sync").choices({"Grid", "Key"}).def(ArpSyncKey).group(g);
+  P.envMode = b.count(); b.addKit("arp.envMode").name("Arp Envelope").choices({"Off", "Multiply", "Replace", "Crossfade"}).def(ArpEnvMultiply).group(ge);
   P.a = b.count(); b.addKit("arp.attack").name("Arp Attack").range(0.0005, 10).log().def(0.002).unit("s").group(ge);
   P.d = b.count(); b.addKit("arp.decay").name("Arp Decay").range(0.001, 20).log().def(0.3).unit("s").group(ge);
   P.s = b.count(); b.addKit("arp.sustain").name("Arp Sustain").range(0, 1).def(1).group(ge);
   P.r = b.count(); b.addKit("arp.release").name("Arp Release").range(0.002, 20).log().def(0.05).unit("s").group(ge);
+  P.xfade = b.count(); b.addKit("arp.xfade").name("Arp Crossfade").range(1, 100).def(30).unit("%").group(ge);
   P.pa = b.count(); b.addKit("arp.phraseAttack").name("Phrase Attack").range(0.0005, 10).log().def(0.002).unit("s").group(gp);
   P.pd = b.count(); b.addKit("arp.phraseDecay").name("Phrase Decay").range(0.001, 20).log().def(0.5).unit("s").group(gp);
   P.ps = b.count(); b.addKit("arp.phraseSustain").name("Phrase Sustain").range(0, 1).def(1).group(gp);
@@ -210,7 +269,7 @@ void Arp::process(const MidiEvent* in, int nIn, MidiEvent* out, int& outCount, i
   phraseEnv_.set(get(P.pa), get(P.pd), get(P.ps), get(P.pr));
 
   if (allOff_) { allOff_ = false; clearAll(false); }
-  const bool on = get(P.on) >= 0.5f;
+  const bool on = choice(P.on) == ArpTypeArp;
   if (!on) {
     if (wasOn_) {
       // Turned off: stop, and let the keys still down sound as played keys.
@@ -315,6 +374,8 @@ void Arp::newPhrase(const MidiEvent& e) {
   rng_.seed(dsp::hashSeed(phraseCount_, 0xA4Fu, static_cast<uint64_t>(e.note)));
   lastRandom_ = -1;
   start(blockStart_ + std::clamp(e.sample, 0, frames_ - 1) / spb_);
+  evolvedFrom_ = -1;   // each phrase starts from the pattern as drawn
+  evolveRng_.seed(dsp::hashSeed(phraseCount_, 0xE70u, 0));
 }
 
 void Arp::addNote(const MidiEvent& e) {
@@ -434,14 +495,28 @@ void Arp::step(int sample) {
       if (nOffs_ >= kMaxOffs) flushOffs(sample, true);  // never lose a note-off
       offs_[static_cast<std::size_t>(nOffs_++)] = Off{at + std::max(dur, minLen), note, ch};
     };
-    auto play = [&](int note, float vel, int ch) { playFor(note, fixed ? fv : vel, ch, len * gate); };
+    const bool xf = crossfade();   // notes run into the next, which fades in as they fade out
+    auto play = [&](int note, float vel, int ch) { playFor(note, fixed ? fv : vel, ch, len * (xf ? 1.0 : gate)); };
     const long k = stepIndex_;
     if (mode == ArpPatternMode) {
       // The drawn pattern: each note's row picks a chord tone.
       const ArpPattern* pat = nullptr;
-      if (bank_) pat = &bank_->read().patterns[static_cast<std::size_t>(std::clamp(static_cast<int>(std::lround(get(P.pattern))) - 1, 0, kArpPatterns - 1))];
+      const int pi = std::clamp(static_cast<int>(std::lround(get(P.pattern))) - 1, 0, kArpPatterns - 1);
+      if (bank_) pat = &bank_->read().patterns[static_cast<std::size_t>(pi)];
       const int steps = pat ? std::clamp(pat->steps, 1, kArpMaxSteps) : 1;
       const int p = static_cast<int>(k % steps);
+      // Evolve: play a copy that changes a little each time round.
+      const float evolve = std::clamp(get(P.evolve) / 100.f, 0.f, 1.f);
+      if (pat && evolve > 0) {
+        if (evolvedFrom_ != pi || evolvedGen_ != bank_->generation()) {
+          evolved_ = *pat;
+          evolvedFrom_ = pi;
+          evolvedGen_ = bank_->generation();
+        } else if (p == 0 && k > 0) {
+          arpEvolve(*pat, evolved_, evolve, evolveRng_);
+        }
+        pat = &evolved_;
+      }
       if (pat)
         for (int i = 0; i < std::min(pat->count, kArpMaxPatternNotes); ++i) {
           const ArpPatternNote& n = pat->notes[static_cast<std::size_t>(i)];
@@ -451,7 +526,7 @@ void Arp::step(int sample) {
           const int idx = ((r % nb) + nb) % nb;
           const int octave = (r - idx) / nb;
           const float v = n.vel / 127.f * (fixed ? fv : bvel[idx]);
-          playFor(base[idx] + 12 * octave, v, chan[idx], (std::max<int>(n.len, 1) - 1 + gate) * len);
+          playFor(base[idx] + 12 * octave, v, chan[idx], (std::max<int>(n.len, 1) - 1 + (xf ? 1.0 : gate)) * len);
         }
       stepPos_ = static_cast<float>(p) / static_cast<float>(steps);
     } else if (mode == ArpChord) {

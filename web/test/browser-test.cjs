@@ -382,7 +382,36 @@ async function main() {
         a = at(9, 5); await page.mouse.dblclick(a.x, a.y);
         const left = await notes();
         if (left.length !== 1) fail(`piano roll: double-click left ${JSON.stringify(left)}`); else pass("piano roll: double-click removes a note");
+        // The generator: New idea draws a pattern, a slider redraws it, Undo restores.
+        const pat2 = () => page.evaluate(() => JSON.stringify(window.synthkit.model.custom("sk.arp").patterns[1]));
+        const before = await pat2();
+        await page.locator(".arp-pattern-panel button", { hasText: "Generate…" }).click();
+        await page.locator(".arp-gen button", { hasText: "New idea" }).click();
+        const idea = await pat2();
+        await page.$eval(".arp-gen input[aria-label=Density]", (e) => { e.value = 1; e.dispatchEvent(new Event("input")); });
+        const busier = JSON.parse(await pat2()).notes.length;
+        await page.locator(".arp-gen button", { hasText: "Undo" }).click();
+        const undone = await pat2();
+        if (idea === before || !(busier >= JSON.parse(idea).notes.length) || undone !== before) fail(`generator: idea changed ${idea !== before}, busier ${busier}, undo ${undone === before}`);
+        else pass("generator: New idea draws a pattern, sliders redraw it, Undo restores");
         await page.evaluate(() => window.synthkit.model.set("arp.pattern", 1));
+        // Sequencer: its own controls, interval rows, its own bank.
+        const seqView = await page.evaluate(async () => {
+          const m = window.synthkit.model;
+          const shown = (id) => { const e = document.querySelector(`[data-param="${id}"]`); return !!e && !e.closest("[hidden]"); };
+          m.set("arp.on", 2);
+          await new Promise((r) => setTimeout(r, 50));
+          const r = {
+            controls: shown("arp.scale") && shown("arp.keyLevel") && !shown("arp.mode") && !shown("arp.octaves"),
+            title: document.querySelector(".arp-pattern-panel .panel-title").textContent,
+            key: [...document.querySelectorAll(".arp-row-label")].some((e) => e.textContent === "Key"),
+            notes: document.querySelectorAll(".arp-note").length === m.custom("sk.seq").patterns[0].notes.length,
+          };
+          m.set("arp.on", 0);
+          return r;
+        });
+        if (!seqView.controls || seqView.title !== "Sequencer pattern" || !seqView.key || !seqView.notes) fail(`sequencer view: ${JSON.stringify(seqView)}`);
+        else pass("sequencer: its own controls, interval rows and pattern bank");
       }
       }  // kitUi
     }
