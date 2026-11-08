@@ -28,9 +28,23 @@ struct Cell { std::array<CellNote, 32> n{}; int count = 0; };
 
 int clampRow(int r) { return std::clamp(r, kArpRowLow, kArpRowHigh); }
 
+// The generator walks a ladder of rows 0, 1, 2…; what a rung means depends
+// on the kind. Chord tones and scale steps use it as it is; semitones use
+// intervals that sit well over any key (a minor-pentatonic ladder: 0 3 5 7
+// 10 12 …), so a step on the ladder is never a clash.
+int rowFor(int kind, int rung) {
+  if (kind != 1) return rung;
+  static const int kLadder[5] = {0, 3, 5, 7, 10};
+  const int oct = rung >= 0 ? rung / 5 : -((-rung + 4) / 5);
+  return 12 * oct + kLadder[rung - oct * 5];
+}
+
 void makeCell(const ArpGenSettings& g, dsp::Rng& r, int cellLen, int cellStart, bool anchor, Cell& c) {
   c.count = 0;
   const int hi = std::max(1, g.range) - 1;
+  // The arpeggiator's lines start on the lowest chord tone; the sequencer's
+  // sit over the key that's already sounding, so they start mid-range.
+  const int home = g.kind == 0 ? 0 : (hi + 1) / 2;
   // Rhythm: onsets where the beat is strong; density moves every step's
   // chance together, so sparse keeps the downbeats and busy fills the gaps.
   std::array<bool, kArpMaxSteps> on{};
@@ -45,7 +59,7 @@ void makeCell(const ArpGenSettings& g, dsp::Rng& r, int cellLen, int cellStart, 
   // Pitch: a contour (rising, falling, arch or valley) walked over chord
   // tones, mostly by step; leaps turn back. A new motif starts at a
   // contrasting height; the first starts on the lowest chord tone.
-  int row = anchor ? 0 : (r.integer(0, hi) + r.integer(0, hi) + 1) / 2;
+  int row = anchor ? home : (r.integer(0, hi) + r.integer(0, hi) + 1) / 2;
   const int contour = r.integer(0, 3);   // 0 up, 1 down, 2 arch, 3 valley
   if (!anchor && contour == 1 && row < hi / 2) row = std::min(hi, row + hi / 2);   // room to fall
   int lastMove = 0, repeats = 0, idx = 0;
@@ -164,10 +178,11 @@ void arpGenerate(const ArpGenSettings& gIn, ArpPattern& out) {
       const float vary = (1.f - g.repetition) * 0.85f + (ci >= 4 ? 0.2f : 0.f);
       if (r.chance(vary)) varyCell(g, r, cellLen, start, c);
     }
-    // The last cell leads back to the start: its last note a chord tone away.
+    // The last cell leads back to the start: its last note a step away.
+    const int home = g.kind == 0 ? 0 : g.range / 2;
     if (ci == nCells - 1 && nCells > 1 && c.count > 0 && r.chance(0.4f + 0.5f * g.repetition)) {
       CellNote& last = c.n[static_cast<std::size_t>(c.count - 1)];
-      if (last.row > 2) last.row = 1;
+      if (std::abs(last.row - home) > 2) last.row = home + (last.row > home ? 1 : -1);
     }
     for (int i = 0; i < c.count && out.count < kArpMaxPatternNotes; ++i) {
       const CellNote& n = c.n[static_cast<std::size_t>(i)];
@@ -175,7 +190,7 @@ void arpGenerate(const ArpGenSettings& gIn, ArpPattern& out) {
       const int step = start + n.off;
       ArpPatternNote pn;
       pn.step = static_cast<int16_t>(step);
-      pn.row = static_cast<int16_t>(clampRow(n.row));
+      pn.row = static_cast<int16_t>(clampRow(rowFor(g.kind, n.row)));
       pn.len = static_cast<int16_t>(std::clamp(n.len, 1, g.steps - step));
       pn.vel = static_cast<uint8_t>(std::clamp(n.vel, 1, 127));
       pn.chance = 100;
