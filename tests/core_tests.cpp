@@ -2,6 +2,8 @@
 // and a test synth defined right here.
 #include <synthkit/engine.h>
 
+#include "../core/src/arp.h"   // internal: the scale table, tested directly
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -1460,6 +1462,201 @@ TEST(arp_evolve_varies_but_stays_close) {
   double worst = 0;
   for (std::size_t i = 0; i < a.size(); ++i) worst = std::max(worst, static_cast<double>(std::fabs(a[i] - b[i])));
   CHECK(worst < 1e-5);
+}
+
+// ------------------------------------------------------------ sequencer
+
+static void seqOn(Harness& h, std::initializer_list<std::pair<const char*, double>> ps = {}) {
+  arpOn(h, ps);
+  h.eng->params().set(h.param("arp.on"), 2);
+  for (auto& [id, v] : ps) h.eng->params().set(h.param(id), v);
+}
+
+static void seqPattern(Harness& h, const char* json, int slot = 0) {
+  Json bank = h.eng->customState("sk.seq");
+  bank["patterns"][static_cast<std::size_t>(slot)] = Json::parse(json);
+  CHECK(h.eng->setCustomState("sk.seq", bank));
+}
+
+struct StartAt { int note; double beat; bool arp; };
+static std::vector<StartAt> startsByTime() {
+  std::vector<StartAt> v;
+  for (auto& s : gLog.starts) v.push_back({s.note, s.beat, s.arp});
+  std::stable_sort(v.begin(), v.end(), [](auto& a, auto& b) { return a.beat < b.beat - 1e-9; });
+  return v;
+}
+
+TEST(seq_each_key_plays_its_own_pattern) {
+  Harness h(256, kArp);
+  seqOn(h);
+  // Default pattern 1: +12 at step 0, +7 at 2, +10 at 4, +7 at 5, +5 at 7 (8 steps of 1/16).
+  h.run(12100, {{0, on(60)}, {7200, on(64)}});   // E 0.3 beats later: its own sequence, from its own step 1
+  auto v = startsByTime();
+  std::vector<std::pair<int, double>> seqNotes;
+  int keys = 0;
+  for (auto& x : v) { if (x.arp) seqNotes.push_back({x.note, x.beat}); else ++keys; }
+  CHECK(keys == 2);                                  // both keys sound as played
+  std::vector<std::pair<int, double>> want = {{72, 0.0}, {76, 0.3}, {67, 0.5}};   // C +12, E +12, C +7
+  CHECK(seqNotes.size() == want.size());
+  for (std::size_t i = 0; i < std::min(want.size(), seqNotes.size()); ++i) {
+    CHECK(seqNotes[i].first == want[i].first);
+    CHECK_NEAR(seqNotes[i].second, want[i].second, 1.0 / 24000);
+  }
+  gLog.starts.clear();
+  h.run(12000);                                       // to beat 1: E's step 2 (+7) at 0.8, C's step 4 (+10) at 1.0
+  auto w = startsByTime();
+  CHECK(w.size() == 2);
+  if (w.size() == 2) {
+    CHECK(w[0].note == 71); CHECK_NEAR(w[0].beat, 0.8, 1.0 / 24000);
+    CHECK(w[1].note == 70); CHECK_NEAR(w[1].beat, 1.0, 1.0 / 24000);
+  }
+}
+
+TEST(seq_scale_steps) {
+  // C major: rows are scale steps from each key; row 0 is the key itself.
+  CHECK(sk::detail::arpScalePitch(64, 2, 1, 0) == 67);    // E + 2 steps = G
+  CHECK(sk::detail::arpScalePitch(64, 4, 1, 0) == 71);    // B
+  CHECK(sk::detail::arpScalePitch(64, -1, 1, 0) == 62);   // D
+  CHECK(sk::detail::arpScalePitch(64, 7, 1, 0) == 76);    // the octave
+  CHECK(sk::detail::arpScalePitch(64, -8, 1, 0) == 50);   // D below the octave down
+  CHECK(sk::detail::arpScalePitch(66, 2, 1, 0) == 69);    // F#: counts from F, the scale note below
+  CHECK(sk::detail::arpScalePitch(66, 0, 1, 0) == 66);    // but row 0 is the key itself
+  CHECK(sk::detail::arpScalePitch(57, 2, 2, 9) == 60);    // A minor: A + 2 = C
+  CHECK(sk::detail::arpScalePitch(60, 5, 11, 0) == 72);   // C minor pentatonic: 5 steps = the octave
+  CHECK(sk::detail::arpScalePitch(60, 5, 0, 0) == 65);    // chromatic: semitones
+  Harness h(256, kArp);
+  seqOn(h, {{"arp.scale", 1}, {"arp.scaleKey", 2}});      // D major
+  seqPattern(h, R"({"steps":2,"notes":[[0,2,1,100],[1,4,1,100]]})");
+  h.run(12000, {{0, on(62)}});                            // D: F# then A
+  std::vector<int> seqNotes;
+  for (auto& x : startsByTime()) if (x.arp) seqNotes.push_back(x.note);
+  CHECK((seqNotes == std::vector<int>{66, 69}));
+}
+
+static double rmsDb(const std::vector<float>& v, std::size_t a, std::size_t b) {
+  double s = 0;
+  for (std::size_t i = a; i < b; ++i) s += static_cast<double>(v[i]) * v[i];
+  return 10 * std::log10(s / static_cast<double>(b - a) + 1e-20);
+}
+
+TEST(seq_key_and_sequence_levels) {
+  auto render = [](double type, double keyDb, double seqDb) {
+    Harness h(256, kArp);
+    seqOn(h, {{"arp.keyLevel", keyDb}, {"arp.seqLevel", seqDb}});
+    h.eng->params().set(h.param("arp.on"), type);
+    h.run(24000);
+    return h.run(24000, {{h.pos, on(60)}});
+  };
+  auto plain = render(0, 0, 0), keysOnly = render(2, 0, -60), seqOnly = render(2, -60, 0), quieter = render(2, -6, 0);
+  double worst = 0;
+  for (std::size_t i = 0; i < plain.size(); ++i) worst = std::max(worst, static_cast<double>(std::fabs(plain[i] - keysOnly[i])));
+  CHECK(worst < 1e-6);                                    // sequence at -60 dB: just the key
+  CHECK(rmsDb(seqOnly, 0, 2000) > -40);                   // key at -60 dB: the sequence alone (step 0, +12)
+  double keyAlone = rmsDb(plain, 6500, 11000), keyQuieter = rmsDb(quieter, 6500, 11000);   // between sequence notes
+  CHECK_NEAR(keyQuieter - keyAlone, -6.0, 0.2);
+}
+
+TEST(seq_each_key_releases_on_its_own) {
+  Harness h(256, kArp);
+  seqOn(h, {{"arp.phraseRelease", 1.0}});
+  seqPattern(h, R"({"steps":1,"notes":[[0,7,1,100]]})");   // a fifth every step
+  h.run(48000, {{0, on(60)}, {12000, on(64)}, {24000, off(60)}});
+  gLog.starts.clear();
+  h.run(24000);                                            // C let go (tail), E held
+  int c = 0, e = 0;
+  for (auto& x : gLog.starts) { c += x.note == 67; e += x.note == 71; }
+  CHECK(c > 0 && e == 4);                                  // both still playing
+  h.run(96000, {{h.pos, off(64)}});
+  gLog.starts.clear();
+  h.run(24000);
+  CHECK(gLog.starts.empty());                              // both tails over
+  Harness k(256, kArp);
+  seqOn(k, {{"arp.phraseRelease", 0.002}});
+  seqPattern(k, R"({"steps":1,"notes":[[0,7,1,100]]})");
+  k.run(12000, {{0, on(60)}, {11000, off(60)}});
+  gLog.starts.clear();
+  k.run(24000);
+  CHECK(gLog.starts.empty());                              // no tail: stops with the key
+}
+
+TEST(seq_grid_sync_and_latch) {
+  Harness h(256, kArp);
+  seqOn(h, {{"arp.seqSync", 0}});
+  // Grid: E at 0.4 beats joins at 0.5, on the pattern's step 2 (+7).
+  h.run(24000, {{9600, on(64)}});
+  std::vector<StartAt> s;
+  for (auto& x : startsByTime()) if (x.arp) s.push_back(x);
+  CHECK(!s.empty());
+  if (!s.empty()) { CHECK(s[0].note == 71); CHECK_NEAR(s[0].beat, 0.5, 1.0 / 24000); }
+  Harness k(256, kArp);
+  seqOn(k, {{"arp.latch", 1}});
+  seqPattern(k, R"({"steps":1,"notes":[[0,12,1,100]]})");
+  k.run(12000, {{0, on(60)}, {100, off(60)}});
+  gLog.starts.clear();
+  k.run(24000);
+  CHECK(gLog.starts.size() == 4);                          // latched: still going
+  k.run(12000, {{k.pos, on(62)}, {k.pos + 100, off(62)}}); // a new phrase lets C's go
+  gLog.starts.clear();
+  k.run(24000);
+  for (auto& x : gLog.starts) CHECK(x.note == 74);
+  CHECK(gLog.starts.size() == 4);
+}
+
+TEST(seq_crossfade_keeps_the_level_and_joins_repeats) {
+  Harness h(256, kArp);
+  seqOn(h, {{"arp.envMode", 3}, {"arp.xfade", 100}, {"arp.keyLevel", -60}});
+  seqPattern(h, R"({"steps":2,"notes":[[0,7,1,100],[1,12,1,100]]})");
+  h.run(24000);
+  auto out = h.run(48000, {{h.pos, on(60)}});
+  // After the first fade-in, the level stays within 1.5 dB through every crossfade.
+  double lo = 1e9, hi = -1e9;
+  for (std::size_t a = 6000; a + 1500 <= 42000; a += 750) { double d = rmsDb(out, a, a + 1500); lo = std::min(lo, d); hi = std::max(hi, d); }
+  CHECK(hi - lo < 1.5);
+  CHECK(h.eng->takeStats().activeVoices <= 3);             // two fading, plus the (silent) key
+  // The same pitch twice in a row is one note.
+  Harness k(256, kArp);
+  seqOn(k, {{"arp.envMode", 3}, {"arp.xfade", 50}});
+  seqPattern(k, R"({"steps":4,"notes":[[0,7,1,100],[1,7,1,100],[2,7,1,100],[3,12,1,100]]})");
+  k.run(24000, {{0, on(60)}});
+  int g = 0;
+  for (auto& x : gLog.starts) g += x.note == 67;
+  CHECK(g == 1);
+}
+
+TEST(seq_many_keys_and_block_size) {
+  Harness h(256, kArp);
+  seqOn(h);
+  std::vector<std::pair<long, MidiEvent>> ev;
+  for (int i = 0; i < 24; ++i) ev.push_back({i * 50, on(40 + i)});
+  h.run(24000, ev);                                        // more keys than lanes: the oldest are reused
+  CHECK(h.eng->takeStats().droppedEvents == 0);
+  auto render = [](int block) {
+    Harness k(block, kArp);
+    seqOn(k, {{"arp.envMode", 3}, {"arp.xfade", 60}, {"arp.scale", 2}, {"arp.swing", 30}, {"arp.phraseRelease", 0.4}, {"arp.evolve", 80}});
+    k.run(24000, {}, block);
+    const long p = k.pos;
+    return k.run(96000, {{p + 10, on(57)}, {p + 3000, on(64)}, {p + 30000, off(57)}, {p + 50000, off(64)}, {p + 52000, on(60)}, {p + 70000, off(60)}}, block);
+  };
+  auto a = render(256), b = render(7), c = render(1000);
+  double worst = 0;
+  for (std::size_t i = 0; i < a.size(); ++i) worst = std::max({worst, static_cast<double>(std::fabs(a[i] - b[i])), static_cast<double>(std::fabs(a[i] - c[i]))});
+  CHECK(worst < 1e-5);
+}
+
+TEST(seq_generator_writes_intervals) {
+  for (int seed = 1; seed < 100; ++seed) {
+    Json s = Json::object();
+    s["kind"] = 1; s["seed"] = seed; s["range"] = 8;
+    Json p = arpGeneratePattern(s);
+    bool first = false;
+    for (auto& n : p["notes"].items()) {
+      const int row = static_cast<int>(n[1].number());
+      const int pc = ((row % 12) + 12) % 12;
+      CHECK(pc == 0 || pc == 3 || pc == 5 || pc == 7 || pc == 10);   // only intervals that sit well over any key
+      first |= n[0].number() == 0;
+    }
+    CHECK(first);
+  }
 }
 
 TEST(arp_sources_and_reserved_ids) {

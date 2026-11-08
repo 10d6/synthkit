@@ -140,7 +140,7 @@ class Model {
   emitShapes() { const s = this.shapes(); for (const fn of this.shapeListeners) fn(s); }
 
   // The arpeggiator's pattern generator (API.md §4b): settings in, one pattern out.
-  arpGenerate(settings) { return this.w.json(this.w.withStrings([JSON.stringify(settings)], (p) => this.x.sk_arp_generate(p))); }
+  arpGenerate(settings = {}) { return this.w.json(this.w.withStrings([JSON.stringify(settings)], (p) => this.x.sk_arp_generate(p))); }
 
   // Custom state -----------------------------------------------------------
   custom(id) { return this.w.json(this.w.withStrings([id], (p) => this.x.sk_get_custom(p))); }

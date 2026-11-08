@@ -23,7 +23,8 @@ add_library(synthkit_core STATIC
   core/src/engine.cpp
   core/src/modulation.cpp
   core/src/arp.cpp
-  core/src/arpgen.cpp)
+  core/src/arpgen.cpp
+  core/src/seq.cpp)
 target_include_directories(synthkit_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/core/include")
 target_compile_features(synthkit_core PUBLIC cxx_std_20)
 if(MSVC)

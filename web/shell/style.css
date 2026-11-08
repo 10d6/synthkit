@@ -403,6 +403,7 @@ button, input, select { font: inherit; color: inherit; }
 .arp-row-alt { fill: var(--ink); opacity: 0.035; }
 .arp-row-label { fill: var(--ink-soft); font-size: 10px; font-variant-numeric: tabular-nums; }
 .arp-row-label.is-root { fill: var(--ink); font-weight: 600; }
+.arp-row-label.is-octave { fill: var(--ink); }
 .arp-root-line { stroke: var(--ink-soft); stroke-width: 1; opacity: 0.6; }
 .arp-note { fill: var(--accent); stroke: var(--accent); stroke-width: 1; }
 .arp-note.is-chance { stroke-dasharray: 3 2; }

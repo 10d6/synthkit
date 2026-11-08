@@ -490,6 +490,9 @@ class App {
       setCustom: (id, v) => m.setCustom(id, v),
       onCustom: (id, fn) => { const off = m.onCustom(id, fn); fn(m.custom(id)); return off; },
 
+      // the arpeggiator's / sequencer's pattern generator (API.md §4b)
+      arpGenerate: (settings) => m.arpGenerate(settings),
+
       // messages (API.md §9b)
       send: (id, ...values) => app.sendMessage(id, values),
       onMessage: (id, fn) => app.onMessage(id, fn),
@@ -638,6 +641,7 @@ class App {
       noteOff: (n) => this.noteOff(n),
       send: (id, ...values) => this.sendMessage(id, values),
       onMessage: (id, fn) => this.onMessage(id, fn),
+      arpGenerate: (settings) => m.arpGenerate(settings),
       toast: (msg, kind) => this.toast(msg, kind),
     };
     try { this.widgets.get(spec.type)(el, ctx); }

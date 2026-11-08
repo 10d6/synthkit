@@ -59,6 +59,9 @@ struct ArpGenSettings {
   float ties = 0.2f;         // notes held into the rests after them
   float chords = 0.f;        // a second chord tone on strong steps
   uint64_t seed = 1;
+  // What rows mean: 0 chord tones (the arpeggiator), 1 semitones and 2
+  // scale steps (the sequencer: a line above the key, starting mid-range).
+  int kind = 0;
 };
 void arpGenerate(const ArpGenSettings& g, ArpPattern& out);
 // Evolve: change a note or two of `work` (a copy of `original`) for the next
@@ -66,19 +69,31 @@ void arpGenerate(const ArpGenSettings& g, ArpPattern& out);
 void arpEvolve(const ArpPattern& original, ArpPattern& work, float amount, dsp::Rng& r);
 
 ArpBank arpDefaultBank();
+ArpBank arpDefaultSeqBank();   // the sequencer's: rows are intervals
 void arpSaveBank(const ArpBank& b, Json& j);
 void arpLoadBank(const Json& j, ArpBank& b);
-enum ArpEnvMode { ArpEnvOff, ArpEnvMultiply, ArpEnvReplace };
+enum ArpEnvMode { ArpEnvOff, ArpEnvMultiply, ArpEnvReplace, ArpEnvCrossfade };
+enum ArpType { ArpTypeOff, ArpTypeArp, ArpTypeSeq };   // arp.on
 enum ArpSync { ArpSyncGrid, ArpSyncKey };
 
 struct ArpParams {
   int on = -1, mode = -1, octaves = -1, rate = -1, gate = -1, swing = -1, latch = -1, sync = -1;
   int velMode = -1, velFixed = -1, pattern = -1, evolve = -1;
-  int envMode = -1, a = -1, d = -1, s = -1, r = -1;      // note envelope
+  int scale = -1, scaleKey = -1, keyLevel = -1, seqLevel = -1, seqSync = -1;   // sequencer
+  int envMode = -1, a = -1, d = -1, s = -1, r = -1, xfade = -1;               // note envelope
   int pa = -1, pd = -1, ps = -1, pr = -1;                // phrase envelope
 };
 
 const std::vector<std::string>& arpRateNames();
+double arpRateBeats(int choiceIndex);
+
+// Scales for the sequencer (arp.scale): semitones of each degree above the
+// scale's root. Index 0 is Chromatic (no scale).
+struct ArpScale { const char* name; int n; int steps[12]; };
+const ArpScale& arpScale(int index);
+int arpScaleCount();
+// The pitch `degrees` scale steps from `key` (0 is the key itself).
+int arpScalePitch(int key, int degrees, int scaleIndex, int scaleRoot);
 
 class Arp {
  public:
@@ -106,6 +121,7 @@ class Arp {
   // Position in the pattern's cycle (0…1, stepped) at a sample of this block.
   float stepPosAt(int sample) const;
   bool running() const { return running_; }
+  bool crossfade() const { return choice(P.envMode) == ArpEnvCrossfade; }
 
  private:
   struct Entry { int note = 0; float vel = 0; int channel = 0; uint64_t order = 0; bool gone = false; Beats goneAt = 0; };

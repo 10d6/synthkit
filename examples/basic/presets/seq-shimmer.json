@@ -1,0 +1,70 @@
+{
+  "synthkit": 1,
+  "synth": "sk-basic",
+  "patchVersion": 1,
+  "name": "Seq Shimmer",
+  "author": "synthkit",
+  "tags": [
+    "sequencer",
+    "crossfade",
+    "pad"
+  ],
+  "params": {
+    "arp.on": 2,
+    "arp.rate": 6,
+    "arp.envMode": 3,
+    "arp.xfade": 80,
+    "arp.keyLevel": -3,
+    "arp.seqLevel": -6,
+    "arp.phraseAttack": 0.6,
+    "arp.phraseRelease": 3.0,
+    "arp.velMode": 1,
+    "arp.velFixed": 90,
+    "osc1.wave": 2,
+    "osc2.wave": 2,
+    "filter.cutoff": 2400,
+    "filter.reso": 0.15,
+    "env1.attack": 0.4,
+    "env1.decay": 1.0,
+    "env1.sustain": 0.9,
+    "env1.release": 2.5,
+    "delay.mix": 0.3,
+    "delay.feedback": 0.45,
+    "osc2.fine": 12
+  },
+  "custom": {
+    "sk.seq": {
+      "patterns": [
+        {
+          "steps": 8,
+          "notes": [
+            [
+              0,
+              12,
+              2,
+              100
+            ],
+            [
+              2,
+              7,
+              2,
+              100
+            ],
+            [
+              4,
+              19,
+              2,
+              100
+            ],
+            [
+              6,
+              14,
+              2,
+              100
+            ]
+          ]
+        }
+      ]
+    }
+  }
+}
