@@ -8,8 +8,10 @@ places:
 
 A synth built on synthkit provides only what's unique to it: its parameters,
 its sound engine and its control layout (or a page of its own). synthkit
-handles MIDI, voices, patches and presets, modulation routing, tempo sync, the
-UI controls, messages between the page and the engine, testing and the builds.
+handles MIDI, voices, patches and presets, modulation routing, tempo sync, an
+arpeggiator and per-key step sequencer (with a piano roll and a pattern
+generator), the UI controls, messages between the page and the engine,
+testing and the builds.
 For synths that start as Web Audio sketches, it has DSP blocks that match the
 browser's nodes sample for sample, so a sketch ports by translation.
 

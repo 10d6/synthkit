@@ -119,6 +119,11 @@ const char* embeddedSynthJson();
 const EmbeddedPreset* embeddedPresets(int& count);
 std::unique_ptr<Engine> makeEngine();  // createSynth + synth.json
 
+// The arpeggiator's pattern generator (API.md §4b), for pages: settings
+// { steps, density, range, leaps, repetition, ties, chords, seed } in, one
+// pattern { steps, notes } (the "sk.arp" format) out.
+Json arpGeneratePattern(const Json& settings);
+
 }  // namespace sk
 
 std::unique_ptr<::sk::Synth> sk_createSynth();

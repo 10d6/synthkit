@@ -1,0 +1,53 @@
+{
+  "patch": "seq-shimmer",
+  "transport": {
+    "bpm": 96,
+    "playing": true
+  },
+  "lengthBeats": 20,
+  "events": [
+    {
+      "beat": 0,
+      "on": 50,
+      "vel": 100
+    },
+    {
+      "beat": 1.5,
+      "on": 57,
+      "vel": 100
+    },
+    {
+      "beat": 6,
+      "off": 50
+    },
+    {
+      "beat": 8,
+      "off": 57
+    },
+    {
+      "beat": 8.25,
+      "on": 53,
+      "vel": 100
+    },
+    {
+      "beat": 12,
+      "off": 53
+    }
+  ],
+  "expect": {
+    "soundBy": 0.1,
+    "levelAt": [
+      {
+        "beat": 4,
+        "window": 0.5,
+        "above": -30
+      },
+      {
+        "beat": 13.5,
+        "window": 0.5,
+        "above": -50
+      }
+    ],
+    "silentAfter": 19
+  }
+}

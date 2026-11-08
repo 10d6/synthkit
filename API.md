@@ -126,7 +126,7 @@ check the synth against it.
 | `standardLfos` | 0 | standard LFOs (§6) |
 | `modSlots` | 0 | matrix routes; also adds `sk.pitch`, `sk.level` (§6) |
 | `shapes` | 0 | drawn, tempo-locked curves (§6a) |
-| `arp` | false | the kit's arpeggiator, with its note and phrase envelopes (§4b) |
+| `arp` | false | the kit's arpeggiator and step sequencer, with their note and phrase envelopes (§4b) |
 
 ## 3. Parameters
 
@@ -187,7 +187,9 @@ level = b.add("level").range(0, 150).def(100).unit("%").cc(7, 0, 100);
 
 Mistakes (duplicate IDs, reserved IDs, `log()` on a range through zero) are
 reported when the synth is created (`sk::fail`), so they show up in the first
-test run.
+test run. `b.count()` is how many parameters have been added so far (the
+next one's index) and `b.idAt(i)` the ID of the `i`th, for code that builds
+parameters in loops or checks what's already there.
 
 **Repeated parameters.** For sets like per-key or per-step controls:
 
@@ -440,7 +442,7 @@ void processEvents(EventContext& ctx) override {
 | `ctx.messages()`, `ctx.post(m, {values})` | messages from the page since the last block, and sending one back (§9b) |
 
 Events are `MidiEvent`s (`type`, `note`, `vel`, `cc`, `value`, `channel`,
-`sample`, `beat`, `tag`, `arp` (§4b), plus `isNoteOn()`, `isNoteOff()`, `isCC(n)`). Build
+`sample`, `beat`, `tag`, `arp` and `arpLane` (§4b), plus `isNoteOn()`, `isNoteOff()`, `isCC(n)`). Build
 them with `NoteOn{note, vel, ch}`, `NoteOff{note, ch}`, `CC{number, value, ch}`.
 
 - **Beats are quarter notes**, like a host's PPQ position.
@@ -477,14 +479,22 @@ The setup calls of the Web Audio blocks allocate, so they belong in
 `wa::WaveShaper::setCurve`, `wa::Delay::prepare` and `wa::Param::reserve`
 (§8a). Messages (`ctx.messages()`, `ctx.post`) never allocate.
 
-## 4b. The arpeggiator
+## 4b. The arpeggiator and step sequencer
 
-`"arp": true` in `synth.json`'s features adds the kit's arpeggiator. It's off
-until its `arp.on` parameter is turned on, so a synth can offer it without
-changing any of its sounds.
+`"arp": true` in `synth.json`'s features adds the kit's arpeggiator and step
+sequencer, two ways of playing notes from the keys you hold. `arp.on` picks
+one: **Off** (the default, so a synth can offer them without changing any of
+its sounds), **Arp** or **Sequencer**. They share a step clock (rate, swing,
+gate), drawn patterns, the generator, Evolve and the two envelopes; what
+differs is what they do with the keys:
+
+- **Arp** plays the held keys one after another (the keys themselves don't
+  sound). Its pattern rows are chord tones.
+- **Sequencer** lets each key sound as usual and gives it its own copy of a
+  pattern of notes at intervals from that key (§ Sequencer, below).
 
 ```
-MIDI in → synth's processEvents (§4a) → arpeggiator → voices
+MIDI in → synth's processEvents (§4a) → arpeggiator / sequencer → voices
 ```
 
 It runs **after** the synth's `processEvents`, so a synth can reshape the keys
@@ -500,18 +510,155 @@ Legato glides between steps.
 
 | Param | Values | Default |
 |---|---|---|
-| `arp.on` | toggle | off |
-| `arp.mode` | 0 Up, 1 Down, 2 Up/Down, 3 Down/Up, 4 As Played, 5 Random (never the same note twice in a row), 6 Chord (every held note, each step) | Up |
-| `arp.octaves` | 1–4: the held notes repeat this many octaves up (Chord moves the whole chord up an octave each step) | 1 |
+| `arp.on` | 0 Off, 1 Arp, 2 Sequencer | Off |
+| `arp.mode` | 0 Up, 1 Down, 2 Up/Down, 3 Down/Up, 4 As Played, 5 Random (never the same note twice in a row), 6 Chord (every held note, each step), 7 **Pattern** (a drawn pattern, below) | Up |
+| `arp.pattern` | 1–8: which drawn pattern Pattern mode plays (so pattern changes can be automated) | 1 |
+| `arp.evolve` | 0–100 %: Pattern mode varies the pattern as it repeats (below) | 0 |
+| `arp.octaves` | 1–4: the held notes repeat this many octaves up (Chord moves the whole chord up an octave each step; Pattern ignores it, since its rows reach any octave) | 1 |
 | `arp.rate` | 0 1/1, 1 1/2, 2 1/4., 3 1/4, 4 1/4T, 5 1/8., 6 1/8, 7 1/8T, 8 1/16., 9 1/16, 10 1/16T, 11 1/32 | 1/16 |
 | `arp.gate` | 5–200 %: each note's length, as a share of a step | 50 % |
 | `arp.swing` | 0–100 %: delays every other step; 100 % is a third of a step late (a triplet feel) | 0 |
 | `arp.latch` | toggle: the chord keeps playing after the keys are up; the next key pressed with none held starts a new chord | off |
 | `arp.sync` | 0 **Grid** (steps fall on the song's grid: a key waits for the next step, or plays at once if it's no more than 40 ms late for one), 1 **Key** (steps count from the first key of a phrase) | Grid |
 | `arp.velMode`, `arp.velFixed` | 0 Played (each note's own velocity), 1 Fixed (`arp.velFixed`, 1–127) | Played, 100 |
-| `arp.envMode` | the note envelope: 0 **Off**, 1 **Multiply**, 2 **Replace** (below) | Multiply |
+| `arp.envMode` | the note envelope: 0 **Off**, 1 **Multiply**, 2 **Replace**, 3 **Crossfade** (below) | Multiply |
+| `arp.xfade` | 1–100 %: Crossfade's fade time, as a share of a step | 30 % |
 | `arp.attack`, `arp.decay`, `arp.sustain`, `arp.release` | the note envelope (same ranges as `envN.*`) | 2 ms, 0.3 s, 1, 50 ms |
 | `arp.phraseAttack`, `…Decay`, `…Sustain`, `…Release` | the phrase envelope | 2 ms, 0.5 s, 1, 50 ms |
+| `arp.scale` | Sequencer: 0 Chromatic (rows are semitones), 1 Major, 2 Minor, 3 Dorian, 4 Phrygian, 5 Lydian, 6 Mixolydian, 7 Locrian, 8 Harmonic Minor, 9 Melodic Minor, 10 Major Pentatonic, 11 Minor Pentatonic, 12 Blues, 13 Whole Tone | Chromatic |
+| `arp.scaleKey` | Sequencer: the scale's key, 0 C … 11 B | C |
+| `arp.seqSync` | Sequencer: 0 **Grid**, 1 **Key** (below) | Key |
+| `arp.keyLevel`, `arp.seqLevel` | Sequencer: −60 (silent) … +6 dB: the keys you play, and the notes the sequencer adds. The master level applies to both | 0 dB, 0 dB |
+
+`arp.mode`, `arp.octaves` and `arp.sync` are the arpeggiator's; the
+`arp.scale…`, `arp.seqSync` and level parameters are the sequencer's. The
+kit's panel shows only the ones for the type that's on.
+
+**Drawn patterns** (`arp.mode` Pattern). Eight patterns, each up to 64
+steps long, drawn in the piano roll (`{ "kit": "arpPattern" }`). A
+pattern's **rows are chord tones**, not pitches, so one pattern plays over
+any chord: row 1 is the lowest held note, row 2 the next, and rows past the
+held notes carry on an octave up (holding C E G, rows 1–6 are C E G C' E'
+G'); rows below 1 go down the same way. Each note has a step, a row, a
+length in steps (it lasts `length − 1 + gate` steps), a velocity (scaled by
+the key's velocity, or by `arp.velFixed` with Fixed) and a chance of playing
+(0–100 %, from the phrase's own random stream, so renders repeat). A step can
+hold several notes (a chord), or none (a rest). The pattern starts with the
+phrase and loops; `arp.rate`, `arp.swing` and `arp.sync` apply as in the
+other modes.
+
+The patterns are saved in the patch as custom state (§5a) under `"sk.arp"`,
+which the kit reserves when `features.arp` is on:
+
+```json
+"custom": { "sk.arp": { "patterns": [
+  { "steps": 8, "notes": [[0, 0, 1, 112], [1, 2, 1, 88], [2, 1, 2, 88, 50]] }, …
+] } }
+```
+
+Each note is `[step, row, length, velocity, chance]` with rows 0-based (row 1
+in the editor is `0`; −24…47) and `chance` optional (100). The sequencer's
+patterns are the same format under `"sk.seq"`, with rows as intervals (row 0
+the key; negative rows below it); both names are the kit's when
+`features.arp` is on. Patterns a patch
+leaves out are empty; a patch without `"sk.arp"` gets the default bank, whose
+pattern 1 is a broken chord. A synth can read or change it like its own
+custom state: `ctx.custom("sk.arp")` in a custom widget or page,
+`Engine::customState("sk.arp")` from code.
+
+The piano roll: click to add a note and drag to lengthen it; drag a note to
+move it, its right end to resize it; double-click (or double-tap) removes it;
+right-click for its chance. Keys: `,` and `.` select notes, arrows move the
+selected one, Shift+←/→ change its length, Delete removes it. The lane
+underneath sets velocity or chance per step. **Edit…** clears, copies and
+pastes patterns, shifts them in time or by a chord tone, reverses, flips and
+doubles them. A playhead follows the pattern while a phrase is playing.
+
+**Generating patterns.** **Generate…** in the piano roll draws a pattern that
+is random but shaped like a played line, from a seed (so an idea can be
+found again):
+
+- **Rhythm** leans on the strong steps: downbeats almost always play, and
+  **Density** decides how far it fills in between (sixteenths last).
+- **Motifs and form:** the pattern is built from short motifs (4 steps, or 8
+  in patterns of 32 or more) arranged in a form: AABA or AAAB with high
+  **Repetition**, ABAB or ABAC in the middle, ABCB or ABCD with low. Repeats
+  come back slightly changed (shifted a chord tone, a new last note, an
+  offbeat added or dropped) more often with less repetition.
+- **Melody:** each motif follows a contour (rising, falling, arch or valley)
+  over chord tones within **Range**, mostly by step; **Leaps** makes jumps,
+  and a leap is followed by a step back. The first motif starts on the
+  lowest chord tone, on the downbeat; later ones start at a contrasting
+  height; the last note leans back towards the start so the loop joins up.
+- **Accents** follow the beat (with a little humanising), **Ties** hold notes
+  into the rests after them, and **Chords** adds a second chord tone on
+  strong steps.
+
+**New idea** draws from a new seed; after that, moving a slider (or changing
+the length) redraws the same idea, until the pattern is edited by hand.
+**Undo** brings back the pattern from before. The result is an ordinary
+pattern: edit it, save it with the patch. For the sequencer it writes
+intervals: with Chromatic, from a ladder that sits well over any key (0, 3,
+5, 7, 10, 12, 15… semitones, so a step is never a clash), with a scale, in
+scale steps; its lines start mid-range, above the key that's already
+sounding.
+
+A synth's own page or custom widget can use the same generator:
+`sk.arpGenerate(settings)` (`ctx.arpGenerate` in a widget) takes
+`{ steps, density, range, leaps, repetition, ties, chords, seed, kind }`
+(`kind` 0 chord tones, 1 semitones, 2 scale steps; the others default to the
+Generate… panel's starting values) and returns one pattern
+(`{ steps, notes }`); put it into `"sk.arp"` or `"sk.seq"` with
+`setCustom`. Engine-side code (tests, tools) calls
+`sk::arpGeneratePattern(const Json&)` in `engine.h`, which is the same
+function.
+
+**Evolve** (`arp.evolve`) changes the pattern as it plays: each time it comes
+round, there's a chance (rising with the amount) that a note or two moves a
+chord tone, a step earlier or later, drops out (or comes back), or gets
+louder or softer. Changes accumulate, but at most about half the notes (at
+100 %) differ from the drawn pattern at once, so it stays recognisable. The
+drawn pattern itself doesn't change, and each phrase starts from it again.
+It's deterministic per phrase, like everything else here.
+
+**Sequencer** (`arp.on` Sequencer). Each key you press sounds as usual (it's
+passed on to the voices like any note) and also starts its own **lane**: a
+copy of the selected pattern whose rows are intervals from that key. Hold C
+with a pattern of +12, +7, +10 and you hear C, plus C', G and B♭ on their
+steps; hold F as well and its own lane plays F', C', E♭. Up to 16 keys have
+lanes at once (a 17th reuses the oldest released lane, else the oldest).
+
+- **Rows:** with `arp.scale` Chromatic, a row is a number of semitones from
+  the key (row 0 is the key itself, ±12 its octaves). With a scale, a row is
+  a number of steps along that scale (in `arp.scaleKey`), so every key's
+  lane stays in that one key: in C major, +2 from E is G, from F it's A.
+  A key that isn't in the scale counts from the scale note below it; the key
+  itself is never changed, and row 0 is always the key. Changing the scale
+  reinterprets the rows (a +4 is a major third chromatically, a fifth in a
+  major scale).
+- **Timing:** with `arp.seqSync` **Key** (the default), each lane starts at
+  step 1 when its key goes down, so keys pressed at different times run
+  their own phase. With **Grid**, a lane joins the pattern where the song's
+  grid is (a key on beat 2 starts on the pattern's step 5 at 1/16), so all
+  lanes line up; a key no more than 40 ms late for a step plays it at once.
+- **Each lane has its own phrase envelope:** it starts with its key and
+  releases when that key is let go (or pedal-released); the lane keeps
+  playing through the release and stops at silence. Pressing the same key
+  again picks its lane back up (from step 1 with Key sync). Latch keeps
+  lanes going after their keys are up; the next key pressed with none held
+  lets them all go.
+- **Levels:** `arp.keyLevel` scales the keys and `arp.seqLevel` the lanes'
+  notes, only while the sequencer is on.
+- The pattern bank is the sequencer's own (`"sk.seq"`, below), separate from
+  the arpeggiator's; `arp.pattern` picks from whichever is in use. Its
+  default pattern 1 is +12, +7, +10, +7, +5 over 8 steps.
+- `arp.velMode`, `arp.gate`, `arp.swing`, `arp.evolve` and the pattern's
+  lengths, velocities and chances work as for the arpeggiator; `arp.mode`,
+  `arp.octaves` and `arp.sync` don't apply.
+
+The sequencer's notes are flagged `MidiEvent::arp` with `arpLane` set to their
+lane (0–15); a voice sees them as `ctx.arpNote()`. The mod sources
+`arp.phrase` and `arp.step` follow the most recently started lane.
 
 **Two envelopes.** Both are applied by the kit, like the amp envelope (§4):
 
@@ -524,7 +671,19 @@ Legato glides between steps.
   its own attack (samples, a custom attack stage) still does, unless it checks
   `ctx.arpNote()` (or `StartInfo::arp`) and skips it. With Multiply or
   Replace, an arp note ends when its note envelope does.
-- The **phrase envelope** is the arpeggiator's overall volume. It starts with
+- **Crossfade** replaces both shapes with fades: each note fades in over
+  `arp.xfade` of a step (equal-power, so two fading notes keep the level
+  steady) and lasts until the next step, where it fades out as the next one
+  fades in. Rests fade out to silence; a tied note fades out when it ends;
+  in the sequencer, the same pitch on consecutive steps just carries on as
+  one note rather than fading into itself. `arp.gate` doesn't apply. Like
+  Replace, it takes the place of the kit's amp envelope. Each new note is
+  still a new voice: a sound with its own attack (a sample, a filter
+  envelope) keeps it, so crossfades soften the change rather than morph one
+  pitch into the next (for that, use Legato with glide). A crossfade uses two
+  voices at once per lane.
+- The **phrase envelope** is the arpeggiator's overall volume (in the
+  sequencer, each lane's: above). It starts with
   the first key of a phrase (a key pressed when none are held) and releases
   when the last key is let go (or when Latch is turned off with no keys
   held). The arpeggio **keeps playing through the release**, on the chord that
@@ -676,9 +835,9 @@ Turned on by `features`: `modSlots` (matrix routes), `standardLfos` and
 | `downbeat` | 1 during the bar's first beat, else 0 | |
 | `note.age` | beats since the note started, 0→1 over `sk.ageSpan` beats (default 4) | ✓ |
 | `note.offbeat` | how far the note started from the nearest beat, bipolar: ±1 is half a beat early or late | ✓ |
-| `arp.env` | the arpeggiator's note envelope; 0 for notes it didn't play (§4b) | ✓ |
-| `arp.phrase` | the arpeggiator's phrase envelope (§4b) | |
-| `arp.step` | where the arpeggio is in its cycle, 0→1, stepped (§4b) | |
+| `arp.env` | the arpeggiator's or sequencer's note envelope (or crossfade); 0 for notes it didn't play (§4b) | ✓ |
+| `arp.phrase` | the phrase envelope (the sequencer's most recently started lane) (§4b) | |
+| `arp.step` | where the arpeggio or sequence is in its cycle, 0→1, stepped (§4b) | |
 | custom | the synth's own, below | if declared per voice |
 
 **Matrix.** Up to `modSlots` routes, each `src → dst × amt`, with an optional
@@ -961,7 +1120,7 @@ and output panels.
 | Section field | |
 |---|---|
 | `title`, `controls` | a panel of controls |
-| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4), and with `features.arp`: `arp` (pattern, rate, gate…), `arpEnv` and `arpPhrase` (the arpeggiator's two envelopes, §4b) |
+| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4), and with `features.arp`: `arp` (type, then the arpeggiator's or sequencer's own controls), `arpPattern` (the piano roll, for whichever type is on), `arpEnv` and `arpPhrase` (the note and phrase envelopes, §4b) |
 | `wide` | `true` makes the panel take a full row |
 | `info` | text for an ⓘ icon beside the panel's title (kit panels too) |
 | `collapsed` | makes the panel fold at its title: `true` starts folded, `false` starts open |
@@ -1025,6 +1184,7 @@ export function register(sk) {
     // ctx.noteOn(note, vel), ctx.noteOff(note)
     // ctx.onMeter(sourceId, fn)    live value of any mod source (~30 times a second, playing or not)
     // ctx.send(messageId, ...values), ctx.onMessage(messageId, fn)   messages (§9b)
+    // ctx.arpGenerate(settings)    a generated arp/sequencer pattern (§4b)
     // ctx.toast(text, kind)
   });
 }
@@ -1088,6 +1248,7 @@ export function mount(sk, root) {
   | `get(id)`, `set(id, v)`, `norm(id)`, `setNorm(id, n)`, `format(id, v?)`, `parse(id, text)`, `reset(id)`, `param(id)`, `onParam(id, fn)`, `gesture(id, on)` | parameters (wrap a drag in `gesture` so a DAW records one automation move) |
   | `custom(id)`, `setCustom(id, v)`, `onCustom(id, fn)` | custom state (§5a) |
   | `send(id, ...values)`, `onMessage(id, fn)` | messages (§9b) |
+  | `arpGenerate(settings)` | a generated arpeggiator or sequencer pattern (§4b) |
   | `onMeter(sourceId, fn)` | a mod source's value, ~30 times a second, whether or not anything is playing (a synth's own source makes a good gauge) |
   | `onMeters(fn)` | every meter frame (`voices`, `peak`, `beat`, `playing`, `bpm`, …) |
   | `noteOn(n, vel)`, `noteOff(n)`, `midi(bytes)`, `allNotesOff()`, `panic()` | playing |

@@ -11,6 +11,7 @@
 #include "synthkit/error.h"
 
 #include "arp.h"
+#include "seq.h"
 #include "modulation.h"
 #include <unordered_set>
 
@@ -204,9 +205,13 @@ struct Slot {
   dsp::Rng rng;
   Beats startBeat = 0;
   ModVoice mv;
-  bool arp = false;                           // played by the arpeggiator
+  bool arp = false;                           // played by the arpeggiator or sequencer
+  int arpLane = -1;                           // the sequencer's lane (-1: the arpeggiator)
   dsp::Adsr arpEnv;                           // its note envelope
   std::array<float, kControlBlock> arpBuf{};
+  // Crossfade (arp.envMode): an equal-power fade in, and out on release.
+  int xfStage = 0;                            // 0 done, 1 in, 2 held, 3 out
+  float xfPos = 0, xfInc = 1, xfFrom = 0, xfAmp = 0;
 };
 
 enum Mode { Poly = 0, Mono = 1, Legato = 2 };
@@ -294,6 +299,7 @@ struct Core {
 
   Modulation mod;
   Arp arp;
+  Seq sequencer;
   bool hasArp = false;
   std::vector<MidiEvent> arpEv;
   int pPitch = -1, pLevel = -1;
@@ -327,6 +333,17 @@ struct Core {
     CustomBuilder cb(&epoch);
     synth->defineCustom(cb);
     customs = cb.take();
+    if (hasArp) {
+      // The arpeggiator's patterns travel like custom state (patch "custom"
+      // under "sk.arp"), so the page and the plugin edit them the same way.
+      auto slot = std::make_unique<CustomSlot<ArpBank>>("sk.arp", CustomIO<ArpBank>{arpSaveBank, arpLoadBank, arpDefaultBank()}, &epoch);
+      arp.setBank(slot.get());
+      customs.push_back(std::move(slot));
+      // The sequencer's patterns: rows are intervals from each key.
+      auto seqSlot = std::make_unique<CustomSlot<ArpBank>>("sk.seq", CustomIO<ArpBank>{arpSaveBank, arpLoadBank, arpDefaultSeqBank()}, &epoch);
+      sequencer.setBank(seqSlot.get());
+      customs.push_back(std::move(seqSlot));
+    }
     std::unordered_set<std::string> ids;
     for (auto& c : customs)
       if (!ids.insert(c->id()).second) fail("duplicate custom state id '" + c->id() + "'");
@@ -445,6 +462,7 @@ struct Core {
       resetSlot(sl);
     }
     arp.prepare(sr, maxBlock);
+    sequencer.prepare(sr, maxBlock);
     arpEv.assign(outEv.size(), {});
     limiter.prepare(static_cast<float>(sr));
     mod.prepare(sr, n, values.data());
@@ -477,7 +495,10 @@ struct Core {
     s.polyAT = 0;
     for (auto& e : s.envs) e.reset();
     s.arp = false;
+    s.arpLane = -1;
     s.arpEnv.reset();
+    s.xfStage = 0;
+    s.xfAmp = 0;
   }
 
   // ------------------------------------------------------------ process
@@ -555,10 +576,12 @@ struct Core {
       sustain = false;
       for (auto& q : queue) q.used = false;
       arp.reset();
+      sequencer.reset();
     }
     if (reqAllOff.exchange(0)) {
       allNotesOff();
       arp.requestAllOff();
+      sequencer.requestAllOff();
     }
     // Stepped params (choices, toggles, integers) apply immediately, so a
     // note at the very start of a block already sees e.g. the unison count.
@@ -655,12 +678,15 @@ struct Core {
 
   // The arpeggiator, between the synth's processEvents and the voices (§4b).
   void runArp(int n, bool jumped) {
+    // The arpeggiator, then the sequencer; whichever arp.on doesn't select
+    // passes events through (after tidying up if it was just turned off).
     int count = 0, dropped = 0;
     arp.process(outEv.data(), outCount, arpEv.data(), count, static_cast<int>(arpEv.size()), dropped,
                 *store, blockStart, spb, n, transport, jumped);
+    outCount = 0;
+    sequencer.process(arp.params(), arpEv.data(), count, outEv.data(), outCount, static_cast<int>(outEv.size()), dropped,
+                *store, blockStart, spb, n, transport, jumped);
     if (dropped) statDropped.fetch_add(dropped);
-    std::swap(outEv, arpEv);
-    outCount = count;
     for (int i = 1; i < outCount; ++i) {
       MidiEvent e = outEv[static_cast<std::size_t>(i)];
       int j = i - 1;
@@ -672,7 +698,19 @@ struct Core {
     }
   }
 
-  int arpEnvMode() const { return hasArp ? std::clamp(static_cast<int>(std::lround(store->get(arp.params().envMode))), 0, 2) : ArpEnvOff; }
+  int arpEnvMode() const { return hasArp ? std::clamp(static_cast<int>(std::lround(store->get(arp.params().envMode))), 0, 3) : ArpEnvOff; }
+  int arpType() const { return hasArp ? std::clamp(static_cast<int>(std::lround(store->get(arp.params().on))), 0, 2) : ArpTypeOff; }
+  const float* arpPhrase(const Slot& s) const { return s.arpLane >= 0 ? sequencer.phrase(s.arpLane) : arp.phrase(); }
+
+  // A crossfade's length: arp.xfade of a step at the current rate and tempo.
+  void startCrossfade(Slot& s) {
+    const auto& ap = arp.params();
+    const double samples = std::max(1.0, values[ap.xfade] / 100.0 * arpRateBeats(static_cast<int>(std::lround(values[ap.rate]))) * spb);
+    s.xfInc = static_cast<float>(1.0 / samples);
+    // From where it is: a retriggered voice that's still fading doesn't jump.
+    s.xfPos = s.xfStage == 0 ? 0.f : std::asin(std::clamp(s.xfAmp, 0.f, 1.f)) / 1.5707963f;
+    s.xfStage = 1;
+  }
 
   void collectDue() {
     for (auto& q : queue) {
@@ -758,7 +796,10 @@ struct Core {
     if (anyHeld && !heldNow) mod.allKeysUp();
     anyHeld = heldNow;
     if (mod.enabled()) {
-      if (hasArp) mod.setArp(arp.phrase()[pos], arp.stepPosAt(pos));
+      if (hasArp) {
+        if (arpType() == ArpTypeSeq) mod.setArp(sequencer.phraseAt(pos), sequencer.stepPosAt(pos));
+        else mod.setArp(arp.phrase()[pos], arp.stepPosAt(pos));
+      }
       mod.beginBlock(values.data(), transport, 0, len, modwheel, bend, aftertouch);
       gvals = mod.globalValues();
       gprev = mod.prevGlobalValues();
@@ -807,7 +848,20 @@ struct Core {
       for (int i = 0; i < len; ++i) s.envBuf[e][static_cast<std::size_t>(i)] = s.envs[e].next() * scale;
     }
     const int arpMode = s.arp ? arpEnvMode() : ArpEnvOff;
-    if (s.arp) {
+    if (s.arp && arpMode == ArpEnvCrossfade) {
+      for (int i = 0; i < len; ++i) {
+        float a = 0;
+        if (s.xfStage == 1 || s.xfStage == 3) {
+          s.xfPos = std::min(1.f, s.xfPos + s.xfInc);
+          a = s.xfStage == 1 ? std::sin(1.5707963f * s.xfPos) : s.xfFrom * std::cos(1.5707963f * s.xfPos);
+          if (s.xfPos >= 1.f) s.xfStage = s.xfStage == 1 ? 2 : 0;
+        } else if (s.xfStage == 2) {
+          a = 1.f;
+        }
+        s.xfAmp = a;
+        s.arpBuf[static_cast<std::size_t>(i)] = a;
+      }
+    } else if (s.arp) {
       const auto& ap = arp.params();
       s.arpEnv.set(values[ap.a], values[ap.d], values[ap.s], values[ap.r]);
       for (int i = 0; i < len; ++i) s.arpBuf[static_cast<std::size_t>(i)] = s.arpEnv.next();
@@ -845,9 +899,14 @@ struct Core {
     if (pLevel >= 0) level = Ramp{vp[pLevel], vv[pLevel], len};
     // Arp notes: the note envelope on top of (or instead of) the amp
     // envelope, and the phrase envelope over everything.
-    const bool replace = arpMode == ArpEnvReplace;
+    const bool replace = arpMode == ArpEnvReplace || arpMode == ArpEnvCrossfade;
     const bool useArpEnv = arpMode != ArpEnvOff;
-    const float* phrase = s.arp ? arp.phrase() + pos : nullptr;
+    const float* phrase = s.arp ? arpPhrase(s) + pos : nullptr;
+    // The sequencer's two levels: the keys, and the notes it adds.
+    if (arpType() == ArpTypeSeq) {
+      const float db = values[s.arp ? arp.params().seqLevel : arp.params().keyLevel];
+      gain *= db <= -59.9f ? 0.f : std::pow(10.f, db / 20.f);
+    }
     float peak = 0;
     for (int i = 0; i < len; ++i) {
       const auto si = static_cast<std::size_t>(i);
@@ -867,7 +926,8 @@ struct Core {
     bool done = false;
     if (s.state == St::Fading && s.fade <= 0) done = true;
     if (amp && !replace && s.envs[0].idle()) done = true;
-    if (useArpEnv && s.arpEnv.idle()) done = true;
+    if (useArpEnv && arpMode != ArpEnvCrossfade && s.arpEnv.idle()) done = true;
+    if (arpMode == ArpEnvCrossfade && s.xfStage == 0) done = true;
     if (!s.voice->active()) done = true;
     if (s.state == St::Released) {
       // Released voices with no amp envelope end once they've gone quiet.
@@ -914,7 +974,8 @@ struct Core {
     s.rng.seed(dsp::hashSeed(serial, static_cast<uint64_t>(u), 0x51u));
     for (auto& env : s.envs) env.gate(true);
     s.arp = e.arp;
-    if (e.arp) s.arpEnv.gate(true);
+    s.arpLane = e.arpLane;
+    if (e.arp) { s.arpEnv.gate(true); startCrossfade(s); }
     else s.arpEnv.reset();
     if (mod.enabled()) mod.noteOn(s.mv, e.note, e.vel, transport, serial * 16 + static_cast<uint64_t>(u), first && u == 0);
     StartInfo si;
@@ -941,6 +1002,7 @@ struct Core {
     s.sustained = false;
     for (auto& env : s.envs) env.gate(false);
     s.arpEnv.gate(false);
+    if (s.xfStage == 1 || s.xfStage == 2) { s.xfStage = 3; s.xfFrom = s.xfAmp; s.xfPos = 0; }
     if (mod.enabled()) mod.noteOff(s.mv);
     s.voice->release();
   }
@@ -1033,10 +1095,10 @@ struct Core {
       }
       return;
     }
-    monoTransition(e.note, e.vel, e.channel, tuned, serial, mode == Legato && othersHeld, e.arp);
+    monoTransition(e.note, e.vel, e.channel, tuned, serial, mode == Legato && othersHeld, e.arp, e.arpLane);
   }
 
-  void monoTransition(int note, float vel, int channel, double tuned, uint64_t serial, bool legato, bool fromArp) {
+  void monoTransition(int note, float vel, int channel, double tuned, uint64_t serial, bool legato, bool fromArp, int lane) {
     for (auto& s : slots) {
       if (!s.mono || s.state == VoicePool::State::Free || s.state == VoicePool::State::Fading) continue;
       double from = s.glidePitch;
@@ -1049,18 +1111,19 @@ struct Core {
       setGlide(s, from);
       if (!s.arp && fromArp) s.arpEnv.reset();
       s.arp = fromArp;
+      s.arpLane = lane;
       if (!legato) {
         s.vel = vel;
         s.startBeat = transport.beat;
         for (auto& env : s.envs) env.gate(true);
-        if (fromArp) s.arpEnv.gate(true);
+        if (fromArp) { s.arpEnv.gate(true); startCrossfade(s); }
         if (mod.enabled()) mod.noteOn(s.mv, note, vel, transport, serial * 16 + static_cast<uint64_t>(s.uniIndex), false);
       }
       bool wasReleased = s.state == VoicePool::State::Released;
       s.state = VoicePool::State::Held;
       if (wasReleased) {
         for (auto& env : s.envs) env.gate(true);
-        if (fromArp) s.arpEnv.gate(true);
+        if (fromArp) { s.arpEnv.gate(true); startCrossfade(s); }
       }
       StartInfo si;
       si.legato = legato && !wasReleased;
@@ -1074,7 +1137,7 @@ struct Core {
     if (mode == Poly) {
       uint64_t oldest = UINT64_MAX;
       for (auto& s : slots)
-        if (s.state == VoicePool::State::Held && !s.sustained && s.note == e.note && s.channel == e.channel && s.arp == e.arp)
+        if (s.state == VoicePool::State::Held && !s.sustained && s.note == e.note && s.channel == e.channel && s.arp == e.arp && s.arpLane == e.arpLane)
           oldest = std::min(oldest, s.serial);
       if (oldest == UINT64_MAX) return;
       for (auto& s : slots)
@@ -1093,7 +1156,7 @@ struct Core {
       b.note = back;
       b.vel = vel;
       uint64_t serial = ++serialCounter;
-      monoTransition(back, vel, e.channel, tune(b, serial), serial, mode == Legato, e.arp);
+      monoTransition(back, vel, e.channel, tune(b, serial), serial, mode == Legato, e.arp, e.arpLane);
       return;
     }
     for (auto& s : slots) if (s.mono) releaseSlot(s, e.arp);
@@ -1450,6 +1513,24 @@ std::vector<std::string> Engine::setModMatrix(const Json& routes) {
   core_->mod.loadMatrix(routes, &w);
   return w;
 }
+Json arpGeneratePattern(const Json& s) {
+  detail::ArpGenSettings g;
+  g.steps = static_cast<int>(s["steps"].number(g.steps));
+  g.density = static_cast<float>(s["density"].number(g.density));
+  g.range = static_cast<int>(s["range"].number(g.range));
+  g.leaps = static_cast<float>(s["leaps"].number(g.leaps));
+  g.repetition = static_cast<float>(s["repetition"].number(g.repetition));
+  g.ties = static_cast<float>(s["ties"].number(g.ties));
+  g.chords = static_cast<float>(s["chords"].number(g.chords));
+  g.kind = std::clamp(static_cast<int>(s["kind"].number(0)), 0, 2);
+  g.seed = static_cast<uint64_t>(std::max(0.0, s["seed"].number(1)));
+  auto bank = std::make_unique<detail::ArpBank>();
+  detail::arpGenerate(g, bank->patterns[0]);
+  Json all = Json::object();
+  detail::arpSaveBank(*bank, all);
+  return all["patterns"][0];
+}
+
 Json Engine::shapes() const { return core_->mod.saveShapes(); }
 std::vector<std::string> Engine::setShapes(const Json& s) {
   std::vector<std::string> w;

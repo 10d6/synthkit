@@ -355,6 +355,64 @@ async function main() {
           pass("a message reaches the synth and its answer comes back");
         } catch { fail("Clear echoes: no delay.cleared message came back"); }
       }
+
+      // The arpeggiator's piano roll (API.md §4b): draw, move, lengthen,
+      // set velocity and remove notes in pattern 2.
+      if (await page.$(".arp-area")) {
+        await page.evaluate(() => { window.synthkit.model.set("arp.pattern", 2); document.querySelector(".arp-area").scrollIntoView({ block: "center" }); });
+        await page.waitForTimeout(100);
+        const roll = await page.evaluate(() => {
+          const m = window.synthkit.model, bank = m.custom("sk.arp");
+          bank.patterns[1] = { steps: 16, notes: [] };
+          m.setCustom("sk.arp", bank);
+          return true;
+        });
+        const box = await page.locator(".arp-svg").boundingBox();
+        // Same geometry as the editor: 30 px of row labels, rows 1–12 plus one below, 15 px each.
+        const stepW = (box.width - 34) / 16, at = (st, row) => ({ x: box.x + 30 + (st + 0.5) * stepW, y: box.y + 2 + (11 - row + 0.5) * 15 });
+        const notes = () => page.evaluate(() => window.synthkit.model.custom("sk.arp").patterns[1].notes);
+        let a = at(2, 1), z = at(5, 1);
+        await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(z.x, z.y, { steps: 4 }); await page.mouse.up();
+        a = at(8, 3); await page.mouse.click(a.x, a.y);
+        z = at(9, 5); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(z.x, z.y, { steps: 4 }); await page.mouse.up();
+        const drawn = JSON.stringify(await notes());
+        if (!roll || drawn !== JSON.stringify([[2, 1, 4, 100], [9, 5, 1, 100]])) fail(`piano roll: drawing and moving gave ${drawn}`);
+        else pass("piano roll: click-drag draws a long note, dragging moves one");
+        await page.waitForTimeout(450);
+        a = at(9, 5); await page.mouse.dblclick(a.x, a.y);
+        const left = await notes();
+        if (left.length !== 1) fail(`piano roll: double-click left ${JSON.stringify(left)}`); else pass("piano roll: double-click removes a note");
+        // The generator: New idea draws a pattern, a slider redraws it, Undo restores.
+        const pat2 = () => page.evaluate(() => JSON.stringify(window.synthkit.model.custom("sk.arp").patterns[1]));
+        const before = await pat2();
+        await page.locator(".arp-pattern-panel button", { hasText: "Generate…" }).click();
+        await page.locator(".arp-gen button", { hasText: "New idea" }).click();
+        const idea = await pat2();
+        await page.$eval(".arp-gen input[aria-label=Density]", (e) => { e.value = 1; e.dispatchEvent(new Event("input")); });
+        const busier = JSON.parse(await pat2()).notes.length;
+        await page.locator(".arp-gen button", { hasText: "Undo" }).click();
+        const undone = await pat2();
+        if (idea === before || !(busier >= JSON.parse(idea).notes.length) || undone !== before) fail(`generator: idea changed ${idea !== before}, busier ${busier}, undo ${undone === before}`);
+        else pass("generator: New idea draws a pattern, sliders redraw it, Undo restores");
+        await page.evaluate(() => window.synthkit.model.set("arp.pattern", 1));
+        // Sequencer: its own controls, interval rows, its own bank.
+        const seqView = await page.evaluate(async () => {
+          const m = window.synthkit.model;
+          const shown = (id) => { const e = document.querySelector(`[data-param="${id}"]`); return !!e && !e.closest("[hidden]"); };
+          m.set("arp.on", 2);
+          await new Promise((r) => setTimeout(r, 50));
+          const r = {
+            controls: shown("arp.scale") && shown("arp.keyLevel") && !shown("arp.mode") && !shown("arp.octaves"),
+            title: document.querySelector(".arp-pattern-panel .panel-title").textContent,
+            key: [...document.querySelectorAll(".arp-row-label")].some((e) => e.textContent === "Key"),
+            notes: document.querySelectorAll(".arp-note").length === m.custom("sk.seq").patterns[0].notes.length,
+          };
+          m.set("arp.on", 0);
+          return r;
+        });
+        if (!seqView.controls || seqView.title !== "Sequencer pattern" || !seqView.key || !seqView.notes) fail(`sequencer view: ${JSON.stringify(seqView)}`);
+        else pass("sequencer: its own controls, interval rows and pattern bank");
+      }
       }  // kitUi
     }
     if (errors.length) fail(`${name}: console errors: ${errors.join(" | ")}`); else pass(`${name}: boots with no console errors`);
