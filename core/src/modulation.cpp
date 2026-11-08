@@ -138,7 +138,9 @@ void Modulation::init(const ParamStore& store, const SynthInfo& info, std::vecto
   nLfo_ = static_cast<int>(lfoP_.size());
   nShape_ = static_cast<int>(shapeP_.size());
   nCustom_ = static_cast<int>(custom.size());
-  enabled_ = modSlots_ > 0 || nLfo_ > 0 || nShape_ > 0 || nCustom_ > 0;
+  // The arpeggiator's sources feed the page's meters (its playhead) even
+  // without a matrix.
+  enabled_ = modSlots_ > 0 || nLfo_ > 0 || nShape_ > 0 || nCustom_ > 0 || info.features.arp;
 
   auto add = [&](std::string id, std::string name, Src k, int idx, bool pv, bool bi) {
     sources_.push_back(SourceInfo{ModSourceDesc{std::move(id), std::move(name), pv, bi}, k, idx});

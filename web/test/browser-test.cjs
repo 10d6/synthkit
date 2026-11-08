@@ -355,6 +355,35 @@ async function main() {
           pass("a message reaches the synth and its answer comes back");
         } catch { fail("Clear echoes: no delay.cleared message came back"); }
       }
+
+      // The arpeggiator's piano roll (API.md §4b): draw, move, lengthen,
+      // set velocity and remove notes in pattern 2.
+      if (await page.$(".arp-area")) {
+        await page.evaluate(() => { window.synthkit.model.set("arp.pattern", 2); document.querySelector(".arp-area").scrollIntoView({ block: "center" }); });
+        await page.waitForTimeout(100);
+        const roll = await page.evaluate(() => {
+          const m = window.synthkit.model, bank = m.custom("sk.arp");
+          bank.patterns[1] = { steps: 16, notes: [] };
+          m.setCustom("sk.arp", bank);
+          return true;
+        });
+        const box = await page.locator(".arp-svg").boundingBox();
+        // Same geometry as the editor: 30 px of row labels, rows 1–12 plus one below, 15 px each.
+        const stepW = (box.width - 34) / 16, at = (st, row) => ({ x: box.x + 30 + (st + 0.5) * stepW, y: box.y + 2 + (11 - row + 0.5) * 15 });
+        const notes = () => page.evaluate(() => window.synthkit.model.custom("sk.arp").patterns[1].notes);
+        let a = at(2, 1), z = at(5, 1);
+        await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(z.x, z.y, { steps: 4 }); await page.mouse.up();
+        a = at(8, 3); await page.mouse.click(a.x, a.y);
+        z = at(9, 5); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(z.x, z.y, { steps: 4 }); await page.mouse.up();
+        const drawn = JSON.stringify(await notes());
+        if (!roll || drawn !== JSON.stringify([[2, 1, 4, 100], [9, 5, 1, 100]])) fail(`piano roll: drawing and moving gave ${drawn}`);
+        else pass("piano roll: click-drag draws a long note, dragging moves one");
+        await page.waitForTimeout(450);
+        a = at(9, 5); await page.mouse.dblclick(a.x, a.y);
+        const left = await notes();
+        if (left.length !== 1) fail(`piano roll: double-click left ${JSON.stringify(left)}`); else pass("piano roll: double-click removes a note");
+        await page.evaluate(() => window.synthkit.model.set("arp.pattern", 1));
+      }
       }  // kitUi
     }
     if (errors.length) fail(`${name}: console errors: ${errors.join(" | ")}`); else pass(`${name}: boots with no console errors`);

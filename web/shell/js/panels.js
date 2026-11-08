@@ -115,7 +115,7 @@ class Panels {
     }
     const out = [...groups].map(([title, controls]) => ({ title, controls }));
     out.push({ kit: "voices" });
-    if (this.model.param("arp.on")) out.push({ kit: "arp" }, { kit: "arpEnv" }, { kit: "arpPhrase" });
+    if (this.model.param("arp.on")) out.push({ kit: "arp" }, { kit: "arpPattern" }, { kit: "arpEnv" }, { kit: "arpPhrase" });
     for (let n = 1; n <= this.model.info.synth.standardEnvelopes; n++) out.push({ kit: "env" + n });
     const lfos = [], shapes = [];
     for (let n = 1; n <= this.model.mod.lfos; n++) lfos.push({ kit: "lfo" + n });
@@ -258,6 +258,7 @@ class Panels {
     if (lfo) return Number(lfo[1]) <= this.model.mod.lfos ? new LfoPanel(this.app, Number(lfo[1])).root : this.missing(spec.kit);
     const shape = spec.kit && /^shape(\d+)$/.exec(spec.kit);
     if (shape) return Number(shape[1]) <= this.model.mod.shapes ? new ShapePanel(this.app, Number(shape[1]), spec.title).root : this.missing(spec.kit);
+    if (spec.kit === "arpPattern") return this.model.param("arp.pattern") ? new ArpPatternPanel(this.app, spec.title).root : this.missing(spec.kit);
     if (spec.kit === "modMatrix") {
       if (!this.model.mod.slots) return this.missing(spec.kit);
       this.app.matrix = new MatrixPanel(this.app);

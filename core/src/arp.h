@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "synthkit/custom.h"
 #include "synthkit/dsp/envelopes.h"
 #include "synthkit/dsp/rng.h"
 #include "synthkit/midi.h"
@@ -20,13 +21,43 @@
 
 namespace sk::detail {
 
-enum ArpMode { ArpUp, ArpDown, ArpUpDown, ArpDownUp, ArpAsPlayed, ArpRandom, ArpChord };
+enum ArpMode { ArpUp, ArpDown, ArpUpDown, ArpDownUp, ArpAsPlayed, ArpRandom, ArpChord, ArpPatternMode };
+
+// Custom patterns (API.md §4b), drawn in the piano roll. Rows are chord
+// tones: row 0 is the lowest held note, row 1 the next, and rows past the
+// held notes carry on an octave up (below 0, an octave down).
+constexpr int kArpPatterns = 8;
+constexpr int kArpMaxSteps = 64;
+constexpr int kArpMaxPatternNotes = 256;
+constexpr int kArpRowLow = -24, kArpRowHigh = 47;
+
+struct ArpPatternNote {
+  int16_t step = 0;     // 0…steps-1
+  int16_t row = 0;      // chord tone
+  int16_t len = 1;      // in steps
+  uint8_t vel = 100;    // 1…127
+  uint8_t chance = 100; // 0…100 %
+};
+
+struct ArpPattern {
+  int steps = 16;
+  int count = 0;
+  std::array<ArpPatternNote, kArpMaxPatternNotes> notes{};
+};
+
+struct ArpBank {
+  std::array<ArpPattern, kArpPatterns> patterns{};
+};
+
+ArpBank arpDefaultBank();
+void arpSaveBank(const ArpBank& b, Json& j);
+void arpLoadBank(const Json& j, ArpBank& b);
 enum ArpEnvMode { ArpEnvOff, ArpEnvMultiply, ArpEnvReplace };
 enum ArpSync { ArpSyncGrid, ArpSyncKey };
 
 struct ArpParams {
   int on = -1, mode = -1, octaves = -1, rate = -1, gate = -1, swing = -1, latch = -1, sync = -1;
-  int velMode = -1, velFixed = -1;
+  int velMode = -1, velFixed = -1, pattern = -1;
   int envMode = -1, a = -1, d = -1, s = -1, r = -1;      // note envelope
   int pa = -1, pd = -1, ps = -1, pr = -1;                // phrase envelope
 };
@@ -39,6 +70,7 @@ class Arp {
   static constexpr int kMaxOffs = 128;
 
   void addParams(ParamBuilder& b);
+  void setBank(const CustomSlot<ArpBank>* bank) { bank_ = bank; }
   const ArpParams& params() const { return P; }
 
   void prepare(double sampleRate, int maxBlock);
@@ -80,6 +112,7 @@ class Arp {
   int activeNotes(int* notes, float* vels, int* chans, bool byOrder) const;
 
   ArpParams P;
+  const CustomSlot<ArpBank>* bank_ = nullptr;
   double sr_ = 48000;
   std::vector<float> phraseBuf_;
   dsp::Adsr phraseEnv_;

@@ -1306,6 +1306,63 @@ TEST(arp_follows_a_transport_jump) {
   CHECK(h.eng->takeStats().droppedEvents == 0);
 }
 
+TEST(arp_pattern_rows_are_chord_tones) {
+  Harness h(256, kArp);
+  arpOn(h, {{"arp.mode", 7}, {"arp.pattern", 2}, {"arp.gate", 100}});
+  // Pattern 2: rows 0, 3 (past three held notes: the lowest an octave up),
+  // -1 (the highest an octave down), a rest, and 1 held for two steps.
+  Json bank = h.eng->customState("sk.arp");
+  bank["patterns"][1] = Json::parse(R"({"steps":6,"notes":[[0,0,1,100],[1,3,1,100],[2,-1,1,64],[4,1,2,100]]})");
+  CHECK(h.eng->setCustomState("sk.arp", bank));
+  h.run(36100, {{0, on(60)}, {0, on(64)}, {0, on(67)}});
+  auto n = startedNotes();
+  CHECK((n == std::vector<int>{60, 72, 55, 64, 60}));
+  if (gLog.starts.size() == 5) {
+    CHECK_NEAR(gLog.starts[3].beat, 1.0, 1.0 / 24000);   // step 4 (a rest at step 3)
+    CHECK_NEAR(gLog.starts[4].beat, 1.5, 1.0 / 24000);   // the pattern repeats after 6 steps
+  }
+  // The two-step note is still held a step and a half later.
+  Harness k(256, kArp);
+  arpOn(k, {{"arp.mode", 7}, {"arp.pattern", 2}, {"arp.gate", 100}});
+  CHECK(k.eng->setCustomState("sk.arp", bank));
+  k.run(6000 * 4 + 9000, {{0, on(60)}, {0, on(64)}, {0, on(67)}});
+  CHECK(k.eng->takeStats().activeVoices == 1);
+}
+
+TEST(arp_pattern_chance_and_round_trip) {
+  Harness h(256, kArp);
+  arpOn(h, {{"arp.mode", 7}, {"arp.pattern", 3}});
+  Json bank = h.eng->customState("sk.arp");
+  bank["patterns"][2] = Json::parse(R"({"steps":1,"notes":[[0,0,1,100,50]]})");
+  CHECK(h.eng->setCustomState("sk.arp", bank));
+  h.run(6000 * 200, {{0, on(60)}});
+  CHECK(gLog.starts.size() > 60 && gLog.starts.size() < 140);   // about half the steps
+  Json saved = h.eng->savePatch();
+  CHECK(saved["custom"]["sk.arp"]["patterns"][2]["notes"][0][4].number() == 50);
+  Harness k(256, kArp);
+  CHECK(k.eng->loadPatch(saved).ok);
+  CHECK(k.eng->savePatch() == saved);
+  // Default bank: pattern 1 plays out of the box.
+  Harness d(256, kArp);
+  arpOn(d, {{"arp.mode", 7}});
+  d.run(6000 * 8, {{0, on(60)}, {0, on(64)}, {0, on(67)}});
+  CHECK(gLog.starts.size() == 8);
+}
+
+TEST(arp_without_a_matrix) {
+  Harness h(256, R"(,"arp":true)");
+  arpOn(h, {{"arp.mode", 7}});
+  h.run(6000 * 8, {{0, on(60)}, {0, on(64)}, {0, on(67)}});
+  CHECK(gLog.starts.size() == 8);
+  // Meters still carry the arpeggiator's sources (the piano roll's playhead).
+  std::vector<float> src(h.eng->modSources().size()), prm(static_cast<std::size_t>(h.eng->params().size())), shp(1);
+  h.eng->readModMeters(src.data(), prm.data(), shp.data());
+  bool found = false;
+  for (std::size_t i = 0; i < src.size(); ++i)
+    if (h.eng->modSources()[i].id == "arp.phrase") { found = true; CHECK(src[i] > 0.5f); }
+  CHECK(found);
+}
+
 TEST(arp_sources_and_reserved_ids) {
   Harness h(256, kArp);
   bool env = false, phrase = false, step = false;

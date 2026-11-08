@@ -21,6 +21,64 @@ constexpr double kGraceSeconds = 0.04;
 constexpr double kTailSeconds = 0.06;
 }  // namespace
 
+// ---------------------------------------------------------------- patterns
+
+ArpBank arpDefaultBank() {
+  ArpBank b;
+  // Pattern 1: a broken chord to start from (rows 0 2 1 2, then up an octave
+  // and back). The others start empty.
+  ArpPattern& p = b.patterns[0];
+  p.steps = 8;
+  const int rows[8] = {0, 2, 1, 2, 0, 3, 1, 2};
+  for (int i = 0; i < 8; ++i) p.notes[static_cast<std::size_t>(p.count++)] = ArpPatternNote{static_cast<int16_t>(i), static_cast<int16_t>(rows[i]), 1, static_cast<uint8_t>(i % 4 == 0 ? 112 : 88), 100};
+  return b;
+}
+
+void arpSaveBank(const ArpBank& b, Json& j) {
+  Json pats = Json::array();
+  for (const ArpPattern& p : b.patterns) {
+    Json pj = Json::object();
+    pj["steps"] = p.steps;
+    Json notes = Json::array();
+    for (int i = 0; i < p.count; ++i) {
+      const ArpPatternNote& n = p.notes[static_cast<std::size_t>(i)];
+      Json nj = Json::array();
+      nj.push(n.step); nj.push(n.row); nj.push(n.len); nj.push(n.vel);
+      if (n.chance < 100) nj.push(n.chance);
+      notes.push(nj);
+    }
+    pj["notes"] = notes;
+    pats.push(pj);
+  }
+  j["patterns"] = pats;
+}
+
+void arpLoadBank(const Json& j, ArpBank& b) {
+  const Json& pats = j["patterns"];
+  if (!pats.isArray()) return;
+  ArpBank out;   // patterns a patch leaves out are empty
+  int pi = 0;
+  for (const Json& pj : pats.items()) {
+    if (pi >= kArpPatterns) break;
+    ArpPattern& p = out.patterns[static_cast<std::size_t>(pi++)];
+    p.steps = std::clamp(static_cast<int>(pj["steps"].number(16)), 1, kArpMaxSteps);
+    p.count = 0;
+    for (const Json& nj : pj["notes"].items()) {
+      if (p.count >= kArpMaxPatternNotes) break;
+      if (!nj.isArray() || nj.size() < 2) continue;
+      ArpPatternNote n;
+      n.step = static_cast<int16_t>(std::clamp(static_cast<int>(nj[0].number()), 0, kArpMaxSteps - 1));
+      if (n.step >= p.steps) continue;
+      n.row = static_cast<int16_t>(std::clamp(static_cast<int>(std::lround(nj[1].number())), kArpRowLow, kArpRowHigh));
+      n.len = static_cast<int16_t>(std::clamp(static_cast<int>(nj[2].number(1)), 1, kArpMaxSteps));
+      n.vel = static_cast<uint8_t>(std::clamp(static_cast<int>(nj[3].number(100)), 1, 127));
+      n.chance = static_cast<uint8_t>(std::clamp(static_cast<int>(nj[4].number(100)), 0, 100));
+      p.notes[static_cast<std::size_t>(p.count++)] = n;
+    }
+  }
+  b = out;
+}
+
 const std::vector<std::string>& arpRateNames() {
   static const std::vector<std::string> n = [] {
     std::vector<std::string> v;
@@ -33,7 +91,7 @@ const std::vector<std::string>& arpRateNames() {
 void Arp::addParams(ParamBuilder& b) {
   const std::string g = "Arpeggiator", ge = "Arp Note Envelope", gp = "Arp Phrase Envelope";
   P.on = b.count(); b.addKit("arp.on").name("Arp").toggle().def(0).group(g);
-  P.mode = b.count(); b.addKit("arp.mode").name("Arp Mode").choices({"Up", "Down", "Up/Down", "Down/Up", "As Played", "Random", "Chord"}).group(g);
+  P.mode = b.count(); b.addKit("arp.mode").name("Arp Mode").choices({"Up", "Down", "Up/Down", "Down/Up", "As Played", "Random", "Chord", "Pattern"}).group(g);
   P.octaves = b.count(); b.addKit("arp.octaves").name("Arp Octaves").range(1, 4).integer().def(1).group(g);
   P.rate = b.count(); b.addKit("arp.rate").name("Arp Rate").choices(arpRateNames()).def(kRateDefault).group(g);
   P.gate = b.count(); b.addKit("arp.gate").name("Arp Gate").range(5, 200).def(50).unit("%").group(g);
@@ -42,6 +100,7 @@ void Arp::addParams(ParamBuilder& b) {
   P.sync = b.count(); b.addKit("arp.sync").name("Arp Sync").choices({"Grid", "Key"}).group(g);
   P.velMode = b.count(); b.addKit("arp.velMode").name("Arp Velocity").choices({"Played", "Fixed"}).group(g);
   P.velFixed = b.count(); b.addKit("arp.velFixed").name("Arp Fixed Velocity").range(1, 127).integer().def(100).group(g);
+  P.pattern = b.count(); b.addKit("arp.pattern").name("Arp Pattern").range(1, kArpPatterns).integer().def(1).group(g);
   P.envMode = b.count(); b.addKit("arp.envMode").name("Arp Envelope").choices({"Off", "Multiply", "Replace"}).def(ArpEnvMultiply).group(ge);
   P.a = b.count(); b.addKit("arp.attack").name("Arp Attack").range(0.0005, 10).log().def(0.002).unit("s").group(ge);
   P.d = b.count(); b.addKit("arp.decay").name("Arp Decay").range(0.001, 20).log().def(0.3).unit("s").group(ge);
@@ -355,7 +414,7 @@ int Arp::activeNotes(int* notes, float* vels, int* chans, bool byOrder) const {
 void Arp::step(int sample) {
   const double len = stepLen();
   const Beats at = stepBeat_;
-  const int mode = std::clamp(choice(P.mode), 0, static_cast<int>(ArpChord));
+  const int mode = std::clamp(choice(P.mode), 0, static_cast<int>(ArpPatternMode));
   const int oct = std::clamp(choice(P.octaves), 1, 4);
 
   int base[kMaxNotes], chan[kMaxNotes];
@@ -365,17 +424,37 @@ void Arp::step(int sample) {
   if (nb > 0) {
     const bool fixed = choice(P.velMode) == 1;
     const float fv = std::clamp(get(P.velFixed), 1.f, 127.f) / 127.f;
-    const Beats gateLen = std::max(len * get(P.gate) / 100.0, t_->seconds(0.003));
-    auto play = [&](int note, float vel, int ch) {
+    const double gate = get(P.gate) / 100.0;
+    const Beats minLen = t_->seconds(0.003);
+    auto playFor = [&](int note, float vel, int ch, Beats dur) {
       if (note < 0 || note > 127) return;
-      MidiEvent e = NoteOn{note, fixed ? fv : vel, ch};
+      MidiEvent e = NoteOn{note, std::clamp(vel, 1.f / 127.f, 1.f), ch};
       e.arp = true;
       emit(e, sample);
       if (nOffs_ >= kMaxOffs) flushOffs(sample, true);  // never lose a note-off
-      offs_[static_cast<std::size_t>(nOffs_++)] = Off{at + gateLen, note, ch};
+      offs_[static_cast<std::size_t>(nOffs_++)] = Off{at + std::max(dur, minLen), note, ch};
     };
+    auto play = [&](int note, float vel, int ch) { playFor(note, fixed ? fv : vel, ch, len * gate); };
     const long k = stepIndex_;
-    if (mode == ArpChord) {
+    if (mode == ArpPatternMode) {
+      // The drawn pattern: each note's row picks a chord tone.
+      const ArpPattern* pat = nullptr;
+      if (bank_) pat = &bank_->read().patterns[static_cast<std::size_t>(std::clamp(static_cast<int>(std::lround(get(P.pattern))) - 1, 0, kArpPatterns - 1))];
+      const int steps = pat ? std::clamp(pat->steps, 1, kArpMaxSteps) : 1;
+      const int p = static_cast<int>(k % steps);
+      if (pat)
+        for (int i = 0; i < std::min(pat->count, kArpMaxPatternNotes); ++i) {
+          const ArpPatternNote& n = pat->notes[static_cast<std::size_t>(i)];
+          if (n.step != p) continue;
+          if (n.chance < 100 && rng_.uniform() * 100.f >= static_cast<float>(n.chance)) continue;
+          const int r = n.row;
+          const int idx = ((r % nb) + nb) % nb;
+          const int octave = (r - idx) / nb;
+          const float v = n.vel / 127.f * (fixed ? fv : bvel[idx]);
+          playFor(base[idx] + 12 * octave, v, chan[idx], (std::max<int>(n.len, 1) - 1 + gate) * len);
+        }
+      stepPos_ = static_cast<float>(p) / static_cast<float>(steps);
+    } else if (mode == ArpChord) {
       const int o = static_cast<int>(k % oct);
       for (int i = 0; i < nb; ++i) play(base[i] + 12 * o, bvel[i], chan[i]);
       stepPos_ = oct > 1 ? static_cast<float>(o) / static_cast<float>(oct) : 0.f;

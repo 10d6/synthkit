@@ -327,6 +327,13 @@ struct Core {
     CustomBuilder cb(&epoch);
     synth->defineCustom(cb);
     customs = cb.take();
+    if (hasArp) {
+      // The arpeggiator's patterns travel like custom state (patch "custom"
+      // under "sk.arp"), so the page and the plugin edit them the same way.
+      auto slot = std::make_unique<CustomSlot<ArpBank>>("sk.arp", CustomIO<ArpBank>{arpSaveBank, arpLoadBank, arpDefaultBank()}, &epoch);
+      arp.setBank(slot.get());
+      customs.push_back(std::move(slot));
+    }
     std::unordered_set<std::string> ids;
     for (auto& c : customs)
       if (!ids.insert(c->id()).second) fail("duplicate custom state id '" + c->id() + "'");

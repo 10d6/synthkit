@@ -501,8 +501,9 @@ Legato glides between steps.
 | Param | Values | Default |
 |---|---|---|
 | `arp.on` | toggle | off |
-| `arp.mode` | 0 Up, 1 Down, 2 Up/Down, 3 Down/Up, 4 As Played, 5 Random (never the same note twice in a row), 6 Chord (every held note, each step) | Up |
-| `arp.octaves` | 1–4: the held notes repeat this many octaves up (Chord moves the whole chord up an octave each step) | 1 |
+| `arp.mode` | 0 Up, 1 Down, 2 Up/Down, 3 Down/Up, 4 As Played, 5 Random (never the same note twice in a row), 6 Chord (every held note, each step), 7 **Pattern** (a drawn pattern, below) | Up |
+| `arp.pattern` | 1–8: which drawn pattern Pattern mode plays (so pattern changes can be automated) | 1 |
+| `arp.octaves` | 1–4: the held notes repeat this many octaves up (Chord moves the whole chord up an octave each step; Pattern ignores it, since its rows reach any octave) | 1 |
 | `arp.rate` | 0 1/1, 1 1/2, 2 1/4., 3 1/4, 4 1/4T, 5 1/8., 6 1/8, 7 1/8T, 8 1/16., 9 1/16, 10 1/16T, 11 1/32 | 1/16 |
 | `arp.gate` | 5–200 %: each note's length, as a share of a step | 50 % |
 | `arp.swing` | 0–100 %: delays every other step; 100 % is a third of a step late (a triplet feel) | 0 |
@@ -512,6 +513,43 @@ Legato glides between steps.
 | `arp.envMode` | the note envelope: 0 **Off**, 1 **Multiply**, 2 **Replace** (below) | Multiply |
 | `arp.attack`, `arp.decay`, `arp.sustain`, `arp.release` | the note envelope (same ranges as `envN.*`) | 2 ms, 0.3 s, 1, 50 ms |
 | `arp.phraseAttack`, `…Decay`, `…Sustain`, `…Release` | the phrase envelope | 2 ms, 0.5 s, 1, 50 ms |
+
+**Drawn patterns** (`arp.mode` Pattern). Eight patterns, each up to 64
+steps long, drawn in the piano roll (`{ "kit": "arpPattern" }`). A
+pattern's **rows are chord tones**, not pitches, so one pattern plays over
+any chord: row 1 is the lowest held note, row 2 the next, and rows past the
+held notes carry on an octave up (holding C E G, rows 1–6 are C E G C' E'
+G'); rows below 1 go down the same way. Each note has a step, a row, a
+length in steps (it lasts `length − 1 + gate` steps), a velocity (scaled by
+the key's velocity, or by `arp.velFixed` with Fixed) and a chance of playing
+(0–100 %, from the phrase's own random stream, so renders repeat). A step can
+hold several notes (a chord), or none (a rest). The pattern starts with the
+phrase and loops; `arp.rate`, `arp.swing` and `arp.sync` apply as in the
+other modes.
+
+The patterns are saved in the patch as custom state (§5a) under `"sk.arp"`,
+which the kit reserves when `features.arp` is on:
+
+```json
+"custom": { "sk.arp": { "patterns": [
+  { "steps": 8, "notes": [[0, 0, 1, 112], [1, 2, 1, 88], [2, 1, 2, 88, 50]] }, …
+] } }
+```
+
+Each note is `[step, row, length, velocity, chance]` with rows 0-based (row 1
+in the editor is `0`; −24…47) and `chance` optional (100). Patterns a patch
+leaves out are empty; a patch without `"sk.arp"` gets the default bank, whose
+pattern 1 is a broken chord. A synth can read or change it like its own
+custom state: `ctx.custom("sk.arp")` in a custom widget or page,
+`Engine::customState("sk.arp")` from code.
+
+The piano roll: click to add a note and drag to lengthen it; drag a note to
+move it, its right end to resize it; double-click (or double-tap) removes it;
+right-click for its chance. Keys: `,` and `.` select notes, arrows move the
+selected one, Shift+←/→ change its length, Delete removes it. The lane
+underneath sets velocity or chance per step. **Edit…** clears, copies and
+pastes patterns, shifts them in time or by a chord tone, reverses, flips and
+doubles them. A playhead follows the pattern while a phrase is playing.
 
 **Two envelopes.** Both are applied by the kit, like the amp envelope (§4):
 
@@ -961,7 +999,7 @@ and output panels.
 | Section field | |
 |---|---|
 | `title`, `controls` | a panel of controls |
-| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4), and with `features.arp`: `arp` (pattern, rate, gate…), `arpEnv` and `arpPhrase` (the arpeggiator's two envelopes, §4b) |
+| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4), and with `features.arp`: `arp` (mode, rate, gate…), `arpPattern` (the piano roll), `arpEnv` and `arpPhrase` (the arpeggiator's two envelopes, §4b) |
 | `wide` | `true` makes the panel take a full row |
 | `info` | text for an ⓘ icon beside the panel's title (kit panels too) |
 | `collapsed` | makes the panel fold at its title: `true` starts folded, `false` starts open |
