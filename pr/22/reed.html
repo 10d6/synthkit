@@ -1164,7 +1164,7 @@ class Model {
   emitShapes() { const s = this.shapes(); for (const fn of this.shapeListeners) fn(s); }
 
   // The arpeggiator's pattern generator (API.md \u00a74b): settings in, one pattern out.
-  arpGenerate(settings) { return this.w.json(this.w.withStrings([JSON.stringify(settings)], (p) => this.x.sk_arp_generate(p))); }
+  arpGenerate(settings = {}) { return this.w.json(this.w.withStrings([JSON.stringify(settings)], (p) => this.x.sk_arp_generate(p))); }
 
   // Custom state -----------------------------------------------------------
   custom(id) { return this.w.json(this.w.withStrings([id], (p) => this.x.sk_get_custom(p))); }
@@ -4595,6 +4595,9 @@ class App {
       setCustom: (id, v) => m.setCustom(id, v),
       onCustom: (id, fn) => { const off = m.onCustom(id, fn); fn(m.custom(id)); return off; },
 
+      // the arpeggiator's / sequencer's pattern generator (API.md \u00a74b)
+      arpGenerate: (settings) => m.arpGenerate(settings),
+
       // messages (API.md \u00a79b)
       send: (id, ...values) => app.sendMessage(id, values),
       onMessage: (id, fn) => app.onMessage(id, fn),
@@ -4743,6 +4746,7 @@ class App {
       noteOff: (n) => this.noteOff(n),
       send: (id, ...values) => this.sendMessage(id, values),
       onMessage: (id, fn) => this.onMessage(id, fn),
+      arpGenerate: (settings) => m.arpGenerate(settings),
       toast: (msg, kind) => this.toast(msg, kind),
     };
     try { this.widgets.get(spec.type)(el, ctx); }
