@@ -187,7 +187,9 @@ level = b.add("level").range(0, 150).def(100).unit("%").cc(7, 0, 100);
 
 Mistakes (duplicate IDs, reserved IDs, `log()` on a range through zero) are
 reported when the synth is created (`sk::fail`), so they show up in the first
-test run.
+test run. `b.count()` is how many parameters have been added so far (the
+next one's index) and `b.idAt(i)` the ID of the `i`th, for code that builds
+parameters in loops or checks what's already there.
 
 **Repeated parameters.** For sets like per-key or per-step controls:
 
@@ -599,11 +601,17 @@ pattern: edit it, save it with the patch. For the sequencer it writes
 intervals: with Chromatic, from a ladder that sits well over any key (0, 3,
 5, 7, 10, 12, 15… semitones, so a step is never a clash), with a scale, in
 scale steps; its lines start mid-range, above the key that's already
-sounding. Pages and custom widgets can call the same generator:
-`sk::arpGeneratePattern(settings)` (in `engine.h`) takes
+sounding.
+
+A synth's own page or custom widget can use the same generator:
+`sk.arpGenerate(settings)` (`ctx.arpGenerate` in a widget) takes
 `{ steps, density, range, leaps, repetition, ties, chords, seed, kind }`
-(`kind` 0 chord tones, 1 semitones, 2 scale steps) and returns one pattern
-in the `"sk.arp"` format.
+(`kind` 0 chord tones, 1 semitones, 2 scale steps; the others default to the
+Generate… panel's starting values) and returns one pattern
+(`{ steps, notes }`); put it into `"sk.arp"` or `"sk.seq"` with
+`setCustom`. Engine-side code (tests, tools) calls
+`sk::arpGeneratePattern(const Json&)` in `engine.h`, which is the same
+function.
 
 **Evolve** (`arp.evolve`) changes the pattern as it plays: each time it comes
 round, there's a chance (rising with the amount) that a note or two moves a
@@ -1112,7 +1120,7 @@ and output panels.
 | Section field | |
 |---|---|
 | `title`, `controls` | a panel of controls |
-| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4), and with `features.arp`: `arp` (mode, rate, gate…), `arpPattern` (the piano roll), `arpEnv` and `arpPhrase` (the arpeggiator's two envelopes, §4b) |
+| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4), and with `features.arp`: `arp` (type, then the arpeggiator's or sequencer's own controls), `arpPattern` (the piano roll, for whichever type is on), `arpEnv` and `arpPhrase` (the note and phrase envelopes, §4b) |
 | `wide` | `true` makes the panel take a full row |
 | `info` | text for an ⓘ icon beside the panel's title (kit panels too) |
 | `collapsed` | makes the panel fold at its title: `true` starts folded, `false` starts open |
@@ -1176,6 +1184,7 @@ export function register(sk) {
     // ctx.noteOn(note, vel), ctx.noteOff(note)
     // ctx.onMeter(sourceId, fn)    live value of any mod source (~30 times a second, playing or not)
     // ctx.send(messageId, ...values), ctx.onMessage(messageId, fn)   messages (§9b)
+    // ctx.arpGenerate(settings)    a generated arp/sequencer pattern (§4b)
     // ctx.toast(text, kind)
   });
 }
@@ -1239,6 +1248,7 @@ export function mount(sk, root) {
   | `get(id)`, `set(id, v)`, `norm(id)`, `setNorm(id, n)`, `format(id, v?)`, `parse(id, text)`, `reset(id)`, `param(id)`, `onParam(id, fn)`, `gesture(id, on)` | parameters (wrap a drag in `gesture` so a DAW records one automation move) |
   | `custom(id)`, `setCustom(id, v)`, `onCustom(id, fn)` | custom state (§5a) |
   | `send(id, ...values)`, `onMessage(id, fn)` | messages (§9b) |
+  | `arpGenerate(settings)` | a generated arpeggiator or sequencer pattern (§4b) |
   | `onMeter(sourceId, fn)` | a mod source's value, ~30 times a second, whether or not anything is playing (a synth's own source makes a good gauge) |
   | `onMeters(fn)` | every meter frame (`voices`, `peak`, `beat`, `playing`, `bpm`, …) |
   | `noteOn(n, vel)`, `noteOff(n)`, `midi(bytes)`, `allNotesOff()`, `panic()` | playing |
