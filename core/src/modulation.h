@@ -22,7 +22,7 @@ namespace detail {
 
 enum class Src : uint8_t {
   Env, Lfo, Shape, Velocity, Key, Random, Aftertouch, ModWheel, Bend, Const,
-  BeatPhase, BarPhase, BarBeat, Downbeat, NoteAge, NoteOffbeat, Custom
+  BeatPhase, BarPhase, BarBeat, Downbeat, NoteAge, NoteOffbeat, ArpEnv, ArpPhrase, ArpStep, Custom
 };
 
 struct SourceInfo {
@@ -113,6 +113,7 @@ struct VoiceIn {
   float vel;
   int note;
   float aftertouch;
+  float arpEnv;      // the arpeggiator's note envelope (0 for other notes)
 };
 
 class Modulation {
@@ -142,6 +143,7 @@ class Modulation {
   void noteOn(ModVoice& v, int note, float vel, const Transport& t, uint64_t serial, bool firstOfPhrase);
   void noteOff(ModVoice& v);
   void allKeysUp();  // releases "first note" shapes
+  void setArp(float phrase, float step) { arpPhrase_ = phrase; arpStep_ = step; }  // before beginBlock
   void trigger(int shape, const Transport& t, ModVoice* const* held, int n);
   int sourceIndex(Src kind, int n) const;  // lfo/shape/custom number -> source index
   void setGlobalSource(int customIndex, float v);
@@ -178,6 +180,8 @@ class Modulation {
   int firstLfo_ = 0, firstShape_ = 0, firstCustom_ = 0;
   int iVel_ = 0, iKey_ = 0, iRandom_ = 0, iAT_ = 0, iMW_ = 0, iBend_ = 0, iConst_ = 0;
   int iBeat_ = 0, iBar_ = 0, iBarBeat_ = 0, iDown_ = 0, iAge_ = 0, iOff_ = 0;
+  int iArpEnv_ = -1, iArpPhrase_ = -1, iArpStep_ = -1;
+  float arpPhrase_ = 0, arpStep_ = 0;
 
   struct LfoP { int shape, rate, sync, division, mode, phase, depth, fade; };
   struct ShapeP { int length, sync, time, trigger, start, loop, rate, offset, depth, smooth, keyLo, keyHi, velLo, velHi, curve; };

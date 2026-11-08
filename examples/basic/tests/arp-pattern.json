@@ -1,0 +1,98 @@
+{
+  "patch": "arp-riff",
+  "transport": {
+    "bpm": 118,
+    "playing": true
+  },
+  "lengthBeats": 18,
+  "events": [
+    {
+      "beat": 0,
+      "on": 45,
+      "vel": 100
+    },
+    {
+      "beat": 0,
+      "on": 52,
+      "vel": 100
+    },
+    {
+      "beat": 0,
+      "on": 57,
+      "vel": 100
+    },
+    {
+      "beat": 0,
+      "on": 60,
+      "vel": 100
+    },
+    {
+      "beat": 8,
+      "off": 45
+    },
+    {
+      "beat": 8,
+      "off": 52
+    },
+    {
+      "beat": 8,
+      "off": 57
+    },
+    {
+      "beat": 8,
+      "off": 60
+    },
+    {
+      "beat": 8,
+      "on": 41,
+      "vel": 100
+    },
+    {
+      "beat": 8,
+      "on": 48,
+      "vel": 100
+    },
+    {
+      "beat": 8,
+      "on": 53,
+      "vel": 100
+    },
+    {
+      "beat": 8,
+      "on": 57,
+      "vel": 100
+    },
+    {
+      "beat": 16,
+      "off": 41
+    },
+    {
+      "beat": 16,
+      "off": 48
+    },
+    {
+      "beat": 16,
+      "off": 53
+    },
+    {
+      "beat": 16,
+      "off": 57
+    }
+  ],
+  "expect": {
+    "soundBy": 0.05,
+    "levelAt": [
+      {
+        "beat": 4,
+        "window": 0.5,
+        "above": -30
+      },
+      {
+        "beat": 12,
+        "window": 0.5,
+        "above": -30
+      }
+    ],
+    "silentAfter": 10.5
+  }
+}

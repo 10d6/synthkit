@@ -1,0 +1,121 @@
+{
+  "synthkit": 1,
+  "synth": "sk-basic",
+  "patchVersion": 1,
+  "name": "Seq Dorian Riff",
+  "author": "synthkit",
+  "tags": [
+    "sequencer",
+    "scale",
+    "pluck"
+  ],
+  "params": {
+    "arp.on": 2,
+    "arp.scale": 3,
+    "arp.scaleKey": 2,
+    "arp.rate": 9,
+    "arp.gate": 60,
+    "arp.swing": 25,
+    "arp.envMode": 2,
+    "arp.attack": 0.001,
+    "arp.decay": 0.2,
+    "arp.sustain": 0,
+    "arp.release": 0.1,
+    "arp.keyLevel": -4,
+    "arp.seqLevel": 0,
+    "arp.phraseRelease": 0.8,
+    "filter.cutoff": 900,
+    "filter.reso": 0.4,
+    "filter.env": 0.4,
+    "env2.attack": 0.001,
+    "env2.decay": 0.2,
+    "env2.sustain": 0,
+    "delay.mix": 0.2,
+    "master": -5
+  },
+  "custom": {
+    "sk.seq": {
+      "patterns": [
+        {
+          "steps": 16,
+          "notes": [
+            [
+              0,
+              7,
+              1,
+              115
+            ],
+            [
+              2,
+              4,
+              1,
+              80
+            ],
+            [
+              3,
+              5,
+              1,
+              70
+            ],
+            [
+              4,
+              7,
+              1,
+              105
+            ],
+            [
+              6,
+              9,
+              1,
+              80
+            ],
+            [
+              7,
+              8,
+              1,
+              70
+            ],
+            [
+              8,
+              7,
+              1,
+              110
+            ],
+            [
+              10,
+              4,
+              1,
+              85
+            ],
+            [
+              11,
+              2,
+              1,
+              70,
+              60
+            ],
+            [
+              12,
+              4,
+              2,
+              100
+            ],
+            [
+              14,
+              -1,
+              1,
+              80
+            ],
+            [
+              15,
+              2,
+              1,
+              70,
+              75
+            ]
+          ]
+        }
+      ]
+    }
+  }
+}

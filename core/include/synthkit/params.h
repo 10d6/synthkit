@@ -111,6 +111,7 @@ class ParamBuilder {
 
   std::vector<ParamSpec> finish();  // validates; throws std::invalid_argument
   int count() const { return static_cast<int>(specs_.size()); }
+  const std::string& idAt(int i) const { return specs_[static_cast<std::size_t>(i)].spec.id; }
 
  private:
   friend class ParamDef;

@@ -1,0 +1,101 @@
+{
+  "patch": "arp-pluck",
+  "transport": {
+    "bpm": 120,
+    "playing": true
+  },
+  "lengthBeats": 16,
+  "events": [
+    {
+      "beat": 0,
+      "on": 48,
+      "vel": 96
+    },
+    {
+      "beat": 0,
+      "on": 55,
+      "vel": 96
+    },
+    {
+      "beat": 0,
+      "on": 60,
+      "vel": 96
+    },
+    {
+      "beat": 0,
+      "on": 64,
+      "vel": 96
+    },
+    {
+      "beat": 4,
+      "off": 48
+    },
+    {
+      "beat": 4,
+      "off": 55
+    },
+    {
+      "beat": 4,
+      "off": 60
+    },
+    {
+      "beat": 4,
+      "off": 64
+    },
+    {
+      "beat": 4.02,
+      "on": 45,
+      "vel": 96
+    },
+    {
+      "beat": 4.02,
+      "on": 52,
+      "vel": 96
+    },
+    {
+      "beat": 4.02,
+      "on": 57,
+      "vel": 96
+    },
+    {
+      "beat": 4.02,
+      "on": 60,
+      "vel": 96
+    },
+    {
+      "beat": 8,
+      "off": 45
+    },
+    {
+      "beat": 8,
+      "off": 52
+    },
+    {
+      "beat": 8,
+      "off": 57
+    },
+    {
+      "beat": 8,
+      "off": 60
+    }
+  ],
+  "expect": {
+    "soundBy": 0.3,
+    "levelAt": [
+      {
+        "beat": 3.5,
+        "window": 0.25,
+        "above": -36
+      },
+      {
+        "beat": 8.75,
+        "window": 0.25,
+        "above": -45
+      },
+      {
+        "beat": 15.5,
+        "below": -70
+      }
+    ]
+  }
+}

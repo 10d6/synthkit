@@ -98,6 +98,7 @@ SK_EXPORT(sk_info) const char* sk_info() {
   s["voiceModes"] = sk::Json(info.features.voiceModes);
   s["standardEnvelopes"] = info.features.standardEnvelopes;
   s["ampEnv"] = info.features.ampEnv;
+  s["arp"] = info.features.arp;
   s["tempoInPatch"] = info.features.tempoInPatch;
   j["synth"] = s;
   sk::Json params = sk::Json::array();
@@ -226,6 +227,11 @@ SK_EXPORT(sk_set_mod) const char* sk_set_mod(const char* json) {
   sk::Json v;
   if (!sk::Json::tryParse(json, v)) return ret("[\"not valid JSON\"]");
   return ret(sk::Json(gEngine->setModMatrix(v)).dump(0));
+}
+SK_EXPORT(sk_arp_generate) const char* sk_arp_generate(const char* json) {
+  sk::Json v;
+  if (!sk::Json::tryParse(json ? json : "{}", v)) v = sk::Json::object();
+  return ret(sk::arpGeneratePattern(v).dump(0));
 }
 SK_EXPORT(sk_get_shapes) const char* sk_get_shapes() { return ret(gEngine->shapes().dump(0)); }
 SK_EXPORT(sk_set_shapes) const char* sk_set_shapes(const char* json) {

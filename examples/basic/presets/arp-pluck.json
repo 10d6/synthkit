@@ -1,0 +1,52 @@
+{
+  "synthkit": 1,
+  "synth": "sk-basic",
+  "patchVersion": 1,
+  "name": "Arp Pluck",
+  "author": "synthkit",
+  "tags": [
+    "arp",
+    "pluck"
+  ],
+  "params": {
+    "arp.on": 1,
+    "arp.mode": 2,
+    "arp.octaves": 2,
+    "arp.rate": 9,
+    "arp.gate": 70,
+    "arp.swing": 20,
+    "arp.envMode": 2,
+    "arp.attack": 0.001,
+    "arp.decay": 0.18,
+    "arp.sustain": 0,
+    "arp.release": 0.12,
+    "arp.phraseAttack": 0.4,
+    "arp.phraseDecay": 1.0,
+    "arp.phraseSustain": 1,
+    "arp.phraseRelease": 2.0,
+    "osc2.wave": 1,
+    "osc2.semi": 12,
+    "osc2.level": 0.3,
+    "filter.cutoff": 420,
+    "filter.reso": 0.5,
+    "filter.env": 0.55,
+    "env1.attack": 0.8,
+    "env1.decay": 1.0,
+    "env1.sustain": 0.8,
+    "env1.release": 1.2,
+    "env2.attack": 0.001,
+    "env2.decay": 0.15,
+    "env2.sustain": 0,
+    "env2.release": 0.15,
+    "delay.mix": 0.25,
+    "delay.time": 1,
+    "delay.feedback": 0.35
+  },
+  "mod": [
+    {
+      "src": "arp.phrase",
+      "dst": "filter.cutoff",
+      "amt": 0.2
+    }
+  ]
+}

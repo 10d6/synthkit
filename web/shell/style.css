@@ -395,6 +395,32 @@ button, input, select { font: inherit; color: inherit; }
 .release-grip { fill: var(--ink); cursor: ew-resize; }
 .shape-head { stroke: var(--ink); stroke-width: 1.5; opacity: 0.7; }
 
+.arp-bar .arp-label { color: var(--ink-soft); font-size: 12px; }
+.arp-steps { display: inline-flex; align-items: center; gap: 4px; }
+.arp-steps-value { min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; }
+.arp-use { margin-left: auto; }
+.arp-svg { display: block; width: 100%; height: auto; cursor: crosshair; user-select: none; }
+.arp-row-alt { fill: var(--ink); opacity: 0.035; }
+.arp-row-label { fill: var(--ink-soft); font-size: 10px; font-variant-numeric: tabular-nums; }
+.arp-row-label.is-root { fill: var(--ink); font-weight: 600; }
+.arp-row-label.is-octave { fill: var(--ink); }
+.arp-root-line { stroke: var(--ink-soft); stroke-width: 1; opacity: 0.6; }
+.arp-note { fill: var(--accent); stroke: var(--accent); stroke-width: 1; }
+.arp-note.is-chance { stroke-dasharray: 3 2; }
+.arp-note.is-sel { stroke: var(--ink); stroke-width: 2; }
+.arp-note-text { fill: #fff; font-size: 9px; pointer-events: none; }
+.arp-lane-bar { fill: var(--accent); opacity: 0.75; }
+.arp-lane-bar.is-sel { opacity: 1; stroke: var(--ink); stroke-width: 1; }
+.arp-head { fill: var(--ink); opacity: 0.08; pointer-events: none; }
+.arp-hint { margin: 6px 0 0; }
+.arp-gen { border: 1px solid var(--edge); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: flex-end; }
+.arp-gen-sliders { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.arp-gen-field { display: flex; flex-direction: column; gap: 2px; min-width: 120px; }
+.arp-gen-field .arp-label { display: inline-flex; align-items: center; gap: 4px; }
+.arp-gen-field input[type=range] { width: 130px; accent-color: var(--accent); }
+.arp-gen-actions { display: flex; align-items: center; gap: 8px; }
+.arp-gen-seed { color: var(--ink-soft); font-size: 12px; }
+
 .matrix { display: flex; flex-direction: column; gap: 8px; }
 .matrix-empty { margin: 0; color: var(--ink-soft); }
 .route { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 6px 0; border-bottom: 1px solid var(--edge); }

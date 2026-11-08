@@ -48,7 +48,10 @@ core/include/synthkit/   public headers: synth.h (what synths use), engine.h
                          (page <-> engine, API.md §9b), dsp/…, webaudio/…
                          (sk::wa: Web Audio's nodes, API.md §8a)
 core/src/                engine.cpp (voices, events, transport), modulation.cpp
-                         (sources, matrix, LFOs, shapes), params, json
+                         (sources, matrix, LFOs, shapes), arp.cpp (arpeggiator,
+                         pattern banks, scales), seq.cpp (step sequencer: a lane
+                         per key), arpgen.cpp (pattern generator, Evolve),
+                         params, json
 cmake/                   synthkit_add_synth() + preset embedding
 tools/render/            <synth>_render: scenarios, generic checks, WAV output
 tools/wa_parity/         synthkit_wa_parity: renders tests/webaudio with sk::wa
@@ -60,7 +63,8 @@ tests/webaudio/          sk::wa parity scenarios; tools/wa_parity renders them
                          natively, web/test/webaudio-parity.cjs in Chromium
 web/wasm/                C API exported to JavaScript
 web/shell/               the page: template, style, js/ (model, audio, host
-                         (plugin bridge), controls, panels, modulation, presets,
+                         (plugin bridge), controls, panels, modulation, arp
+                         (the arp/sequencer piano roll and generator), presets,
                          keyboard, midi, clock, app; app.js also holds the
                          bridge for a synth's own page), worklet.js
 web/pack.py              inlines everything into one <synth>.html (and joins a
