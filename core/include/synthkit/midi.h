@@ -20,6 +20,7 @@ struct MidiEvent {
   int sample = -1;      // offset in the current block; -1 = block start
   Beats beat = 0;       // musical position (filled in by the kit)
   uint32_t tag = 0;     // set by EventContext::schedule, for cancel()
+  bool arp = false;     // played by the kit's arpeggiator (API.md §4b)
 
   bool isNoteOn() const { return type == Type::NoteOn && vel > 0; }
   bool isNoteOff() const { return type == Type::NoteOff || (type == Type::NoteOn && vel <= 0); }

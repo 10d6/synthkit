@@ -162,6 +162,11 @@ void Modulation::init(const ParamStore& store, const SynthInfo& info, std::vecto
   iDown_ = add("downbeat", "Downbeat", Src::Downbeat, 0, false, false);
   iAge_ = add("note.age", "Note Age", Src::NoteAge, 0, true, false);
   iOff_ = add("note.offbeat", "Off-Beat", Src::NoteOffbeat, 0, true, true);
+  if (info.features.arp) {
+    iArpEnv_ = add("arp.env", "Arp Envelope", Src::ArpEnv, 0, true, false);
+    iArpPhrase_ = add("arp.phrase", "Arp Phrase", Src::ArpPhrase, 0, false, false);
+    iArpStep_ = add("arp.step", "Arp Step", Src::ArpStep, 0, false, false);
+  }
   firstCustom_ = static_cast<int>(sources_.size());
   for (int c = 0; c < nCustom_; ++c) {
     auto& d = custom[static_cast<std::size_t>(c)];
@@ -378,6 +383,11 @@ void Modulation::beginBlock(const float* values, const Transport& t, double, int
   set(iDown_, inBar < unit ? 1.f : 0.f, false);
   set(iAge_, 0, true);
   set(iOff_, 0, true);
+  if (iArpEnv_ >= 0) {
+    set(iArpEnv_, 0, true);
+    set(iArpPhrase_, arpPhrase_, false);
+    set(iArpStep_, arpStep_, false);
+  }
   for (int c = 0; c < nCustom_; ++c) set(firstCustom_ + c, gcustom_[static_cast<std::size_t>(c)], sources_[static_cast<std::size_t>(firstCustom_ + c)].desc.perVoice);
 
   std::copy(gvals_.begin(), gvals_.end(), gprev_.begin());
@@ -425,6 +435,7 @@ void Modulation::voiceBlock(ModVoice& v, const VoiceIn& in, const float* values,
   double span = pAgeSpan_ >= 0 ? values[pAgeSpan_] : 4.0;
   v.src[static_cast<std::size_t>(iAge_)] = static_cast<float>(std::clamp((t.beat - v.startBeat) / span, 0.0, 1.0));
   v.src[static_cast<std::size_t>(iOff_)] = v.offbeat;
+  if (iArpEnv_ >= 0) v.src[static_cast<std::size_t>(iArpEnv_)] = in.arpEnv;
   for (int c = 0; c < nCustom_; ++c)
     if (!std::isnan(v.custom[static_cast<std::size_t>(c)])) v.src[static_cast<std::size_t>(firstCustom_ + c)] = v.custom[static_cast<std::size_t>(c)];
 

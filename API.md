@@ -126,6 +126,7 @@ check the synth against it.
 | `standardLfos` | 0 | standard LFOs (§6) |
 | `modSlots` | 0 | matrix routes; also adds `sk.pitch`, `sk.level` (§6) |
 | `shapes` | 0 | drawn, tempo-locked curves (§6a) |
+| `arp` | false | the kit's arpeggiator, with its note and phrase envelopes (§4b) |
 
 ## 3. Parameters
 
@@ -228,7 +229,7 @@ indices (in patches, `ctx.choice`, scenarios' `params`), so the choice lists
 in this page are given in index order.
 
 Those IDs, and any ID starting with `sk.`, `env<n>.`, `lfo<n>.` or
-`shape<n>.`, are reserved. Otherwise `.` is fine for grouping (`osc2.level`).
+`shape<n>.`, are reserved, and so is `arp.` when `features.arp` is on (§4b). Otherwise `.` is fine for grouping (`osc2.level`).
 
 **Using kit parameters.** A synth can give a kit parameter its own default,
 and read any kit parameter like its own:
@@ -297,6 +298,7 @@ SK_SYNTH(MySynth)   // once, in one .cpp
   the voice shouldn't reset anything either.
 - `s.sounding`: the voice was still making sound (a mono retrigger, or a stolen
   voice). Don't reset oscillator phases or filter state, or it will click.
+- `s.arp`: the kit's arpeggiator played this note (§4b).
 
 Inside `start`, `rng()` gives the voice's random stream. It's reseeded per
 note, deterministically, so renders repeat exactly.
@@ -321,6 +323,7 @@ void MyVoice::render(VoiceContext& ctx, Buffer& out) {
 | `pitchHz()`, `pitch()` | current pitch in Hz / as a fractional MIDI note |
 | `key()`, `velocity()`, `channel()` | the note that started the voice |
 | `released()`, `legato()` | key is up; last start was legato |
+| `arpNote()`, `arpEnv()` | the arpeggiator played this note; its note envelope (block start, 0 for other notes) (§4b) |
 | `env(n)`, `envSamples(n)` | standard envelope n (1-based): block-start value / per-sample array |
 | `unisonIndex()`, `unisonCount()` | this voice's unison layer |
 | `rng()` | per-voice random stream (same as `rng()` in `start`) |
@@ -437,7 +440,7 @@ void processEvents(EventContext& ctx) override {
 | `ctx.messages()`, `ctx.post(m, {values})` | messages from the page since the last block, and sending one back (§9b) |
 
 Events are `MidiEvent`s (`type`, `note`, `vel`, `cc`, `value`, `channel`,
-`sample`, `beat`, `tag`, plus `isNoteOn()`, `isNoteOff()`, `isCC(n)`). Build
+`sample`, `beat`, `tag`, `arp` (§4b), plus `isNoteOn()`, `isNoteOff()`, `isCC(n)`). Build
 them with `NoteOn{note, vel, ch}`, `NoteOff{note, ch}`, `CC{number, value, ch}`.
 
 - **Beats are quarter notes**, like a host's PPQ position.
@@ -473,6 +476,86 @@ The setup calls of the Web Audio blocks allocate, so they belong in
 `prepare` too: `wa::Convolver::setImpulse`, `wa::PeriodicWave::build`,
 `wa::WaveShaper::setCurve`, `wa::Delay::prepare` and `wa::Param::reserve`
 (§8a). Messages (`ctx.messages()`, `ctx.post`) never allocate.
+
+## 4b. The arpeggiator
+
+`"arp": true` in `synth.json`'s features adds the kit's arpeggiator. It's off
+until its `arp.on` parameter is turned on, so a synth can offer it without
+changing any of its sounds.
+
+```
+MIDI in → synth's processEvents (§4a) → arpeggiator → voices
+```
+
+It runs **after** the synth's `processEvents`, so a synth can reshape the keys
+first (couplers, splits, its own generated notes) and the arpeggiator plays
+the result. While it's on, it keeps the note-ons and note-offs it receives and
+plays its own notes instead; everything else (controllers, bend, the synth's
+messages) passes through. Its notes go through the normal voice stage:
+tuning, voice allocation, voice modes, unison and modulation all apply. In
+Mono or Legato voice mode, a gate over 100% makes overlapping notes, so
+Legato glides between steps.
+
+**Parameters** (choices in index order):
+
+| Param | Values | Default |
+|---|---|---|
+| `arp.on` | toggle | off |
+| `arp.mode` | 0 Up, 1 Down, 2 Up/Down, 3 Down/Up, 4 As Played, 5 Random (never the same note twice in a row), 6 Chord (every held note, each step) | Up |
+| `arp.octaves` | 1–4: the held notes repeat this many octaves up (Chord moves the whole chord up an octave each step) | 1 |
+| `arp.rate` | 0 1/1, 1 1/2, 2 1/4., 3 1/4, 4 1/4T, 5 1/8., 6 1/8, 7 1/8T, 8 1/16., 9 1/16, 10 1/16T, 11 1/32 | 1/16 |
+| `arp.gate` | 5–200 %: each note's length, as a share of a step | 50 % |
+| `arp.swing` | 0–100 %: delays every other step; 100 % is a third of a step late (a triplet feel) | 0 |
+| `arp.latch` | toggle: the chord keeps playing after the keys are up; the next key pressed with none held starts a new chord | off |
+| `arp.sync` | 0 **Grid** (steps fall on the song's grid: a key waits for the next step, or plays at once if it's no more than 40 ms late for one), 1 **Key** (steps count from the first key of a phrase) | Grid |
+| `arp.velMode`, `arp.velFixed` | 0 Played (each note's own velocity), 1 Fixed (`arp.velFixed`, 1–127) | Played, 100 |
+| `arp.envMode` | the note envelope: 0 **Off**, 1 **Multiply**, 2 **Replace** (below) | Multiply |
+| `arp.attack`, `arp.decay`, `arp.sustain`, `arp.release` | the note envelope (same ranges as `envN.*`) | 2 ms, 0.3 s, 1, 50 ms |
+| `arp.phraseAttack`, `…Decay`, `…Sustain`, `…Release` | the phrase envelope | 2 ms, 0.5 s, 1, 50 ms |
+
+**Two envelopes.** Both are applied by the kit, like the amp envelope (§4):
+
+- The **note envelope** shapes each note the arpeggiator plays, starting with
+  the note and releasing when the gate ends. **Multiply** puts it on top of
+  the voice's own sound (the kit's amp envelope included), so it works with
+  any synth. **Replace** uses it *instead of* the kit's amp envelope (`env1`
+  with `ampEnv`), so a slow pad's attack doesn't swallow short arpeggiated
+  notes. Replace can only replace what the kit applies: a voice that shapes
+  its own attack (samples, a custom attack stage) still does, unless it checks
+  `ctx.arpNote()` (or `StartInfo::arp`) and skips it. With Multiply or
+  Replace, an arp note ends when its note envelope does.
+- The **phrase envelope** is the arpeggiator's overall volume. It starts with
+  the first key of a phrase (a key pressed when none are held) and releases
+  when the last key is let go (or when Latch is turned off with no keys
+  held). The arpeggio **keeps playing through the release**, on the chord that
+  was held (keys let go of within 60 ms of the last one count), so it fades
+  out instead of stopping; it stops when the envelope reaches silence. It
+  only affects the arpeggiator's notes.
+
+Both are also mod sources (`arp.env`, `arp.phrase`, §6), along with
+`arp.step`, so they can drive a filter or anything else the matrix reaches.
+
+**Details:**
+
+- **Sustain pedal.** Keys let go of while the pedal is down stay in the chord
+  until it comes up. The arpeggiator's own notes ignore the pedal (they'd pile
+  up otherwise).
+- **Turning it off** with keys down hands them back: they sound as ordinary
+  notes until let go of. Keys already sounding when it's turned on finish as
+  ordinary notes too.
+- **Transport jumps** (a DAW looping): pending note-offs fire and, with Grid,
+  the steps carry on from the next grid point.
+- The kit's all notes off and panic stop it and forget a latched chord, even
+  if the synth's `processEvents` keeps CC 123 to itself.
+- Its notes are flagged `MidiEvent::arp`, and a note-off from it only ends a
+  note it started.
+- The arpeggiator doesn't use the event queue (`features.eventQueue`), and it
+  runs sample-accurately: the result doesn't depend on the host's block size.
+
+**Escape hatches.** A synth that needs a different arpeggiator leaves
+`features.arp` off and writes its own in `processEvents` (§4a). One that wants
+the kit's, but differently fed, reshapes the keys in `processEvents`; one that
+wants arp notes to sound different reads `ctx.arpNote()` in its voice.
 
 ## 5. Patches
 
@@ -593,6 +676,9 @@ Turned on by `features`: `modSlots` (matrix routes), `standardLfos` and
 | `downbeat` | 1 during the bar's first beat, else 0 | |
 | `note.age` | beats since the note started, 0→1 over `sk.ageSpan` beats (default 4) | ✓ |
 | `note.offbeat` | how far the note started from the nearest beat, bipolar: ±1 is half a beat early or late | ✓ |
+| `arp.env` | the arpeggiator's note envelope; 0 for notes it didn't play (§4b) | ✓ |
+| `arp.phrase` | the arpeggiator's phrase envelope (§4b) | |
+| `arp.step` | where the arpeggio is in its cycle, 0→1, stepped (§4b) | |
 | custom | the synth's own, below | if declared per voice |
 
 **Matrix.** Up to `modSlots` routes, each `src → dst × amt`, with an optional
@@ -875,7 +961,7 @@ and output panels.
 | Section field | |
 |---|---|
 | `title`, `controls` | a panel of controls |
-| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4) |
+| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4), and with `features.arp`: `arp` (pattern, rate, gate…), `arpEnv` and `arpPhrase` (the arpeggiator's two envelopes, §4b) |
 | `wide` | `true` makes the panel take a full row |
 | `info` | text for an ⓘ icon beside the panel's title (kit panels too) |
 | `collapsed` | makes the panel fold at its title: `true` starts folded, `false` starts open |

@@ -10,6 +10,7 @@
 
 #include "synthkit/error.h"
 
+#include "arp.h"
 #include "modulation.h"
 #include <unordered_set>
 
@@ -169,6 +170,7 @@ SynthInfo SynthInfo::fromJson(const Json& j) {
   o.shapes = std::clamp(static_cast<int>(f["shapes"].number(0)), 0, 32);
   o.eventQueue = std::clamp(static_cast<int>(f["eventQueue"].number(o.eventQueue)), 16, 8192);
   o.tempoInPatch = f["tempoInPatch"].boolean(false);
+  o.arp = f["arp"].boolean(false);
   return s;
 }
 
@@ -202,6 +204,9 @@ struct Slot {
   dsp::Rng rng;
   Beats startBeat = 0;
   ModVoice mv;
+  bool arp = false;                           // played by the arpeggiator
+  dsp::Adsr arpEnv;                           // its note envelope
+  std::array<float, kControlBlock> arpBuf{};
 };
 
 enum Mode { Poly = 0, Mono = 1, Legato = 2 };
@@ -288,6 +293,9 @@ struct Core {
   GlobalContext gctx;
 
   Modulation mod;
+  Arp arp;
+  bool hasArp = false;
+  std::vector<MidiEvent> arpEv;
   int pPitch = -1, pLevel = -1;
   const float* gvals = nullptr;   // globally modulated values this block
   const float* gprev = nullptr;
@@ -374,6 +382,15 @@ struct Core {
       ep.vel = b.count(); b.addKit(p + "velocity").name(n + "Velocity").range(0, 1).def(amp ? 0.5 : 0).group(g);
       envP.push_back(ep);
     }
+    hasArp = f.arp;
+    if (hasArp) {
+      // With the arpeggiator, "arp." IDs are the kit's.
+      for (int i = 0; i < b.count(); ++i) {
+        const std::string& id = b.idAt(i);
+        if (id.rfind("arp.", 0) == 0) fail("parameter id '" + id + "' is reserved by synthkit when features.arp is on");
+      }
+      arp.addParams(b);
+    }
     mod.addKitParams(b, info);
     store = std::make_unique<ParamStore>(b.finish());
     for (int i = 0; i < store->size(); ++i)
@@ -424,8 +441,11 @@ struct Core {
     for (auto& sl : slots) {
       sl.voice->prepare(pi);
       for (auto& e : sl.envs) e.prepare(static_cast<float>(sr));
+      sl.arpEnv.prepare(static_cast<float>(sr));
       resetSlot(sl);
     }
+    arp.prepare(sr, maxBlock);
+    arpEv.assign(outEv.size(), {});
     limiter.prepare(static_cast<float>(sr));
     mod.prepare(sr, n, values.data());
     for (auto& sl : slots) mod.prepareVoice(sl.mv);
@@ -456,6 +476,8 @@ struct Core {
     s.quietSamples = 0;
     s.polyAT = 0;
     for (auto& e : s.envs) e.reset();
+    s.arp = false;
+    s.arpEnv.reset();
   }
 
   // ------------------------------------------------------------ process
@@ -532,8 +554,12 @@ struct Core {
       heldCount = 0;
       sustain = false;
       for (auto& q : queue) q.used = false;
+      arp.reset();
     }
-    if (reqAllOff.exchange(0)) allNotesOff();
+    if (reqAllOff.exchange(0)) {
+      allNotesOff();
+      arp.requestAllOff();
+    }
     // Stepped params (choices, toggles, integers) apply immediately, so a
     // note at the very start of a block already sees e.g. the unison count.
     for (int i = 0; i < store->size(); ++i)
@@ -581,6 +607,7 @@ struct Core {
       }
       outEv[static_cast<std::size_t>(j + 1)] = e;
     }
+    if (hasArp) runArp(n, jumped);
 
     std::fill(mixL.begin(), mixL.begin() + n, 0.f);
     std::fill(mixR.begin(), mixR.begin() + n, 0.f);
@@ -625,6 +652,27 @@ struct Core {
     statActive.store(active);
     atomicMax(statLimDb, limiter.takeMaxReductionDb());
   }
+
+  // The arpeggiator, between the synth's processEvents and the voices (§4b).
+  void runArp(int n, bool jumped) {
+    int count = 0, dropped = 0;
+    arp.process(outEv.data(), outCount, arpEv.data(), count, static_cast<int>(arpEv.size()), dropped,
+                *store, blockStart, spb, n, transport, jumped);
+    if (dropped) statDropped.fetch_add(dropped);
+    std::swap(outEv, arpEv);
+    outCount = count;
+    for (int i = 1; i < outCount; ++i) {
+      MidiEvent e = outEv[static_cast<std::size_t>(i)];
+      int j = i - 1;
+      while (j >= 0 && outEv[static_cast<std::size_t>(j)].sample > e.sample) {
+        outEv[static_cast<std::size_t>(j + 1)] = outEv[static_cast<std::size_t>(j)];
+        --j;
+      }
+      outEv[static_cast<std::size_t>(j + 1)] = e;
+    }
+  }
+
+  int arpEnvMode() const { return hasArp ? std::clamp(static_cast<int>(std::lround(store->get(arp.params().envMode))), 0, 2) : ArpEnvOff; }
 
   void collectDue() {
     for (auto& q : queue) {
@@ -710,6 +758,7 @@ struct Core {
     if (anyHeld && !heldNow) mod.allKeysUp();
     anyHeld = heldNow;
     if (mod.enabled()) {
+      if (hasArp) mod.setArp(arp.phrase()[pos], arp.stepPosAt(pos));
       mod.beginBlock(values.data(), transport, 0, len, modwheel, bend, aftertouch);
       gvals = mod.globalValues();
       gprev = mod.prevGlobalValues();
@@ -757,6 +806,12 @@ struct Core {
       float scale = 1.f - velAmt + velAmt * s.vel;
       for (int i = 0; i < len; ++i) s.envBuf[e][static_cast<std::size_t>(i)] = s.envs[e].next() * scale;
     }
+    const int arpMode = s.arp ? arpEnvMode() : ArpEnvOff;
+    if (s.arp) {
+      const auto& ap = arp.params();
+      s.arpEnv.set(values[ap.a], values[ap.d], values[ap.s], values[ap.r]);
+      for (int i = 0; i < len; ++i) s.arpBuf[static_cast<std::size_t>(i)] = s.arpEnv.next();
+    }
 
     const float* vv = values.data();
     const float* vp = prev.data();
@@ -764,7 +819,7 @@ struct Core {
       std::array<float, 8> envStart{};
       for (std::size_t e = 0; e < s.envs.size() && e < envStart.size(); ++e) envStart[e] = s.envBuf[e][0];
       VoiceIn in{envStart.data(), static_cast<int>(std::min<std::size_t>(s.envs.size(), envStart.size())), s.vel, s.note,
-                 std::max(aftertouch, s.polyAT)};
+                 std::max(aftertouch, s.polyAT), s.arp ? s.arpBuf[0] : 0.f};
       mod.voiceBlock(s.mv, in, values.data(), transport, len);
       vv = s.mv.vals.data();
       vp = s.mv.prevVals.data();
@@ -788,9 +843,18 @@ struct Core {
     bool amp = info.features.ampEnv && !s.envs.empty();
     Ramp level{1.f, 1.f, len};
     if (pLevel >= 0) level = Ramp{vp[pLevel], vv[pLevel], len};
+    // Arp notes: the note envelope on top of (or instead of) the amp
+    // envelope, and the phrase envelope over everything.
+    const bool replace = arpMode == ArpEnvReplace;
+    const bool useArpEnv = arpMode != ArpEnvOff;
+    const float* phrase = s.arp ? arp.phrase() + pos : nullptr;
     float peak = 0;
     for (int i = 0; i < len; ++i) {
-      float g = gain * level.at(i) * (amp ? s.envBuf[0][static_cast<std::size_t>(i)] : 1.f);
+      const auto si = static_cast<std::size_t>(i);
+      float env = amp && !replace ? s.envBuf[0][si] : 1.f;
+      if (useArpEnv) env *= s.arpBuf[si];
+      if (phrase) env *= phrase[i];
+      float g = gain * level.at(i) * env;
       if (s.state == St::Fading) { s.fade = std::max(0.f, s.fade - s.fadeStep); g *= s.fade; }
       float l = scratchL[static_cast<std::size_t>(i)] * g * gl;
       float r = scratchR[static_cast<std::size_t>(i)] * g * gr;
@@ -802,7 +866,8 @@ struct Core {
 
     bool done = false;
     if (s.state == St::Fading && s.fade <= 0) done = true;
-    if (amp && s.envs[0].idle()) done = true;
+    if (amp && !replace && s.envs[0].idle()) done = true;
+    if (useArpEnv && s.arpEnv.idle()) done = true;
     if (!s.voice->active()) done = true;
     if (s.state == St::Released) {
       // Released voices with no amp envelope end once they've gone quiet.
@@ -848,9 +913,13 @@ struct Core {
     s.startBeat = e.beat;
     s.rng.seed(dsp::hashSeed(serial, static_cast<uint64_t>(u), 0x51u));
     for (auto& env : s.envs) env.gate(true);
+    s.arp = e.arp;
+    if (e.arp) s.arpEnv.gate(true);
+    else s.arpEnv.reset();
     if (mod.enabled()) mod.noteOn(s.mv, e.note, e.vel, transport, serial * 16 + static_cast<uint64_t>(u), first && u == 0);
     StartInfo si;
     si.sounding = sounding;
+    si.arp = e.arp;
     s.voice->start(NoteOn{e.note, e.vel, e.channel}, si);
   }
 
@@ -865,12 +934,13 @@ struct Core {
     }
   }
 
-  void releaseSlot(Slot& s) {
+  void releaseSlot(Slot& s, bool ignorePedal = false) {
     if (s.state != VoicePool::State::Held) return;
-    if (sustain) { s.sustained = true; return; }
+    if (sustain && !ignorePedal) { s.sustained = true; return; }
     s.state = VoicePool::State::Released;
     s.sustained = false;
     for (auto& env : s.envs) env.gate(false);
+    s.arpEnv.gate(false);
     if (mod.enabled()) mod.noteOff(s.mv);
     s.voice->release();
   }
@@ -963,10 +1033,10 @@ struct Core {
       }
       return;
     }
-    monoTransition(e.note, e.vel, e.channel, tuned, serial, mode == Legato && othersHeld);
+    monoTransition(e.note, e.vel, e.channel, tuned, serial, mode == Legato && othersHeld, e.arp);
   }
 
-  void monoTransition(int note, float vel, int channel, double tuned, uint64_t serial, bool legato) {
+  void monoTransition(int note, float vel, int channel, double tuned, uint64_t serial, bool legato, bool fromArp) {
     for (auto& s : slots) {
       if (!s.mono || s.state == VoicePool::State::Free || s.state == VoicePool::State::Fading) continue;
       double from = s.glidePitch;
@@ -977,18 +1047,25 @@ struct Core {
       s.sustained = false;
       s.legato = legato;
       setGlide(s, from);
+      if (!s.arp && fromArp) s.arpEnv.reset();
+      s.arp = fromArp;
       if (!legato) {
         s.vel = vel;
         s.startBeat = transport.beat;
         for (auto& env : s.envs) env.gate(true);
+        if (fromArp) s.arpEnv.gate(true);
         if (mod.enabled()) mod.noteOn(s.mv, note, vel, transport, serial * 16 + static_cast<uint64_t>(s.uniIndex), false);
       }
       bool wasReleased = s.state == VoicePool::State::Released;
       s.state = VoicePool::State::Held;
-      if (wasReleased) for (auto& env : s.envs) env.gate(true);
+      if (wasReleased) {
+        for (auto& env : s.envs) env.gate(true);
+        if (fromArp) s.arpEnv.gate(true);
+      }
       StartInfo si;
       si.legato = legato && !wasReleased;
       si.sounding = true;
+      si.arp = fromArp;
       s.voice->start(NoteOn{note, vel, channel}, si);
     }
   }
@@ -997,11 +1074,11 @@ struct Core {
     if (mode == Poly) {
       uint64_t oldest = UINT64_MAX;
       for (auto& s : slots)
-        if (s.state == VoicePool::State::Held && !s.sustained && s.note == e.note && s.channel == e.channel)
+        if (s.state == VoicePool::State::Held && !s.sustained && s.note == e.note && s.channel == e.channel && s.arp == e.arp)
           oldest = std::min(oldest, s.serial);
       if (oldest == UINT64_MAX) return;
       for (auto& s : slots)
-        if (s.state == VoicePool::State::Held && s.serial == oldest) releaseSlot(s);
+        if (s.state == VoicePool::State::Held && s.serial == oldest) releaseSlot(s, e.arp);
       return;
     }
     removeHeld(e.note);
@@ -1016,10 +1093,10 @@ struct Core {
       b.note = back;
       b.vel = vel;
       uint64_t serial = ++serialCounter;
-      monoTransition(back, vel, e.channel, tune(b, serial), serial, mode == Legato);
+      monoTransition(back, vel, e.channel, tune(b, serial), serial, mode == Legato, e.arp);
       return;
     }
-    for (auto& s : slots) if (s.mono) releaseSlot(s);
+    for (auto& s : slots) if (s.mono) releaseSlot(s, e.arp);
   }
 };
 
@@ -1048,6 +1125,8 @@ float VoiceContext::velocity() const { return slot_->vel; }
 int VoiceContext::channel() const { return slot_->channel; }
 bool VoiceContext::released() const { return slot_->state != VoicePool::State::Held; }
 bool VoiceContext::legato() const { return slot_->legato; }
+bool VoiceContext::arpNote() const { return slot_->arp; }
+float VoiceContext::arpEnv() const { return slot_->arp ? slot_->arpBuf[0] : 0.f; }
 float VoiceContext::env(int n) const {
   if (n < 1 || n > static_cast<int>(slot_->envs.size())) return 0;
   return slot_->envBuf[static_cast<std::size_t>(n - 1)][0];

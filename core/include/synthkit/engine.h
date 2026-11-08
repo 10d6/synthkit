@@ -24,6 +24,7 @@ struct SynthInfo {
     int shapes = 0;
     int eventQueue = 256;
     bool tempoInPatch = false;   // the browser's tempo and time signature are saved in patches
+    bool arp = false;            // the kit's arpeggiator (API.md §4b)
   } features;
 
   static SynthInfo fromJson(const Json& j);  // throws std::invalid_argument

@@ -6,22 +6,35 @@ const KIT_PANELS = {
     ["voiceMode", "Mode"], ["glide", "Glide"], ["unison", "Unison"], ["unisonDetune", "Detune"],
     ["unisonSpread", "Spread"], ["bendRange", "Bend"]] },
   master: { title: "Output", controls: [["master", "Level"], ["sk.a4", "A4"]] },
+  // The arpeggiator (features.arp, API.md §4b).
+  arp: { title: "Arpeggiator", feature: "arp.on", info: "Plays held keys one after another, locked to the tempo. Latch keeps the chord after you let go; a new chord replaces it.", controls: [
+    ["arp.on", "On"], ["arp.mode", "Mode"], ["arp.rate", "Rate"], ["arp.octaves", "Octaves"], ["arp.gate", "Gate",
+      "Each note's length, as a share of a step. Over 100% notes overlap (in Mono or Legato voice mode they glide)."],
+    ["arp.swing", "Swing", "Delays every other step. At 100% the late steps sit a third of a step behind: a triplet feel."],
+    ["arp.latch", "Latch"], ["arp.sync", "Sync", "Grid: steps fall on the song's grid. Key: steps count from the first key of a phrase."],
+    ["arp.velMode", "Velocity"], ["arp.velFixed", "Fixed vel."]] },
+  arpEnv: { title: "Arp note envelope", feature: "arp.on", env: ["arp.attack", "arp.decay", "arp.sustain", "arp.release"],
+    info: "An envelope for each note the arpeggiator plays. Multiply puts it on top of the synth's own envelope; Replace uses it instead of the kit's amp envelope (a synth that shapes its own attack keeps that, so Replace may not line up with every synth).",
+    controls: [["arp.envMode", "Mode"], ["arp.attack", "Attack"], ["arp.decay", "Decay"], ["arp.sustain", "Sustain"], ["arp.release", "Release"]] },
+  arpPhrase: { title: "Arp phrase envelope", feature: "arp.on", env: ["arp.phraseAttack", "arp.phraseDecay", "arp.phraseSustain", "arp.phraseRelease"],
+    info: "The arpeggiator's overall volume. It starts with the first key and releases after the last; the arpeggio keeps playing through the release, so it fades out instead of stopping. Only arpeggiated notes follow it.",
+    controls: [["arp.phraseAttack", "Attack"], ["arp.phraseDecay", "Decay"], ["arp.phraseSustain", "Sustain"], ["arp.phraseRelease", "Release"]] },
 };
 
 function envPanel(n, model) {
   const amp = n === 1 && model.info.synth.ampEnv;
   return {
     title: amp ? "Amp envelope" : `Envelope ${n}`,
-    env: n,
+    env: ["attack", "decay", "sustain", "release"].map((s) => `env${n}.${s}`),
     controls: ["attack", "decay", "sustain", "release", "velocity"].map((s) => [`env${n}.${s}`, s[0].toUpperCase() + s.slice(1)]),
   };
 }
 
 // Small drawing of an ADSR's shape, redrawn as its knobs move.
 class EnvPreview {
-  constructor(model, n) {
+  constructor(model, ids) {
     this.model = model;
-    this.ids = ["attack", "decay", "sustain", "release"].map((s) => `env${n}.${s}`);
+    this.ids = ids;   // attack, decay, sustain, release
     this.path = svg("path", { class: "env-line" });
     this.fill = svg("path", { class: "env-fill" });
     this.root = svg("svg", { class: "env-preview", viewBox: "0 0 200 60", preserveAspectRatio: "none", "aria-hidden": "true" });
@@ -102,6 +115,7 @@ class Panels {
     }
     const out = [...groups].map(([title, controls]) => ({ title, controls }));
     out.push({ kit: "voices" });
+    if (this.model.param("arp.on")) out.push({ kit: "arp" }, { kit: "arpEnv" }, { kit: "arpPhrase" });
     for (let n = 1; n <= this.model.info.synth.standardEnvelopes; n++) out.push({ kit: "env" + n });
     const lfos = [], shapes = [];
     for (let n = 1; n <= this.model.mod.lfos; n++) lfos.push({ kit: "lfo" + n });
@@ -130,7 +144,7 @@ class Panels {
     if ("tabs" in spec) return this.tabs(spec);
     if ("accordion" in spec) return this.accordion(spec);
     const el = this.section(spec);
-    if (el) this.decorate(el, spec, collapsible);
+    if (el) this.decorate(el, el.skKitInfo && !("info" in spec) ? { ...spec, info: el.skKitInfo } : spec, collapsible);
     return el;
   }
 
@@ -254,7 +268,8 @@ class Panels {
       if (m) s = envPanel(Number(m[1]), this.model);
       else if (KIT_PANELS[spec.kit]) s = KIT_PANELS[spec.kit];
       else return this.missing(spec.kit);
-      s = { ...s, title: spec.title || s.title, wide: spec.wide, controls: s.controls.map(([param, label]) => ({ param, label })) };
+      if (s.feature && !this.model.param(s.feature)) return this.missing(spec.kit);
+      s = { ...s, title: spec.title || s.title, wide: spec.wide, controls: s.controls.map(([param, label, info]) => (info ? { param, label, info } : { param, label })) };
     }
     const controls = h("div", { class: "controls" });
     for (const c of s.controls || []) {
@@ -265,6 +280,7 @@ class Panels {
     const sec = h("section", { class: "panel" + (s.wide ? " is-wide" : "") },
       h("h2", { class: "panel-title", text: s.title || "" }));
     if (s.env) sec.append(new EnvPreview(this.model, s.env).root);
+    if (spec.kit && s.info) sec.skKitInfo = s.info;   // a kit panel's own ⓘ text, unless the layout gives one
     sec.append(controls);
     return sec;
   }

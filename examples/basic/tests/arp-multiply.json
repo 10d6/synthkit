@@ -1,0 +1,53 @@
+{
+  "patch": "arp-pluck",
+  "params": {
+    "arp.envMode": 1,
+    "arp.phraseAttack": 0.002,
+    "arp.phraseRelease": 0.05,
+    "delay.mix": 0
+  },
+  "transport": {
+    "bpm": 120,
+    "playing": true
+  },
+  "lengthBeats": 3,
+  "events": [
+    {
+      "beat": 0,
+      "on": 60,
+      "vel": 96
+    },
+    {
+      "beat": 0,
+      "on": 64,
+      "vel": 96
+    },
+    {
+      "beat": 0,
+      "on": 67,
+      "vel": 96
+    },
+    {
+      "beat": 1,
+      "off": 60
+    },
+    {
+      "beat": 1,
+      "off": 64
+    },
+    {
+      "beat": 1,
+      "off": 67
+    }
+  ],
+  "expect": {
+    "levelAt": [
+      {
+        "beat": 0.0,
+        "window": 0.12,
+        "below": -40
+      }
+    ],
+    "silentAfter": 2.2
+  }
+}

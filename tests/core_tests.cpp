@@ -26,7 +26,7 @@ struct Reg { Reg(const char* n, std::function<void()> f) { registry().emplace_ba
 // ------------------------------------------------------------ test synth
 
 struct Log {
-  struct Start { int note; Beats beat; double pitch; bool legato; };
+  struct Start { int note; Beats beat; double pitch; bool legato; bool arp = false; };
   std::vector<Start> starts;
   struct Mod { Beats beat; float value; int key; double pitch; };
   std::vector<Mod> mods;  // ctx.get(mod) each block, per voice
@@ -40,12 +40,13 @@ struct TestVoice : Voice {
   void start(const NoteOn&, const StartInfo& s) override {
     pendingLog = true;
     wasLegato = s.legato;
+    wasArp = s.arp;
     if (!s.sounding) phase = 0;
   }
   void render(VoiceContext& ctx, Buffer& out) override;
   TestSynth& synth;
   double phase = 0;
-  bool pendingLog = false, wasLegato = false;
+  bool pendingLog = false, wasLegato = false, wasArp = false;
 };
 
 struct Table { std::array<float, 128> cents{}; };
@@ -99,7 +100,7 @@ struct TestSynth : Synth {
 };
 
 void TestVoice::render(VoiceContext& ctx, Buffer& out) {
-  if (pendingLog) { gLog.starts.push_back({ctx.key(), ctx.transport().beat, ctx.pitch(), wasLegato}); pendingLog = false; }
+  if (pendingLog) { gLog.starts.push_back({ctx.key(), ctx.transport().beat, ctx.pitch(), wasLegato, wasArp}); pendingLog = false; }
   if (gLog.mods.size() < gLog.mods.capacity()) gLog.mods.push_back({ctx.transport().beat, ctx.get(synth.modp), ctx.key(), ctx.pitch()});
   if (synth.setCustomTo >= 0) ctx.setSource(synth.custom, synth.setCustomTo);
   double inc = ctx.pitchHz() / ctx.sampleRate();
@@ -1073,6 +1074,261 @@ TEST(wa_panner_and_delay) {
     if (i == 11) CHECK_NEAR(y, 0.5, 1e-3);
   }
   CHECK_NEAR(out, 0.5, 1e-3);
+}
+
+// ------------------------------------------------------------ arpeggiator
+
+static const char* kArp = R"(,"arp":true,"modSlots":4)";
+
+static void arpOn(Harness& h, std::initializer_list<std::pair<const char*, double>> ps = {}) {
+  auto& p = h.eng->params();
+  p.set(h.param("arp.on"), 1);
+  p.set(h.param("env1.release"), 0.002);
+  p.set(h.param("arp.release"), 0.002);
+  for (auto& [id, v] : ps) p.set(h.param(id), v);
+}
+
+static std::vector<int> startedNotes() {
+  std::vector<int> n;
+  for (auto& s : gLog.starts) n.push_back(s.note);
+  return n;
+}
+
+TEST(arp_plays_up_on_the_grid) {
+  Harness h(256, kArp);
+  arpOn(h);   // 1/16 at 120 bpm: a step every 6000 samples
+  h.run(24000, {{0, on(60)}, {10, on(64)}, {20, on(67)}});
+  auto n = startedNotes();
+  CHECK((n == std::vector<int>{60, 64, 67, 60}));
+  for (std::size_t i = 0; i < gLog.starts.size(); ++i) {
+    CHECK(gLog.starts[i].arp);
+    CHECK_NEAR(gLog.starts[i].beat, 0.25 * static_cast<double>(i), 1.0 / 24000);
+  }
+}
+
+TEST(arp_modes_and_octaves) {
+  auto play = [](double mode, double oct, long steps) {
+    Harness h(256, kArp);
+    arpOn(h, {{"arp.mode", mode}, {"arp.octaves", oct}});
+    h.run(steps * 6000 - 100, {{0, on(64)}, {0, on(60)}, {0, on(67)}});
+    return startedNotes();
+  };
+  CHECK((play(1, 1, 4) == std::vector<int>{67, 64, 60, 67}));                  // Down
+  CHECK((play(2, 1, 6) == std::vector<int>{60, 64, 67, 64, 60, 64}));          // Up/Down
+  CHECK((play(3, 1, 6) == std::vector<int>{67, 64, 60, 64, 67, 64}));          // Down/Up
+  CHECK((play(0, 2, 7) == std::vector<int>{60, 64, 67, 72, 76, 79, 60}));      // Up, 2 octaves
+  CHECK((play(4, 1, 4) == std::vector<int>{64, 60, 67, 64}));                  // As Played
+  auto chord = play(6, 2, 2);                                                   // Chord, 2 octaves
+  std::sort(chord.begin(), chord.begin() + std::min<std::ptrdiff_t>(3, static_cast<std::ptrdiff_t>(chord.size())));
+  CHECK((chord.size() == 6 && std::vector<int>(chord.begin(), chord.begin() + 3) == std::vector<int>{60, 64, 67}));
+  auto rnd = play(5, 1, 32);
+  CHECK(rnd.size() == 32);
+  for (std::size_t i = 1; i < rnd.size(); ++i) CHECK(rnd[i] != rnd[i - 1]);   // no immediate repeats
+}
+
+TEST(arp_grid_and_key_sync) {
+  {
+    // 0.4 beats in: too late for the 0.25 grid point, so it waits for 0.5.
+    Harness h(256, kArp);
+    arpOn(h);
+    h.run(24000, {{9600, on(60)}});
+    CHECK(!gLog.starts.empty());
+    if (!gLog.starts.empty()) CHECK_NEAR(gLog.starts[0].beat, 0.5, 1.0 / 24000);
+  }
+  {
+    // Just after a grid point (25 ms): plays at once.
+    Harness h(256, kArp);
+    arpOn(h);
+    h.run(24000, {{7200, on(60)}});
+    CHECK(!gLog.starts.empty());
+    if (gLog.starts.size() > 1) { CHECK_NEAR(gLog.starts[0].beat, 0.3, 1.0 / 24000); CHECK_NEAR(gLog.starts[1].beat, 0.5, 1.0 / 24000); }
+  }
+  {
+    Harness h(256, kArp);
+    arpOn(h, {{"arp.sync", 1}});   // Key: steps count from the key
+    h.run(24000, {{9600, on(60)}});
+    CHECK(gLog.starts.size() >= 2);
+    if (gLog.starts.size() >= 2) { CHECK_NEAR(gLog.starts[0].beat, 0.4, 1.0 / 24000); CHECK_NEAR(gLog.starts[1].beat, 0.65, 1.0 / 24000); }
+  }
+}
+
+TEST(arp_swing_delays_every_other_step) {
+  Harness h(256, kArp);
+  arpOn(h, {{"arp.swing", 100}});   // odd steps a third of a step late
+  h.run(24000, {{0, on(60)}});
+  CHECK(gLog.starts.size() >= 3);
+  if (gLog.starts.size() >= 3) {
+    CHECK_NEAR(gLog.starts[1].beat, 0.25 + 0.25 / 3, 1.0 / 24000);
+    CHECK_NEAR(gLog.starts[2].beat, 0.5, 1.0 / 24000);
+  }
+}
+
+TEST(arp_gate_sets_note_length) {
+  Harness h(256, kArp);
+  arpOn(h, {{"arp.gate", 50}});
+  h.run(2400, {{0, on(60)}});                    // beat 0.05: playing
+  CHECK(h.eng->takeStats().activeVoices == 1);
+  h.run(2400 * 3);                               // beat 0.2: step 0 ended at 0.125
+  CHECK(h.eng->takeStats().activeVoices == 0);
+}
+
+TEST(arp_latch_and_new_phrase) {
+  Harness h(256, kArp);
+  arpOn(h, {{"arp.latch", 1}});
+  h.run(12000, {{0, on(60)}, {1, on(64)}, {6000 - 100, off(60)}, {6000 - 99, off(64)}});
+  gLog.starts.clear();
+  h.run(24000);                                   // keys up: still playing
+  CHECK(gLog.starts.size() == 4);
+  gLog.starts.clear();
+  h.run(12000, {{h.pos, on(72)}});                // a new phrase replaces the chord
+  for (auto& s : gLog.starts) CHECK(s.note == 72);
+  CHECK(!gLog.starts.empty());
+  h.eng->allNotesOff();                           // the kit's all notes off lets go of a latched chord
+  h.run(6000);
+  gLog.starts.clear();
+  h.run(24000);
+  CHECK(gLog.starts.empty());
+}
+
+TEST(arp_phrase_tail_and_stop) {
+  auto stepsAfterRelease = [](double release) {
+    Harness h(256, kArp);
+    arpOn(h, {{"arp.phraseRelease", release}});
+    h.run(12000, {{0, on(60)}, {1, on(64)}, {11000, off(60)}, {11010, off(64)}});
+    gLog.starts.clear();
+    h.run(96000);
+    return startedNotes();
+  };
+  CHECK(stepsAfterRelease(0.002).empty());         // stops at once
+  auto tail = stepsAfterRelease(1.0);              // plays on while it fades
+  CHECK(tail.size() > 4);
+  // Both keys belong to the tail, though one was let go of first.
+  CHECK(std::count(tail.begin(), tail.end(), 60) > 0 && std::count(tail.begin(), tail.end(), 64) > 0);
+}
+
+static double rms(const std::vector<float>& v, std::size_t a, std::size_t b) {
+  double s = 0;
+  for (std::size_t i = a; i < b && i < v.size(); ++i) s += static_cast<double>(v[i]) * v[i];
+  return std::sqrt(s / static_cast<double>(std::max<std::size_t>(1, b - a)));
+}
+
+TEST(arp_phrase_envelope_shapes_only_arp_notes) {
+  Harness h(256, kArp);
+  arpOn(h, {{"arp.phraseAttack", 2.0}, {"arp.gate", 100}});
+  auto out = h.run(96000, {{0, on(60)}});
+  CHECK(rms(out, 1000, 5000) < 0.25 * rms(out, 90000, 95000));   // fading in over 2 s
+  // With the arp off, the phrase envelope doesn't touch played notes.
+  Harness k(256, kArp);
+  k.eng->params().set(k.param("arp.phraseAttack"), 2.0);
+  auto played = k.run(24000, {{0, on(60)}});
+  CHECK(rms(played, 2000, 6000) > 0.1);
+}
+
+TEST(arp_envelope_multiply_or_replace) {
+  auto level = [](double mode) {
+    Harness h(256, kArp);
+    arpOn(h, {{"arp.envMode", mode}, {"env1.attack", 5.0}, {"arp.gate", 100}});
+    auto out = h.run(24000, {{0, on(60)}});
+    return rms(out, 12000, 24000);
+  };
+  double off = level(0), mul = level(1), rep = level(2);
+  CHECK(rep > 5 * mul);       // Replace ignores env1's slow attack
+  CHECK(mul < 2 * off);       // Multiply keeps it
+  CHECK(rep > 0.1);
+}
+
+TEST(arp_notes_ignore_the_pedal_but_keys_stay) {
+  Harness h(256, kArp);
+  arpOn(h);
+  MidiEvent ped = CC{64, 1.f}, up = CC{64, 0.f};
+  h.run(12000, {{0, ped}, {10, on(60)}, {100, off(60)}});
+  gLog.starts.clear();
+  h.run(24000);
+  CHECK(gLog.starts.size() == 4);                         // pedal keeps the key in the chord
+  CHECK(h.eng->takeStats().activeVoices <= 1);            // but arp notes still end
+  h.run(12000, {{h.pos + 10, up}});
+  gLog.starts.clear();
+  h.run(24000);
+  CHECK(gLog.starts.empty());
+}
+
+TEST(arp_off_passes_keys_and_hands_back_held_ones) {
+  Harness h(256, kArp);
+  h.run(4800, {{0, on(60)}});
+  CHECK(gLog.starts.size() == 1 && !gLog.starts[0].arp);
+  Harness k(256, kArp);
+  arpOn(k);
+  k.run(12000, {{0, on(60)}});
+  k.eng->params().set(k.param("arp.on"), 0);
+  gLog.starts.clear();
+  k.run(24000);
+  CHECK(gLog.starts.size() == 1);                         // the held key now sounds as played
+  if (!gLog.starts.empty()) CHECK(!gLog.starts[0].arp && gLog.starts[0].note == 60);
+  k.run(4800, {{k.pos + 10, off(60)}});
+  k.run(4800);
+  CHECK(k.eng->takeStats().activeVoices == 0);
+}
+
+TEST(arp_mono_mode) {
+  Harness h(256, kArp);
+  arpOn(h, {{"voiceMode", 1}, {"arp.gate", 150}});
+  h.run(24000, {{0, on(60)}, {1, on(64)}});
+  CHECK(h.eng->takeStats().activeVoices == 1);
+  CHECK(gLog.starts.size() >= 4);
+}
+
+TEST(arp_block_size_does_not_change_output) {
+  auto render = [](int block) {
+    Harness h(block, kArp);
+    arpOn(h, {{"arp.swing", 40}, {"arp.mode", 2}, {"arp.octaves", 2}, {"arp.phraseRelease", 0.3}, {"arp.decay", 0.05}, {"arp.sustain", 0.3}});
+    h.run(24000, {}, block);   // let the parameters settle
+    const long p = h.pos;
+    return h.run(48000, {{p + 100, on(60)}, {p + 5000, on(67)}, {p + 7000, on(63)}, {p + 20000, off(60)}, {p + 20000, off(63)}, {p + 20003, off(67)}}, block);
+  };
+  auto a = render(256), b = render(7), c = render(1000), d = render(1);
+  double worst = 0;
+  for (std::size_t i = 0; i < a.size(); ++i)
+    worst = std::max({worst, static_cast<double>(std::fabs(a[i] - b[i])), static_cast<double>(std::fabs(a[i] - c[i])), static_cast<double>(std::fabs(a[i] - d[i]))});
+  CHECK(worst < 1e-5);
+}
+
+TEST(arp_follows_a_transport_jump) {
+  Harness h(256, kArp);
+  arpOn(h, {{"arp.gate", 90}});
+  h.ht.playing = true;
+  h.run(9000, {{0, on(60)}, {0, on(64)}});
+  h.pos = 96000 + 1000;                     // the host loops to just after beat 4
+  gLog.starts.clear();
+  h.run(12000);
+  CHECK(!gLog.starts.empty());
+  // Back on the song's grid: the next sixteenth after the jump.
+  if (!gLog.starts.empty()) CHECK_NEAR(gLog.starts[0].beat, 4.25, 1.0 / 24000);
+  CHECK(h.eng->takeStats().droppedEvents == 0);
+}
+
+TEST(arp_sources_and_reserved_ids) {
+  Harness h(256, kArp);
+  bool env = false, phrase = false, step = false;
+  for (auto& d : h.eng->modSources()) { env |= d.id == "arp.env"; phrase |= d.id == "arp.phrase"; step |= d.id == "arp.step"; }
+  CHECK(env && phrase && step);
+  auto r = h.eng->setModMatrix(Json::parse(R"([{"src":"arp.env","dst":"mod","amt":1}])"));
+  CHECK(r.empty());
+  arpOn(h, {{"arp.decay", 0.01}, {"arp.sustain", 0}, {"arp.gate", 100}});
+  h.run(6000, {{0, on(60)}});
+  // The note envelope reached the voice's "mod" param: high at the start, gone by the end of the step.
+  float first = -1, last = -1;
+  for (auto& m : gLog.mods) { first = std::max(first, m.value); last = m.value; }
+  CHECK(first > 0.3f && last < 0.05f);
+  Harness plain;
+  for (auto& d : plain.eng->modSources()) CHECK(d.id.rfind("arp.", 0) != 0);
+  CHECK(plain.param("arp.on") < 0);
+
+  struct Clash : TestSynth {
+    void defineParams(ParamBuilder& b) override { TestSynth::defineParams(b); b.add("arp.speed").range(0, 1); }
+  };
+  CHECK_THROWS(Engine(std::make_unique<Clash>(), testInfo(kArp)));
+  Engine fine(std::make_unique<Clash>(), testInfo());   // without the feature, the ID is the synth's
+  CHECK(fine.params().find("arp.speed") >= 0);
 }
 
 int main() {

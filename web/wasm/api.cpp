@@ -98,6 +98,7 @@ SK_EXPORT(sk_info) const char* sk_info() {
   s["voiceModes"] = sk::Json(info.features.voiceModes);
   s["standardEnvelopes"] = info.features.standardEnvelopes;
   s["ampEnv"] = info.features.ampEnv;
+  s["arp"] = info.features.arp;
   s["tempoInPatch"] = info.features.tempoInPatch;
   j["synth"] = s;
   sk::Json params = sk::Json::array();

@@ -118,6 +118,16 @@
       "collapsed": false
     },
     {
+      "kit": "arp",
+      "wide": true
+    },
+    {
+      "kit": "arpEnv"
+    },
+    {
+      "kit": "arpPhrase"
+    },
+    {
       "accordion": [
         {
           "kit": "voices",

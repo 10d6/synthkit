@@ -66,6 +66,8 @@ class VoiceContext {
   int channel() const;
   bool released() const;        // key up (after sustain pedal)
   bool legato() const;          // last start() was a legato transition
+  bool arpNote() const;         // played by the kit's arpeggiator (API.md §4b)
+  float arpEnv() const;         // its note envelope (block start), 0 for other notes
 
   float env(int n) const;               // standard envelope n (1-based), block start
   const float* envSamples(int n) const; // per-sample values for this block
@@ -130,6 +132,7 @@ struct StartInfo {
   bool legato = false;    // mono/legato transition: don't retrigger anything
   bool sounding = false;  // the voice was still making sound (mono retrigger,
                           // steal): avoid resets that would click
+  bool arp = false;       // played by the kit's arpeggiator (API.md §4b)
 };
 
 struct NoteContext {

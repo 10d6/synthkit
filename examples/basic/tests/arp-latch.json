@@ -1,0 +1,52 @@
+{
+  "patch": "arp-pluck",
+  "params": {
+    "arp.latch": 1,
+    "arp.mode": 4,
+    "arp.sync": 1,
+    "arp.phraseAttack": 0.002,
+    "delay.mix": 0
+  },
+  "transport": {
+    "bpm": 120,
+    "playing": true
+  },
+  "lengthBeats": 8,
+  "events": [
+    {
+      "beat": 0,
+      "on": 60,
+      "vel": 90
+    },
+    {
+      "beat": 0.01,
+      "on": 67,
+      "vel": 90
+    },
+    {
+      "beat": 0.02,
+      "on": 63,
+      "vel": 90
+    },
+    {
+      "beat": 1,
+      "off": 60
+    },
+    {
+      "beat": 1,
+      "off": 63
+    },
+    {
+      "beat": 1,
+      "off": 67
+    }
+  ],
+  "expect": {
+    "levelAt": [
+      {
+        "beat": 6.05,
+        "above": -40
+      }
+    ]
+  }
+}
