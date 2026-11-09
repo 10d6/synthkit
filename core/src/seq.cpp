@@ -92,9 +92,9 @@ void Seq::clearAll(bool hard) {
 }
 
 void Seq::process(const ArpParams& P, const MidiEvent* in, int nIn, MidiEvent* out, int& outCount, int outCap, int& dropped,
-                  const ParamStore& store, Beats blockStart, double spb, int frames, const Transport& t, bool jumped) {
+                  const float* vals, Beats blockStart, double spb, int frames, const Transport& t, bool jumped) {
   P_ = &P;
-  store_ = &store;
+  vals_ = vals;
   out_ = out;
   outCount_ = &outCount;
   outCap_ = outCap;

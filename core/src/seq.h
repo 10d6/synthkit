@@ -27,7 +27,7 @@ class Seq {
   void requestAllOff() { allOff_ = true; }
 
   void process(const ArpParams& P, const MidiEvent* in, int nIn, MidiEvent* out, int& outCount, int outCap, int& dropped,
-               const ParamStore& store, Beats blockStart, double spb, int frames, const Transport& t, bool jumped);
+               const float* vals, Beats blockStart, double spb, int frames, const Transport& t, bool jumped);
 
   // A lane's phrase envelope for this block, one value per sample.
   const float* phrase(int lane) const { return phraseBuf_.data() + static_cast<std::size_t>(std::clamp(lane, 0, kLanes - 1)) * maxBlock_; }
@@ -52,8 +52,8 @@ class Seq {
   };
   struct Off { Beats beat = 0; int note = 0; int channel = 0; int lane = 0; };
 
-  int choice(int i) const { return i >= 0 ? static_cast<int>(std::lround(store_->get(i))) : 0; }
-  float get(int i) const { return i >= 0 ? store_->get(i) : 0.f; }
+  int choice(int i) const { return i >= 0 ? static_cast<int>(std::lround(vals_[i])) : 0; }
+  float get(int i) const { return i >= 0 ? vals_[i] : 0.f; }
   double stepLen() const { return arpRateBeats(choice(P_->rate)); }
   int sampleOf(Beats b) const;
   void emit(MidiEvent e, int sample);
@@ -73,7 +73,7 @@ class Seq {
   std::vector<float> phraseBuf_;   // kLanes × maxBlock
 
   // Per block.
-  const ParamStore* store_ = nullptr;
+  const float* vals_ = nullptr;     // parameter values this block (with global modulation)
   MidiEvent* out_ = nullptr;
   int* outCount_ = nullptr;
   int outCap_ = 0;

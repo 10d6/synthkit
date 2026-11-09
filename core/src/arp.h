@@ -115,7 +115,7 @@ class Arp {
   // notes it plays, are appended to out[outCount…]; returns false for each
   // event that didn't fit (the caller counts drops).
   void process(const MidiEvent* in, int nIn, MidiEvent* out, int& outCount, int outCap, int& dropped,
-               const ParamStore& store, Beats blockStart, double spb, int frames, const Transport& t, bool jumped);
+               const float* vals, Beats blockStart, double spb, int frames, const Transport& t, bool jumped);
 
   // Phrase envelope for this block, one value per sample.
   const float* phrase() const { return phraseBuf_.data(); }
@@ -152,7 +152,7 @@ class Arp {
   dsp::Rng rng_{0xA4F};
 
   // Per block.
-  const ParamStore* store_ = nullptr;
+  const float* vals_ = nullptr;           // parameter values this block (with global modulation)
   MidiEvent* out_ = nullptr;
   int* outCount_ = nullptr;
   int outCap_ = 0;
@@ -162,7 +162,7 @@ class Arp {
   int frames_ = 0;
   int envPos_ = 0;
   const Transport* t_ = nullptr;
-  float get(int i) const { return i >= 0 ? store_->get(i) : 0.f; }
+  float get(int i) const { return i >= 0 ? vals_[i] : 0.f; }
   int choice(int i) const;
 
   // State.

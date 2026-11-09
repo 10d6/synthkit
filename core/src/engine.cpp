@@ -302,6 +302,7 @@ struct Core {
   Seq sequencer;
   bool hasArp = false;
   std::vector<MidiEvent> arpEv;
+  std::vector<float> arpVals;                 // parameter values the arp/sequencer see this block
   int pPitch = -1, pLevel = -1;
   const float* gvals = nullptr;   // globally modulated values this block
   const float* gprev = nullptr;
@@ -464,6 +465,7 @@ struct Core {
     arp.prepare(sr, maxBlock);
     sequencer.prepare(sr, maxBlock);
     arpEv.assign(outEv.size(), {});
+    arpVals.assign(static_cast<std::size_t>(store->size()), 0.f);
     limiter.prepare(static_cast<float>(sr));
     mod.prepare(sr, n, values.data());
     for (auto& sl : slots) mod.prepareVoice(sl.mv);
@@ -681,11 +683,15 @@ struct Core {
     // The arpeggiator, then the sequencer; whichever arp.on doesn't select
     // passes events through (after tidying up if it was just turned off).
     int count = 0, dropped = 0;
+    // The parameters as set, plus global modulation (gate, swing, evolve,
+    // pattern…: decided per step, so per-voice sources count as 0).
+    for (int i = 0; i < store->size(); ++i) arpVals[static_cast<std::size_t>(i)] = store->get(i);
+    mod.applyGlobal(arpVals.data());
     arp.process(outEv.data(), outCount, arpEv.data(), count, static_cast<int>(arpEv.size()), dropped,
-                *store, blockStart, spb, n, transport, jumped);
+                arpVals.data(), blockStart, spb, n, transport, jumped);
     outCount = 0;
     sequencer.process(arp.params(), arpEv.data(), count, outEv.data(), outCount, static_cast<int>(outEv.size()), dropped,
-                *store, blockStart, spb, n, transport, jumped);
+                arpVals.data(), blockStart, spb, n, transport, jumped);
     if (dropped) statDropped.fetch_add(dropped);
     for (int i = 1; i < outCount; ++i) {
       MidiEvent e = outEv[static_cast<std::size_t>(i)];
@@ -705,7 +711,8 @@ struct Core {
   // A crossfade's length: arp.xfade of a step at the current rate and tempo.
   void startCrossfade(Slot& s) {
     const auto& ap = arp.params();
-    const double samples = std::max(1.0, values[ap.xfade] / 100.0 * arpRateBeats(static_cast<int>(std::lround(values[ap.rate]))) * spb);
+    const float* v = gvals ? gvals : values.data();   // with global modulation
+    const double samples = std::max(1.0, v[ap.xfade] / 100.0 * arpRateBeats(static_cast<int>(std::lround(v[ap.rate]))) * spb);
     s.xfInc = static_cast<float>(1.0 / samples);
     // From where it is: a retriggered voice that's still fading doesn't jump.
     s.xfPos = s.xfStage == 0 ? 0.f : std::asin(std::clamp(s.xfAmp, 0.f, 1.f)) / 1.5707963f;
@@ -902,10 +909,13 @@ struct Core {
     const bool replace = arpMode == ArpEnvReplace || arpMode == ArpEnvCrossfade;
     const bool useArpEnv = arpMode != ArpEnvOff;
     const float* phrase = s.arp ? arpPhrase(s) + pos : nullptr;
-    // The sequencer's two levels: the keys, and the notes it adds.
+    // The sequencer's two levels: the keys, and the notes it adds. Each
+    // voice's own (modulated) value, ramped across the block.
+    Ramp seqGain{1.f, 1.f, len};
     if (arpType() == ArpTypeSeq) {
-      const float db = values[s.arp ? arp.params().seqLevel : arp.params().keyLevel];
-      gain *= db <= -59.9f ? 0.f : std::pow(10.f, db / 20.f);
+      const int p = s.arp ? arp.params().seqLevel : arp.params().keyLevel;
+      auto g = [](float db) { return db <= -59.9f ? 0.f : std::pow(10.f, db / 20.f); };
+      seqGain = Ramp{g(vp[p]), g(vv[p]), len};
     }
     float peak = 0;
     for (int i = 0; i < len; ++i) {
@@ -913,7 +923,7 @@ struct Core {
       float env = amp && !replace ? s.envBuf[0][si] : 1.f;
       if (useArpEnv) env *= s.arpBuf[si];
       if (phrase) env *= phrase[i];
-      float g = gain * level.at(i) * env;
+      float g = gain * level.at(i) * seqGain.at(i) * env;
       if (s.state == St::Fading) { s.fade = std::max(0.f, s.fade - s.fadeStep); g *= s.fade; }
       float l = scratchL[static_cast<std::size_t>(i)] * g * gl;
       float r = scratchR[static_cast<std::size_t>(i)] * g * gr;
