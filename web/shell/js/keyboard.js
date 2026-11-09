@@ -19,12 +19,14 @@ class Keyboard {
     this.pointers = new Map();     // pointerId -> note
     this.typed = new Map();        // key code -> note
     this.keys = new Map();         // note -> element
-    this.lit = new Map();          // note -> count (all sources)
+    this.lit = new Map();          // note -> count of presses from the page (mouse, typing, a page's noteOn)
+    this.midiLit = new Set();      // "channel:note" held on a MIDI controller (a set: repeated note-ons don't stack)
     this.typing = true;            // computer keys play notes (off on a page without the keyboard)
     this.build();
     document.addEventListener("keydown", (e) => this.key(e, true));
     document.addEventListener("keyup", (e) => this.key(e, false));
     window.addEventListener("blur", () => this.releaseTyped());
+    document.addEventListener("visibilitychange", () => { if (document.hidden) this.releaseTyped(); });
     new ResizeObserver(() => this.layout()).observe(this.keysEl);
   }
 
@@ -109,7 +111,7 @@ class Keyboard {
         if (n % 12 === 0) k.append(h("span", { class: "key-name", text: skNoteName(n) }));
         wi++;
       }
-      if (this.lit.get(n)) k.classList.add("is-down");
+      if (this.isLit(n)) k.classList.add("is-down");
       this.keysEl.append(k);
       this.keys.set(n, k);
     }
@@ -131,6 +133,7 @@ class Keyboard {
     e.preventDefault();
     const hit = this.noteAt(e);
     if (!hit) return;
+    if (this.pointers.has(e.pointerId)) this.lift(e);   // pressed again without lifting: let go of the first
     this.pointers.set(e.pointerId, hit.note);
     this.app.noteOn(hit.note, this.velocityFrom(e, hit.key));
   }
@@ -150,6 +153,13 @@ class Keyboard {
   }
 
   key(e, down) {
+    // Letting go of a key always ends its note, whatever happened in between
+    // (a modifier pressed, focus moved into a text field, typing turned off).
+    if (!down && this.typed.has(e.code)) {
+      this.app.noteOff(this.typed.get(e.code));
+      this.typed.delete(e.code);
+      return;
+    }
     if (!this.typing) return;
     const t = e.target;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -186,15 +196,40 @@ class Keyboard {
     skStore.set("synthkit:keyboard:velocity", this.velocity);
   }
 
-  // Light keys for notes from any source (mouse, typing, MIDI).
+  // Light keys for notes from the page (mouse, typing, a page's noteOn).
   light(n, on) {
     const c = (this.lit.get(n) || 0) + (on ? 1 : -1);
     if (c <= 0) this.lit.delete(n); else this.lit.set(n, c);
-    const k = this.keys.get(n);
-    if (k) k.classList.toggle("is-down", c > 0);
+    this.refresh(n);
   }
+  // Keys held on a MIDI controller: per channel and note, so a repeated
+  // note-on doesn't stack and a note-off always clears it.
+  midiNote(channel, n, on) {
+    const id = `${channel}:${n}`;
+    if (on) this.midiLit.add(id); else this.midiLit.delete(id);
+    this.refresh(n);
+  }
+  midiAllOff(channel) {
+    for (const id of [...this.midiLit]) {
+      const [c, n] = id.split(":").map(Number);
+      if (channel === undefined || c === channel) { this.midiLit.delete(id); this.refresh(n); }
+    }
+  }
+  isLit(n) {
+    if (this.lit.get(n)) return true;
+    for (const id of this.midiLit) if (Number(id.split(":")[1]) === n) return true;
+    return false;
+  }
+  refresh(n) {
+    const k = this.keys.get(n);
+    if (k) k.classList.toggle("is-down", this.isLit(n));
+  }
+  // All notes off: let go of everything held on the page and clear the lights.
   clearLights() {
+    this.typed.clear();
+    this.pointers.clear();
     this.lit.clear();
+    this.midiLit.clear();
     for (const k of this.keys.values()) k.classList.remove("is-down");
   }
 }

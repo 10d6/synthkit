@@ -356,6 +356,27 @@ async function main() {
         } catch { fail("Clear echoes: no delay.cleared message came back"); }
       }
 
+      // The on-screen keyboard never keeps a key lit after it's let go: a
+      // modifier pressed meanwhile, focus moved into a text field, a repeated
+      // MIDI note-on, or a controller's all-notes-off.
+      {
+        const lit = () => page.$$eval(".key.is-down", (e) => e.length);
+        const midi = (d) => page.evaluate((b) => window.synthkit.app.midi.message(new Uint8Array(b), performance.now()), d);
+        const stuck = [];
+        await page.keyboard.down("KeyA"); await page.keyboard.down("Control"); await page.keyboard.up("KeyA"); await page.keyboard.up("Control");
+        if (await lit()) stuck.push("Ctrl"); await page.evaluate(() => window.synthkit.app.panic());
+        await page.evaluate(() => { const i = document.createElement("input"); i.id = "sk-test-input"; document.body.append(i); });
+        await page.keyboard.down("KeyS"); await page.focus("#sk-test-input"); await page.keyboard.up("KeyS");
+        await page.evaluate(() => document.querySelector("#sk-test-input").remove());
+        if (await lit()) stuck.push("text field"); await page.evaluate(() => window.synthkit.app.panic());
+        await midi([0x90, 64, 100]); await midi([0x90, 64, 90]); await midi([0x80, 64, 0]);
+        if (await lit()) stuck.push("repeated note-on"); await page.evaluate(() => window.synthkit.app.panic());
+        await midi([0x91, 65, 100]); await midi([0xb1, 123, 0]);
+        if (await lit()) stuck.push("CC 123");
+        if (stuck.length) fail(`keyboard: keys stay lit after ${stuck.join(", ")}`);
+        else pass("keyboard: no key stays lit (modifier, text field, repeated note-on, all notes off)");
+      }
+
       // The arpeggiator's piano roll (API.md §4b): draw, move, lengthen,
       // set velocity and remove notes in pattern 2.
       if (await page.$(".arp-area")) {

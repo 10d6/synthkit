@@ -1075,7 +1075,10 @@ struct Core {
     uint64_t serial = ++serialCounter;
     double tuned = tune(e, serial);
     int uc = uniCount();
-    if (mode == Poly) {
+    // The sequencer's notes always get voices of their own: in Mono and
+    // Legato the keys share one voice (and glide), and the sequence plays
+    // over them rather than taking it (§4b).
+    if (mode == Poly || e.arpLane >= 0) {
       for (int u = 0; u < uc; ++u) {
         int idx = synth->allocateVoice(NoteOn{e.note, e.vel, e.channel}, pool);
         if (idx < 0 || idx >= static_cast<int>(slots.size())) continue;
@@ -1134,7 +1137,7 @@ struct Core {
   }
 
   void noteOff(const MidiEvent& e) {
-    if (mode == Poly) {
+    if (mode == Poly || e.arpLane >= 0) {
       uint64_t oldest = UINT64_MAX;
       for (auto& s : slots)
         if (s.state == VoicePool::State::Held && !s.sustained && s.note == e.note && s.channel == e.channel && s.arp == e.arp && s.arpLane == e.arpLane)

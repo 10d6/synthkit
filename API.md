@@ -528,6 +528,7 @@ Legato glides between steps.
 | `arp.scale` | Sequencer: 0 Chromatic (rows are semitones), 1 Major, 2 Minor, 3 Dorian, 4 Phrygian, 5 Lydian, 6 Mixolydian, 7 Locrian, 8 Harmonic Minor, 9 Melodic Minor, 10 Major Pentatonic, 11 Minor Pentatonic, 12 Blues, 13 Whole Tone | Chromatic |
 | `arp.scaleKey` | Sequencer: the scale's key, 0 C … 11 B | C |
 | `arp.seqSync` | Sequencer: 0 **Grid**, 1 **Key** (below) | Key |
+| `arp.quantize`, `arp.quantizeTo` | Sequencer, with Key sync: lock each key's sequence to the nearest increment of `arp.quantizeTo` (the `arp.rate` values, 0 1/1 … 11 1/32) | off, 1/4 |
 | `arp.keyLevel`, `arp.seqLevel` | Sequencer: −60 (silent) … +6 dB: the keys you play, and the notes the sequencer adds. The master level applies to both | 0 dB, 0 dB |
 
 `arp.mode`, `arp.octaves` and `arp.sync` are the arpeggiator's; the
@@ -641,12 +642,23 @@ lanes at once (a 17th reuses the oldest released lane, else the oldest).
   their own phase. With **Grid**, a lane joins the pattern where the song's
   grid is (a key on beat 2 starts on the pattern's step 5 at 1/16), so all
   lanes line up; a key no more than 40 ms late for a step plays it at once.
+- **Quantize** (`arp.quantize`, with Key sync): each lane locks to the
+  nearest increment of `arp.quantizeTo` (a 1/4 note is one beat). A key
+  pressed before the increment waits for it: step 1 falls on it. A key
+  pressed after it plays step 1 at once (so it's never lost), and the steps
+  after it fall on the timeline counted from the increment; one pressed more
+  than a step late skips the slots already gone rather than shifting the
+  pattern. The key itself always sounds when it's pressed.
 - **Each lane has its own phrase envelope:** it starts with its key and
   releases when that key is let go (or pedal-released); the lane keeps
   playing through the release and stops at silence. Pressing the same key
   again picks its lane back up (from step 1 with Key sync). Latch keeps
   lanes going after their keys are up; the next key pressed with none held
   lets them all go.
+- **Voice modes:** the keys follow `voiceMode` as usual (in Mono or Legato
+  they share one voice and glide); the lanes' notes always get voices of
+  their own, so they play over the key instead of taking its voice. (The
+  arpeggiator's notes do use the single voice: they're the melody.)
 - **Levels:** `arp.keyLevel` scales the keys and `arp.seqLevel` the lanes'
   notes, only while the sequencer is on.
 - The pattern bank is the sequencer's own (`"sk.seq"`, below), separate from

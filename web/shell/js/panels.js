@@ -14,6 +14,8 @@ const KIT_PANELS = {
       "arp.mode": (m) => Math.round(m.get("arp.on")) === 1, "arp.octaves": (m) => Math.round(m.get("arp.on")) === 1, "arp.sync": (m) => Math.round(m.get("arp.on")) === 1,
       "arp.scaleKey": (m) => Math.round(m.get("arp.on")) === 2, "arp.scale": (m) => Math.round(m.get("arp.on")) === 2, "arp.seqSync": (m) => Math.round(m.get("arp.on")) === 2,
       "arp.keyLevel": (m) => Math.round(m.get("arp.on")) === 2, "arp.seqLevel": (m) => Math.round(m.get("arp.on")) === 2,
+      "arp.quantize": (m) => Math.round(m.get("arp.on")) === 2 && Math.round(m.get("arp.seqSync")) === 1,
+      "arp.quantizeTo": (m) => Math.round(m.get("arp.on")) === 2 && Math.round(m.get("arp.seqSync")) === 1 && m.get("arp.quantize") >= 0.5,
       "arp.evolve": (m) => Math.round(m.get("arp.on")) === 2 || (Math.round(m.get("arp.on")) === 1 && Math.round(m.get("arp.mode")) === 7),
     },
     controls: [
@@ -24,6 +26,8 @@ const KIT_PANELS = {
     ["arp.swing", "Swing", "Delays every other step. At 100% the late steps sit a third of a step behind: a triplet feel."],
     ["arp.latch", "Latch"], ["arp.sync", "Sync", "Grid: steps fall on the song's grid. Key: steps count from the first key of a phrase."],
     ["arp.seqSync", "Sync", "Key: each key's sequence starts from step 1 when you press it. Grid: it joins the pattern where the song's grid is, so every key's sequence lines up."],
+    ["arp.quantize", "Quantize", "With Key sync: each key's sequence locks to the nearest increment (Quantize to). Press a little early and it waits for it; a little late and step 1 plays at once, with the steps after it back on the grid. The key itself always sounds as you press it."],
+    ["arp.quantizeTo", "To"],
     ["arp.velMode", "Velocity"], ["arp.velFixed", "Fixed vel."],
     ["arp.evolve", "Evolve", "Each time the pattern comes round, a note or two changes (a step up or down, a little earlier or later, left out, louder or softer), so it evolves while staying recognisable. Each phrase (each key, in Sequencer) starts from the pattern as drawn."],
     ["arp.keyLevel", "Key level", "The keys you play, while the sequencer is on. The synth's master level applies to both."],
@@ -313,7 +317,7 @@ class Panels {
           if (el) el.hidden = !fn(this.model);
         }
       };
-      for (const id of ["arp.on", "arp.mode", "arp.envMode"]) if (this.model.param(id)) this.model.on(id, update);
+      for (const id of ["arp.on", "arp.mode", "arp.envMode", "arp.seqSync", "arp.quantize"]) if (this.model.param(id)) this.model.on(id, update);
       update();
     }
     return sec;

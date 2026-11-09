@@ -70,8 +70,10 @@ class MidiInput {
       const id = this.map[cc];
       if (id && this.app.model.param(id)) { this.app.model.setNorm(id, v / 127, "midi"); return; }
     }
-    if (type === 0x90 && d[2] > 0) this.app.keyboard.light(d[1], true);
-    else if (type === 0x80 || (type === 0x90 && d[2] === 0)) this.app.keyboard.light(d[1], false);
+    const ch = st & 0x0f;
+    if (type === 0x90 && d[2] > 0) this.app.keyboard.midiNote(ch, d[1], true);
+    else if (type === 0x80 || (type === 0x90 && d[2] === 0)) this.app.keyboard.midiNote(ch, d[1], false);
+    else if (type === 0xb0 && (d[1] === 123 || d[1] === 120)) this.app.keyboard.midiAllOff(ch);   // all notes / sound off
     this.app.sendMidi([d[0], d[1] | 0, d[2] | 0], true);
   }
 

@@ -80,6 +80,7 @@ struct ArpParams {
   int on = -1, mode = -1, octaves = -1, rate = -1, gate = -1, swing = -1, latch = -1, sync = -1;
   int velMode = -1, velFixed = -1, pattern = -1, evolve = -1;
   int scale = -1, scaleKey = -1, keyLevel = -1, seqLevel = -1, seqSync = -1;   // sequencer
+  int quantize = -1, quantizeTo = -1;
   int envMode = -1, a = -1, d = -1, s = -1, r = -1, xfade = -1;               // note envelope
   int pa = -1, pd = -1, ps = -1, pr = -1;                // phrase envelope
 };
