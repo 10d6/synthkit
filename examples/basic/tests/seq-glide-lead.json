@@ -1,0 +1,58 @@
+{
+  "patch": "glide-lead",
+  "params": {
+    "arp.on": 2,
+    "arp.keyLevel": 0,
+    "arp.seqLevel": -4
+  },
+  "transport": {
+    "bpm": 110,
+    "playing": true
+  },
+  "lengthBeats": 10,
+  "events": [
+    {
+      "beat": 0,
+      "on": 57,
+      "vel": 100
+    },
+    {
+      "beat": 2,
+      "on": 60,
+      "vel": 100
+    },
+    {
+      "beat": 2.05,
+      "off": 57
+    },
+    {
+      "beat": 5,
+      "off": 60
+    },
+    {
+      "beat": 6,
+      "on": 64,
+      "vel": 100
+    },
+    {
+      "beat": 6.3,
+      "off": 64
+    }
+  ],
+  "expect": {
+    "soundBy": 0.05,
+    "levelAt": [
+      {
+        "beat": 1.0,
+        "window": 0.5,
+        "above": -30
+      },
+      {
+        "beat": 3.5,
+        "window": 0.5,
+        "above": -30
+      }
+    ],
+    "silentAfter": 9.5
+  }
+}

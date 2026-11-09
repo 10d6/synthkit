@@ -511,7 +511,7 @@ class App {
       transport: () => ({ ...app.transport, source: app.host ? "daw" : app.clockSource === "midi" ? "midiClock" : "browser" }),
       onTransport: (fn) => app.onTransport(fn),
       connectMidi: () => app.midi.connect(),
-      allNotesOff: () => app.audio.send({ t: "allOff" }),
+      allNotesOff: () => { app.audio.send({ t: "allOff" }); app.keyboard.clearLights(); },
       panic: () => app.panic(),
       start: () => app.startAudio(),
       get running() { return app.host ? true : app.audio.running; },

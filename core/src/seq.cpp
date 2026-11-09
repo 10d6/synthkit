@@ -254,6 +254,15 @@ void Seq::startLane(int li, const MidiEvent& e, Beats keyBeat) {
   if (choice(P_->seqSync) == ArpSyncKey) {
     l.step = 0;
     l.gridBeat = l.stepBeat = keyBeat;
+    if (get(P_->quantize) >= 0.5f) {
+      // Quantize: the sequence locks to the nearest increment. Early, it
+      // waits for it; late, step 1 plays at once and the steps after it
+      // fall on the timeline counted from the increment (step() catches up).
+      const double q = arpRateBeats(choice(P_->quantizeTo));
+      const Beats anchor = std::round(keyBeat / q) * q;
+      l.gridBeat = anchor;
+      l.stepBeat = std::max(anchor, keyBeat);
+    }
     return;
   }
   // Grid: join the song's grid where it is, so every key's sequence lines
@@ -333,6 +342,9 @@ void Seq::step(int li, int sample) {
   const double swing = get(P.swing) / 100.0 * len / 3.0;
   if (choice(P.seqSync) == ArpSyncKey) {
     l.gridBeat += len;
+    // A quantized lane that started late skips the slots already gone,
+    // staying on its timeline.
+    while (l.gridBeat <= at + 1e-9) { l.gridBeat += len; ++l.step; }
     l.stepBeat = l.gridBeat + ((l.step & 1) ? swing : 0.0);
   } else {
     l.gridBeat = (std::floor(l.gridBeat / len + 1e-6) + 1.0) * len;

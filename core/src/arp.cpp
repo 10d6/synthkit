@@ -159,6 +159,8 @@ void Arp::addParams(ParamBuilder& b) {
   P.keyLevel = b.count(); b.addKit("arp.keyLevel").name("Seq Key Level").range(-60, 6).def(0).unit("dB").group(g);
   P.seqLevel = b.count(); b.addKit("arp.seqLevel").name("Seq Level").range(-60, 6).def(0).unit("dB").group(g);
   P.seqSync = b.count(); b.addKit("arp.seqSync").name("Seq Sync").choices({"Grid", "Key"}).def(ArpSyncKey).group(g);
+  P.quantize = b.count(); b.addKit("arp.quantize").name("Seq Quantize").toggle().def(0).group(g);
+  P.quantizeTo = b.count(); b.addKit("arp.quantizeTo").name("Seq Quantize To").choices(arpRateNames()).def(3).group(g);   // 1/4
   P.envMode = b.count(); b.addKit("arp.envMode").name("Arp Envelope").choices({"Off", "Multiply", "Replace", "Crossfade"}).def(ArpEnvMultiply).group(ge);
   P.a = b.count(); b.addKit("arp.attack").name("Arp Attack").range(0.0005, 10).log().def(0.002).unit("s").group(ge);
   P.d = b.count(); b.addKit("arp.decay").name("Arp Decay").range(0.001, 20).log().def(0.3).unit("s").group(ge);

@@ -1632,7 +1632,7 @@ TEST(seq_many_keys_and_block_size) {
   CHECK(h.eng->takeStats().droppedEvents == 0);
   auto render = [](int block) {
     Harness k(block, kArp);
-    seqOn(k, {{"arp.envMode", 3}, {"arp.xfade", 60}, {"arp.scale", 2}, {"arp.swing", 30}, {"arp.phraseRelease", 0.4}, {"arp.evolve", 80}});
+    seqOn(k, {{"arp.envMode", 3}, {"arp.xfade", 60}, {"arp.scale", 2}, {"arp.swing", 30}, {"arp.phraseRelease", 0.4}, {"arp.evolve", 80}, {"arp.quantize", 1}, {"arp.quantizeTo", 6}});
     k.run(24000, {}, block);
     const long p = k.pos;
     return k.run(96000, {{p + 10, on(57)}, {p + 3000, on(64)}, {p + 30000, off(57)}, {p + 50000, off(64)}, {p + 52000, on(60)}, {p + 70000, off(60)}}, block);
@@ -1641,6 +1641,63 @@ TEST(seq_many_keys_and_block_size) {
   double worst = 0;
   for (std::size_t i = 0; i < a.size(); ++i) worst = std::max({worst, static_cast<double>(std::fabs(a[i] - b[i])), static_cast<double>(std::fabs(a[i] - c[i]))});
   CHECK(worst < 1e-5);
+}
+
+TEST(seq_keeps_the_key_in_mono_and_legato) {
+  // The keys follow the voice mode; the sequence's notes get voices of their
+  // own, so the key (and its glide) carries on under them.
+  for (double vm : {1.0, 2.0}) {
+    Harness h(256, kArp);
+    seqOn(h, {{"voiceMode", vm}, {"arp.gate", 100}});
+    seqPattern(h, R"({"steps":1,"notes":[[0,7,1,100]]})");
+    h.run(24000, {{0, on(60)}});
+    CHECK(h.eng->takeStats().activeVoices == 2);          // the key and the sequence's note
+    int keyStarts = 0;
+    for (auto& x : gLog.starts) keyStarts += !x.arp;
+    CHECK(keyStarts == 1);
+    h.run(12000, {{h.pos, on(62)}});                       // a second key: the mono voice moves to it
+    CHECK(h.eng->takeStats().activeVoices <= 3);
+    h.run(24000, {{h.pos, off(62)}, {h.pos + 10, off(60)}});
+    h.run(24000);
+    CHECK(h.eng->takeStats().activeVoices == 0);          // nothing left behind
+  }
+}
+
+TEST(seq_quantize_locks_to_the_nearest_increment) {
+  // Rows 1…8 on steps 1…8, so each note says which step played.
+  auto run = [](long keySample, double quantizeTo, double beats) {
+    Harness h(256, kArp);
+    seqOn(h, {{"arp.quantize", 1}, {"arp.quantizeTo", quantizeTo}, {"arp.gate", 40}});
+    seqPattern(h, R"({"steps":8,"notes":[[0,1,1,100],[1,2,1,100],[2,3,1,100],[3,4,1,100],[4,5,1,100],[5,6,1,100],[6,7,1,100],[7,8,1,100]]})");
+    h.run(static_cast<long>(beats * 24000), {{keySample, on(60)}});
+    std::vector<std::pair<int, double>> v;
+    for (auto& x : startsByTime()) v.push_back({x.arp ? x.note - 60 : 0, x.beat});
+    return v;
+  };
+  auto check = [](const std::vector<std::pair<int, double>>& got, std::vector<std::pair<int, double>> want) {
+    CHECK(got.size() >= want.size());
+    for (std::size_t i = 0; i < std::min(got.size(), want.size()); ++i) {
+      CHECK(got[i].first == want[i].first);
+      CHECK_NEAR(got[i].second, want[i].second, 1.0 / 24000);
+    }
+  };
+  // Quarter notes (a beat). Early (beat 0.8, nearest 1): the key sounds now,
+  // step 1 waits for beat 1.
+  check(run(19200, 3, 1.6), {{0, 0.8}, {1, 1.0}, {2, 1.25}, {3, 1.5}});
+  // Late (1.1, nearest 1): step 1 at once, step 2 back on the grid at 1.25.
+  check(run(26400, 3, 1.6), {{0, 1.1}, {1, 1.1}, {2, 1.25}, {3, 1.5}});
+  // Very late with a whole-note grid (1.6, nearest 0): step 1 at once, then
+  // the timeline from beat 0 picks up at step 8 (1.75).
+  check(run(38400, 0, 2.0), {{0, 1.6}, {1, 1.6}, {8, 1.75}});
+  // Eighths: 0.3 rounds to 0.5 (wait); off: straight from the key.
+  check(run(7200, 6, 1.0), {{0, 0.3}, {1, 0.5}, {2, 0.75}});
+  Harness h(256, kArp);
+  seqOn(h, {{"arp.quantize", 0}});
+  seqPattern(h, R"({"steps":2,"notes":[[0,1,1,100],[1,2,1,100]]})");
+  h.run(24000, {{7200, on(60)}});
+  auto v = startsByTime();
+  CHECK(v.size() >= 3);
+  if (v.size() >= 3) { CHECK_NEAR(v[1].beat, 0.3, 1.0 / 24000); CHECK_NEAR(v[2].beat, 0.55, 1.0 / 24000); }
 }
 
 TEST(seq_generator_writes_intervals) {
