@@ -723,6 +723,18 @@ Both are also mod sources (`arp.env`, `arp.phrase`, §6), along with
 - The arpeggiator doesn't use the event queue (`features.eventQueue`), and it
   runs sample-accurately: the result doesn't depend on the host's block size.
 
+**Modulation.** These are mod matrix destinations (§6):
+
+| Param | How modulation applies |
+|---|---|
+| `arp.gate`, `arp.swing`, `arp.evolve`, `arp.pattern` | read when a step plays, with global modulation (per-voice sources such as velocity or a per-voice LFO count as 0, as in `processEvents`). `arp.pattern` rounds to a pattern, so a shape or LFO can switch between them (say, a different pattern each bar) |
+| `arp.xfade` | read as each note starts, with global modulation |
+| `arp.keyLevel`, `arp.seqLevel` | per voice, like `sk.level`: each key or sequenced note follows its own sources (velocity, key, a per-voice LFO, `arp.env`), ramped across each control block |
+
+The step-time ones see the sources as of the last control block before the
+audio block (a few milliseconds behind at most), so with modulation routed to
+them the timing can differ slightly with the host's block size.
+
 **Escape hatches.** A synth that needs a different arpeggiator leaves
 `features.arp` off and writes its own in `processEvents` (§4a). One that wants
 the kit's, but differently fed, reshapes the keys in `processEvents`; one that
@@ -866,6 +878,7 @@ add, and the result is clamped to the parameter's range.
 | `sk.level` | 0…1 | 1 | voice level, applied by the kit after the amp envelope (tremolo, gates, pedal pumps) |
 | `lfoN.rate`, `lfoN.phase`, `lfoN.depth` | | | LFOs modulating LFOs (below) |
 | `shapeN.rate`, `shapeN.offset`, `shapeN.depth` | | | §6a |
+| `arp.gate`, `arp.swing`, `arp.evolve`, `arp.pattern`, `arp.xfade`, `arp.keyLevel`, `arp.seqLevel` | | | with `features.arp` (§4b) |
 
 `sk.ageSpan` (1–32 beats, integer, default 4; not modulatable), also added
 with `modSlots`, sets the span of `note.age`.

@@ -1700,6 +1700,102 @@ TEST(seq_quantize_locks_to_the_nearest_increment) {
   if (v.size() >= 3) { CHECK_NEAR(v[1].beat, 0.3, 1.0 / 24000); CHECK_NEAR(v[2].beat, 0.55, 1.0 / 24000); }
 }
 
+// ------------------------------------------------------------ arp / sequencer as mod destinations
+
+// Routes, then a moment for the matrix to run before any key (the arp reads
+// global modulation as of the last control block). Event times count from
+// h.pos, so resetting it keeps the tests' timings; the engine's own clock
+// (not a host's) carries on.
+static void route(Harness& h, const char* json) {
+  auto r = h.eng->setModMatrix(Json::parse(json));
+  CHECK(r.empty());
+  h.run(256);
+  h.pos = 0;
+}
+
+TEST(arp_gate_swing_and_pattern_are_mod_destinations) {
+  for (const char* id : {"arp.gate", "arp.swing", "arp.evolve", "arp.pattern", "arp.keyLevel", "arp.seqLevel", "arp.xfade"}) {
+    Harness h(256, kArp);
+    CHECK(h.eng->params().spec(h.param(id)).modulatable);
+  }
+  {
+    // Gate: 50 % plus a constant +0.5 (of its range) holds the note past 0.2 beats.
+    Harness h(256, kArp);
+    arpOn(h, {{"arp.gate", 50}});
+    route(h, R"([{"src":"const","dst":"arp.gate","amt":0.5}])");
+    h.run(2400 * 4, {{0, on(60)}});
+    CHECK(h.eng->takeStats().activeVoices == 1);
+  }
+  {
+    // Swing: pushed to 100 % by the matrix.
+    Harness h(256, kArp);
+    arpOn(h);
+    route(h, R"([{"src":"const","dst":"arp.swing","amt":1}])");
+    h.run(24000, {{0, on(60)}});
+    CHECK(gLog.starts.size() >= 2);
+    if (gLog.starts.size() >= 2) CHECK_NEAR(gLog.starts[1].beat, 0.25 + 0.25 / 3, 1.0 / 24000);
+  }
+  {
+    // Pattern: 1 + a seventh of the range = pattern 2.
+    Harness h(256, kArp);
+    seqOn(h);
+    seqPattern(h, R"({"steps":1,"notes":[[0,3,1,100]]})", 1);
+    route(h, R"([{"src":"const","dst":"arp.pattern","amt":0.15}])");
+    h.run(12000, {{0, on(60)}});
+    std::vector<int> n;
+    for (auto& x : gLog.starts) if (x.arp) n.push_back(x.note);
+    CHECK(!n.empty());
+    for (int x : n) CHECK(x == 63);
+  }
+}
+
+TEST(seq_levels_follow_per_voice_modulation) {
+  // Seq level from velocity: soft keys make quiet sequences, the key itself unchanged.
+  auto seqRms = [](int vel) {
+    Harness h(256, kArp);
+    seqOn(h, {{"arp.seqLevel", -60}, {"arp.keyLevel", -60}});
+    seqPattern(h, R"({"steps":1,"notes":[[0,12,1,127]]})");
+    route(h, R"([{"src":"velocity","dst":"arp.seqLevel","amt":1}])");
+    h.run(24000);
+    MidiEvent e = NoteOn{60, vel / 127.f, 0};
+    auto out = h.run(12000, {{h.pos, e}});
+    return rmsDb(out, 200, 2800);
+  };
+  const double loud = seqRms(127), soft = seqRms(40);
+  CHECK(loud > -30);
+  CHECK(loud - soft > 15);
+}
+
+TEST(arp_evolve_and_crossfade_are_modulated) {
+  {
+    // Evolve set to 0 but pushed to 100 % by the matrix: the pattern changes.
+    Harness h(256, kArp);
+    seqOn(h, {{"arp.evolve", 0}});
+    seqPattern(h, R"({"steps":4,"notes":[[0,3,1,100],[1,5,1,100],[2,7,1,100],[3,10,1,100]]})");
+    route(h, R"([{"src":"const","dst":"arp.evolve","amt":1}])");
+    h.run(6000 * 4 * 16, {{0, on(60)}});
+    std::vector<int> first, later;
+    for (auto& x : gLog.starts) if (x.arp) (x.beat < 1.0 - 1e-6 ? first : later).push_back(x.note);
+    std::vector<int> repeated;
+    for (std::size_t i = 0; i + 4 <= later.size(); i += 4) repeated.insert(repeated.end(), first.begin(), first.end());
+    later.resize(repeated.size());
+    CHECK(later != repeated);
+  }
+  {
+    // Crossfade time pushed from 1 % to 100 %: two notes overlap mid-step.
+    auto overlap = [](bool modulated) {
+      Harness h(256, kArp);
+      seqOn(h, {{"arp.envMode", 3}, {"arp.xfade", 1}, {"arp.keyLevel", -60}});
+      seqPattern(h, R"({"steps":2,"notes":[[0,7,1,100],[1,12,1,100]]})");
+      if (modulated) route(h, R"([{"src":"const","dst":"arp.xfade","amt":1}])");
+      h.run(6000 + 3000, {{0, on(60)}});
+      return h.eng->takeStats().activeVoices;
+    };
+    CHECK(overlap(false) == 2);   // the key (silent) and one note
+    CHECK(overlap(true) == 3);    // and the one fading out
+  }
+}
+
 TEST(seq_generator_writes_intervals) {
   for (int seed = 1; seed < 100; ++seed) {
     Json s = Json::object();

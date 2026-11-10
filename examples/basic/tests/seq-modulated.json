@@ -1,0 +1,44 @@
+{
+  "patch": "seq-breathing",
+  "transport": {
+    "bpm": 100,
+    "playing": true
+  },
+  "lengthBeats": 18,
+  "events": [
+    {
+      "beat": 0,
+      "on": 57,
+      "vel": 110
+    },
+    {
+      "beat": 8,
+      "off": 57
+    },
+    {
+      "beat": 8,
+      "on": 60,
+      "vel": 60
+    },
+    {
+      "beat": 15,
+      "off": 60
+    }
+  ],
+  "expect": {
+    "soundBy": 0.05,
+    "levelAt": [
+      {
+        "beat": 3,
+        "window": 0.5,
+        "above": -30
+      },
+      {
+        "beat": 11,
+        "window": 0.5,
+        "above": -35
+      }
+    ],
+    "silentAfter": 17.5
+  }
+}

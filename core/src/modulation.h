@@ -137,6 +137,10 @@ class Modulation {
   void beginBlock(const float* values, const Transport& t, double seconds, int len,
                   float modwheel, float bend, float aftertouch);
   const float* globalValues() const { return gvals_.data(); }
+  // Global modulation applied to `vals` in place, with the sources as they
+  // were at the last control block: for code that runs before this block's
+  // modulation (the arpeggiator and sequencer).
+  void applyGlobal(float* vals) const { if (enabled_) applyRoutes(gsrc_.data(), vals, vals, true); }
   const float* prevGlobalValues() const { return gprev_.data(); }
   // Per voice per block: fills v.vals.
   void voiceBlock(ModVoice& v, const VoiceIn& in, const float* values, const Transport& t, int len);

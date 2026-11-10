@@ -1,0 +1,134 @@
+{
+  "synthkit": 1,
+  "synth": "sk-basic",
+  "patchVersion": 1,
+  "name": "Seq Breathing",
+  "author": "synthkit",
+  "tags": [
+    "sequencer",
+    "modulation"
+  ],
+  "params": {
+    "arp.on": 2,
+    "arp.rate": 9,
+    "arp.gate": 45,
+    "arp.scale": 2,
+    "arp.scaleKey": 9,
+    "arp.envMode": 2,
+    "arp.attack": 0.002,
+    "arp.decay": 0.25,
+    "arp.sustain": 0.2,
+    "arp.release": 0.12,
+    "arp.keyLevel": -5,
+    "arp.seqLevel": -12,
+    "arp.phraseRelease": 1.2,
+    "lfo1.rate": 0.2,
+    "filter.cutoff": 1100,
+    "filter.reso": 0.35,
+    "filter.env": 0.35,
+    "env2.decay": 0.25,
+    "env2.sustain": 0.1,
+    "delay.mix": 0.22,
+    "delay.feedback": 0.35,
+    "master": -3
+  },
+  "custom": {
+    "sk.seq": {
+      "patterns": [
+        {
+          "steps": 8,
+          "notes": [
+            [
+              0,
+              7,
+              1,
+              110
+            ],
+            [
+              2,
+              4,
+              1,
+              90
+            ],
+            [
+              3,
+              5,
+              1,
+              80
+            ],
+            [
+              4,
+              7,
+              1,
+              105
+            ],
+            [
+              6,
+              9,
+              1,
+              90
+            ],
+            [
+              7,
+              8,
+              1,
+              75
+            ]
+          ]
+        },
+        {
+          "steps": 8,
+          "notes": [
+            [
+              0,
+              9,
+              2,
+              110
+            ],
+            [
+              2,
+              11,
+              1,
+              90
+            ],
+            [
+              4,
+              7,
+              2,
+              100
+            ],
+            [
+              6,
+              4,
+              1,
+              85
+            ],
+            [
+              7,
+              2,
+              1,
+              75
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "mod": [
+    {
+      "src": "lfo1",
+      "dst": "arp.gate",
+      "amt": 0.3
+    },
+    {
+      "src": "bar.phase",
+      "dst": "arp.pattern",
+      "amt": 0.15
+    },
+    {
+      "src": "velocity",
+      "dst": "arp.seqLevel",
+      "amt": 0.18
+    }
+  ]
+}

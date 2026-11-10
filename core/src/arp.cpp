@@ -139,25 +139,25 @@ const std::vector<std::string>& arpRateNames() {
 }
 
 void Arp::addParams(ParamBuilder& b) {
-  const std::string g = "Arpeggiator", ge = "Arp Note Envelope", gp = "Arp Phrase Envelope";
+  const std::string g = "Arp / Sequencer", ge = "Arp / Seq Note Envelope", gp = "Arp / Seq Phrase Envelope";
   P.on = b.count(); b.addKit("arp.on").name("Arp / Sequencer").choices({"Off", "Arp", "Sequencer"}).group(g);
   P.mode = b.count(); b.addKit("arp.mode").name("Arp Mode").choices({"Up", "Down", "Up/Down", "Down/Up", "As Played", "Random", "Chord", "Pattern"}).group(g);
   P.octaves = b.count(); b.addKit("arp.octaves").name("Arp Octaves").range(1, 4).integer().def(1).group(g);
   P.rate = b.count(); b.addKit("arp.rate").name("Arp Rate").choices(arpRateNames()).def(kRateDefault).group(g);
-  P.gate = b.count(); b.addKit("arp.gate").name("Arp Gate").range(5, 200).def(50).unit("%").group(g);
-  P.swing = b.count(); b.addKit("arp.swing").name("Arp Swing").range(0, 100).def(0).unit("%").group(g);
+  P.gate = b.count(); b.addKit("arp.gate").name("Arp Gate").range(5, 200).def(50).unit("%").modulatable().group(g);
+  P.swing = b.count(); b.addKit("arp.swing").name("Arp Swing").range(0, 100).def(0).unit("%").modulatable().group(g);
   P.latch = b.count(); b.addKit("arp.latch").name("Arp Latch").toggle().def(0).group(g);
   P.sync = b.count(); b.addKit("arp.sync").name("Arp Sync").choices({"Grid", "Key"}).group(g);
   P.velMode = b.count(); b.addKit("arp.velMode").name("Arp Velocity").choices({"Played", "Fixed"}).group(g);
   P.velFixed = b.count(); b.addKit("arp.velFixed").name("Arp Fixed Velocity").range(1, 127).integer().def(100).group(g);
-  P.pattern = b.count(); b.addKit("arp.pattern").name("Arp Pattern").range(1, kArpPatterns).integer().def(1).group(g);
-  P.evolve = b.count(); b.addKit("arp.evolve").name("Arp Evolve").range(0, 100).def(0).unit("%").group(g);
+  P.pattern = b.count(); b.addKit("arp.pattern").name("Arp Pattern").range(1, kArpPatterns).integer().def(1).modulatable().group(g);
+  P.evolve = b.count(); b.addKit("arp.evolve").name("Arp Evolve").range(0, 100).def(0).unit("%").modulatable().group(g);
   std::vector<std::string> scales;
   for (int i = 0; i < arpScaleCount(); ++i) scales.emplace_back(arpScale(i).name);
   P.scale = b.count(); b.addKit("arp.scale").name("Seq Scale").choices(scales).group(g);
   P.scaleKey = b.count(); b.addKit("arp.scaleKey").name("Seq Key").choices({"C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"}).group(g);
-  P.keyLevel = b.count(); b.addKit("arp.keyLevel").name("Seq Key Level").range(-60, 6).def(0).unit("dB").group(g);
-  P.seqLevel = b.count(); b.addKit("arp.seqLevel").name("Seq Level").range(-60, 6).def(0).unit("dB").group(g);
+  P.keyLevel = b.count(); b.addKit("arp.keyLevel").name("Seq Key Level").range(-60, 6).def(0).unit("dB").modulatable().group(g);
+  P.seqLevel = b.count(); b.addKit("arp.seqLevel").name("Seq Level").range(-60, 6).def(0).unit("dB").modulatable().group(g);
   P.seqSync = b.count(); b.addKit("arp.seqSync").name("Seq Sync").choices({"Grid", "Key"}).def(ArpSyncKey).group(g);
   P.quantize = b.count(); b.addKit("arp.quantize").name("Seq Quantize").toggle().def(0).group(g);
   P.quantizeTo = b.count(); b.addKit("arp.quantizeTo").name("Seq Quantize To").choices(arpRateNames()).def(3).group(g);   // 1/4
@@ -166,7 +166,7 @@ void Arp::addParams(ParamBuilder& b) {
   P.d = b.count(); b.addKit("arp.decay").name("Arp Decay").range(0.001, 20).log().def(0.3).unit("s").group(ge);
   P.s = b.count(); b.addKit("arp.sustain").name("Arp Sustain").range(0, 1).def(1).group(ge);
   P.r = b.count(); b.addKit("arp.release").name("Arp Release").range(0.002, 20).log().def(0.05).unit("s").group(ge);
-  P.xfade = b.count(); b.addKit("arp.xfade").name("Arp Crossfade").range(1, 100).def(30).unit("%").group(ge);
+  P.xfade = b.count(); b.addKit("arp.xfade").name("Arp Crossfade").range(1, 100).def(30).unit("%").modulatable().group(ge);
   P.pa = b.count(); b.addKit("arp.phraseAttack").name("Phrase Attack").range(0.0005, 10).log().def(0.002).unit("s").group(gp);
   P.pd = b.count(); b.addKit("arp.phraseDecay").name("Phrase Decay").range(0.001, 20).log().def(0.5).unit("s").group(gp);
   P.ps = b.count(); b.addKit("arp.phraseSustain").name("Phrase Sustain").range(0, 1).def(1).group(gp);
@@ -199,7 +199,7 @@ float Arp::stepPosAt(int sample) const {
   return v;
 }
 
-int Arp::choice(int i) const { return i >= 0 ? static_cast<int>(std::lround(store_->get(i))) : 0; }
+int Arp::choice(int i) const { return i >= 0 ? static_cast<int>(std::lround(vals_[i])) : 0; }
 
 double Arp::stepLen() const {
   return kRates[std::clamp(choice(P.rate), 0, kRateCount - 1)].beats;
@@ -255,8 +255,8 @@ void Arp::clearAll(bool hard) {
 }
 
 void Arp::process(const MidiEvent* in, int nIn, MidiEvent* out, int& outCount, int outCap, int& dropped,
-                  const ParamStore& store, Beats blockStart, double spb, int frames, const Transport& t, bool jumped) {
-  store_ = &store;
+                  const float* vals, Beats blockStart, double spb, int frames, const Transport& t, bool jumped) {
+  vals_ = vals;
   out_ = out;
   outCount_ = &outCount;
   outCap_ = outCap;
