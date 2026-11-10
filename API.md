@@ -498,13 +498,15 @@ MIDI in → synth's processEvents (§4a) → arpeggiator / sequencer → voices
 ```
 
 It runs **after** the synth's `processEvents`, so a synth can reshape the keys
-first (couplers, splits, its own generated notes) and the arpeggiator plays
-the result. While it's on, it keeps the note-ons and note-offs it receives and
-plays its own notes instead; everything else (controllers, bend, the synth's
-messages) passes through. Its notes go through the normal voice stage:
-tuning, voice allocation, voice modes, unison and modulation all apply. In
-Mono or Legato voice mode, a gate over 100% makes overlapping notes, so
-Legato glides between steps.
+first (couplers, splits, its own generated notes) and the arpeggiator or
+sequencer plays the result. The arpeggiator keeps the note-ons and note-offs
+it receives and plays its own notes instead; the sequencer passes them on (the
+keys sound) and adds its own. Everything else (controllers, bend, the synth's
+messages) passes through. Their notes go through the normal voice stage:
+tuning, voice allocation, unison and modulation all apply, and the
+arpeggiator's notes follow the voice mode too: in Mono or Legato, a gate over
+100% makes overlapping notes, so Legato glides between steps. (The
+sequencer's notes get voices of their own: below.)
 
 **Parameters** (choices in index order):
 
@@ -512,8 +514,8 @@ Legato glides between steps.
 |---|---|---|
 | `arp.on` | 0 Off, 1 Arp, 2 Sequencer | Off |
 | `arp.mode` | 0 Up, 1 Down, 2 Up/Down, 3 Down/Up, 4 As Played, 5 Random (never the same note twice in a row), 6 Chord (every held note, each step), 7 **Pattern** (a drawn pattern, below) | Up |
-| `arp.pattern` | 1–8: which drawn pattern Pattern mode plays (so pattern changes can be automated) | 1 |
-| `arp.evolve` | 0–100 %: Pattern mode varies the pattern as it repeats (below) | 0 |
+| `arp.pattern` | 1–8: which drawn pattern plays, in the arpeggiator's Pattern mode or the sequencer (each has its own bank), so pattern changes can be automated or modulated | 1 |
+| `arp.evolve` | 0–100 %: the arpeggiator's Pattern mode and the sequencer vary the pattern as it repeats (below) | 0 |
 | `arp.octaves` | 1–4: the held notes repeat this many octaves up (Chord moves the whole chord up an octave each step; Pattern ignores it, since its rows reach any octave) | 1 |
 | `arp.rate` | 0 1/1, 1 1/2, 2 1/4., 3 1/4, 4 1/4T, 5 1/8., 6 1/8, 7 1/8T, 8 1/16., 9 1/16, 10 1/16T, 11 1/32 | 1/16 |
 | `arp.gate` | 5–200 %: each note's length, as a share of a step | 50 % |
@@ -532,8 +534,12 @@ Legato glides between steps.
 | `arp.keyLevel`, `arp.seqLevel` | Sequencer: −60 (silent) … +6 dB: the keys you play, and the notes the sequencer adds. The master level applies to both | 0 dB, 0 dB |
 
 `arp.mode`, `arp.octaves` and `arp.sync` are the arpeggiator's; the
-`arp.scale…`, `arp.seqSync` and level parameters are the sequencer's. The
-kit's panel shows only the ones for the type that's on.
+`arp.scale…`, `arp.seqSync`, `arp.quantize…` and level parameters are the
+sequencer's. The kit's panel shows only the ones for the type that's on (and
+Quantize only with Key sync). In a DAW's parameter list they're grouped as
+**Arp / Sequencer**, **Arp / Seq Note Envelope** and **Arp / Seq Phrase
+Envelope**. Gate, swing, evolve, pattern, crossfade and the two levels are
+also mod destinations (**Modulation**, below).
 
 **Drawn patterns** (`arp.mode` Pattern). Eight patterns, each up to 64
 steps long, drawn in the piano roll (`{ "kit": "arpPattern" }`). A
@@ -674,15 +680,15 @@ lane (0–15); a voice sees them as `ctx.arpNote()`. The mod sources
 
 **Two envelopes.** Both are applied by the kit, like the amp envelope (§4):
 
-- The **note envelope** shapes each note the arpeggiator plays, starting with
-  the note and releasing when the gate ends. **Multiply** puts it on top of
+- The **note envelope** shapes each note the arpeggiator or sequencer plays
+  (not the keys), starting with the note and releasing when the gate ends. **Multiply** puts it on top of
   the voice's own sound (the kit's amp envelope included), so it works with
   any synth. **Replace** uses it *instead of* the kit's amp envelope (`env1`
   with `ampEnv`), so a slow pad's attack doesn't swallow short arpeggiated
   notes. Replace can only replace what the kit applies: a voice that shapes
   its own attack (samples, a custom attack stage) still does, unless it checks
   `ctx.arpNote()` (or `StartInfo::arp`) and skips it. With Multiply or
-  Replace, an arp note ends when its note envelope does.
+  Replace, a note ends when its note envelope does.
 - **Crossfade** replaces both shapes with fades: each note fades in over
   `arp.xfade` of a step (equal-power, so two fading notes keep the level
   steady) and lasts until the next step, where it fades out as the next one
@@ -701,27 +707,31 @@ lane (0–15); a voice sees them as `ctx.arpNote()`. The mod sources
   held). The arpeggio **keeps playing through the release**, on the chord that
   was held (keys let go of within 60 ms of the last one count), so it fades
   out instead of stopping; it stops when the envelope reaches silence. It
-  only affects the arpeggiator's notes.
+  only affects the arpeggiator's or sequencer's notes, never the keys.
 
 Both are also mod sources (`arp.env`, `arp.phrase`, §6), along with
 `arp.step`, so they can drive a filter or anything else the matrix reaches.
 
 **Details:**
 
-- **Sustain pedal.** Keys let go of while the pedal is down stay in the chord
-  until it comes up. The arpeggiator's own notes ignore the pedal (they'd pile
-  up otherwise).
-- **Turning it off** with keys down hands them back: they sound as ordinary
-  notes until let go of. Keys already sounding when it's turned on finish as
-  ordinary notes too.
-- **Transport jumps** (a DAW looping): pending note-offs fire and, with Grid,
-  the steps carry on from the next grid point.
-- The kit's all notes off and panic stop it and forget a latched chord, even
-  if the synth's `processEvents` keeps CC 123 to itself.
-- Its notes are flagged `MidiEvent::arp`, and a note-off from it only ends a
-  note it started.
-- The arpeggiator doesn't use the event queue (`features.eventQueue`), and it
-  runs sample-accurately: the result doesn't depend on the host's block size.
+- **Sustain pedal.** Keys let go of while the pedal is down stay in the
+  chord (or keep their sequencer lane going) until it comes up. The
+  arpeggiator's and sequencer's own notes ignore the pedal (they'd pile up
+  otherwise); in the sequencer the keys themselves are sustained as usual.
+- **Turning it off** (or switching type): the arpeggiator hands keys still
+  down back as ordinary notes until they're let go of; the sequencer's lanes
+  stop stepping and their notes fade with the phrase envelope, while the keys
+  (already sounding) carry on. Keys already sounding when it's turned on
+  finish as ordinary notes.
+- **Transport jumps** (a DAW looping): pending note-offs fire; with Grid sync
+  the steps carry on from the next grid point, with Key sync from the jump.
+- The kit's all notes off and panic stop it and forget latched chords and
+  lanes, even if the synth's `processEvents` keeps CC 123 to itself.
+- Its notes are flagged `MidiEvent::arp` (and `arpLane` for the sequencer's),
+  and a note-off from it only ends a note it started.
+- It doesn't use the event queue (`features.eventQueue`), and it runs
+  sample-accurately: the result doesn't depend on the host's block size
+  (unless modulation is routed to its step-time parameters, below).
 
 **Modulation.** These are mod matrix destinations (§6):
 
@@ -1276,7 +1286,7 @@ export function mount(sk, root) {
   | `arpGenerate(settings)` | a generated arpeggiator or sequencer pattern (§4b) |
   | `onMeter(sourceId, fn)` | a mod source's value, ~30 times a second, whether or not anything is playing (a synth's own source makes a good gauge) |
   | `onMeters(fn)` | every meter frame (`voices`, `peak`, `beat`, `playing`, `bpm`, …) |
-  | `noteOn(n, vel)`, `noteOff(n)`, `midi(bytes)`, `allNotesOff()`, `panic()` | playing |
+  | `noteOn(n, vel)`, `noteOff(n)`, `midi(bytes)`, `allNotesOff()`, `panic()` | playing (`allNotesOff()` and `panic()` also let go of keys held on the on-screen keyboard) |
   | `onMidi(fn)` | listen to Web MIDI input: `fn(bytes)` sees every message, and the synth still gets it |
   | `takeMidi(fn)` | take Web MIDI messages: when `fn(bytes)` returns `true`, the synth doesn't get that one (a page's own MIDI Learn, say). Anything else goes on |
   | `connectMidi()` | start Web MIDI without the button |
@@ -1436,7 +1446,10 @@ the UI, the layout, `ui/style.css`, the synth's own page if it has one (§9a)
 and the presets inside. It runs from a double-click (`file://`), from GitHub
 Pages, or from anywhere else, with no server. The kit's page has the preset
 bar (factory presets, your own presets saved in the browser, import and export
-as files), a keyboard you can play with the mouse, touch or computer keys,
+as files), a keyboard you can play with the mouse, touch or computer keys
+(keys light while they're held, from there or from a MIDI controller, and
+letting go always ends the note, even with a modifier down or the focus moved
+into a text field),
 pitch and mod wheels, Web MIDI input with MIDI learn, a tempo clock (play, BPM,
 time signature), a scope, a level meter and a voice count; a synth's own page
 has whichever of these it mounts. The current sound is restored when you come
