@@ -167,10 +167,10 @@ void Arp::addParams(ParamBuilder& b) {
   P.s = b.count(); b.addKit("arp.sustain").name("Arp Sustain").range(0, 1).def(1).group(ge);
   P.r = b.count(); b.addKit("arp.release").name("Arp Release").range(0.002, 20).log().def(0.05).unit("s").group(ge);
   P.xfade = b.count(); b.addKit("arp.xfade").name("Arp Crossfade").range(1, 100).def(30).unit("%").modulatable().group(ge);
-  P.pa = b.count(); b.addKit("arp.phraseAttack").name("Phrase Attack").range(0.0005, 10).log().def(0.002).unit("s").group(gp);
-  P.pd = b.count(); b.addKit("arp.phraseDecay").name("Phrase Decay").range(0.001, 20).log().def(0.5).unit("s").group(gp);
-  P.ps = b.count(); b.addKit("arp.phraseSustain").name("Phrase Sustain").range(0, 1).def(1).group(gp);
-  P.pr = b.count(); b.addKit("arp.phraseRelease").name("Phrase Release").range(0.002, 20).log().def(0.05).unit("s").group(gp);
+  P.pa = b.count(); b.addKit("arp.phraseAttack").name("Phrase Attack").range(0.0005, 10).log().def(0.002).unit("s").modulatable().group(gp);
+  P.pd = b.count(); b.addKit("arp.phraseDecay").name("Phrase Decay").range(0.001, 20).log().def(0.5).unit("s").modulatable().group(gp);
+  P.ps = b.count(); b.addKit("arp.phraseSustain").name("Phrase Sustain").range(0, 1).def(1).modulatable().group(gp);
+  P.pr = b.count(); b.addKit("arp.phraseRelease").name("Phrase Release").range(0.002, 20).log().def(0.05).unit("s").modulatable().group(gp);
 }
 
 void Arp::prepare(double sampleRate, int maxBlock) {

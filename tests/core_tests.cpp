@@ -1714,7 +1714,8 @@ static void route(Harness& h, const char* json) {
 }
 
 TEST(arp_gate_swing_and_pattern_are_mod_destinations) {
-  for (const char* id : {"arp.gate", "arp.swing", "arp.evolve", "arp.pattern", "arp.keyLevel", "arp.seqLevel", "arp.xfade"}) {
+  for (const char* id : {"arp.gate", "arp.swing", "arp.evolve", "arp.pattern", "arp.keyLevel", "arp.seqLevel", "arp.xfade",
+                         "arp.phraseAttack", "arp.phraseDecay", "arp.phraseSustain", "arp.phraseRelease"}) {
     Harness h(256, kArp);
     CHECK(h.eng->params().spec(h.param(id)).modulatable);
   }
@@ -1793,6 +1794,53 @@ TEST(arp_evolve_and_crossfade_are_modulated) {
     };
     CHECK(overlap(false) == 2);   // the key (silent) and one note
     CHECK(overlap(true) == 3);    // and the one fading out
+  }
+}
+
+TEST(phrase_envelope_is_modulated) {
+  // The phrase envelope's value (the arp.phrase source, as the meters see it).
+  auto phrase = [](Harness& h) {
+    std::vector<float> src(h.eng->modSources().size()), prm(static_cast<std::size_t>(h.eng->params().size())), shp(4);
+    h.eng->readModMeters(src.data(), prm.data(), shp.data());
+    for (std::size_t i = 0; i < src.size(); ++i)
+      if (h.eng->modSources()[i].id == "arp.phrase") return src[i];
+    CHECK(false);
+    return -1.f;
+  };
+  {
+    // Attack 2 ms, pushed to the top of its range (10 s): still rising after 0.25 s.
+    auto level = [&](bool modulated) {
+      Harness h(256, kArp);
+      arpOn(h, {{"arp.gate", 100}});
+      if (modulated) route(h, R"([{"src":"const","dst":"arp.phraseAttack","amt":1}])");
+      h.run(6000, {{0, on(60)}});
+      return phrase(h);
+    };
+    CHECK(level(false) > 0.9f);
+    CHECK(level(true) < 0.1f);
+  }
+  {
+    // Sustain 1, pulled to 0.5 by the matrix, in the arpeggiator and in a sequencer lane.
+    for (bool seq : {false, true}) {
+      Harness h(256, kArp);
+      if (seq) { seqOn(h, {{"arp.phraseDecay", 0.05}}); seqPattern(h, R"({"steps":1,"notes":[[0,12,1,100]]})"); }
+      else arpOn(h, {{"arp.phraseDecay", 0.05}, {"arp.gate", 100}});
+      route(h, R"([{"src":"const","dst":"arp.phraseSustain","amt":-0.5}])");
+      h.run(24000, {{0, on(60)}});
+      CHECK_NEAR(phrase(h), 0.5f, 0.02f);
+    }
+  }
+  {
+    // Release 50 ms, pushed to 20 s: the phrase still sounds 0.5 s after the key.
+    auto tail = [&](bool modulated) {
+      Harness h(256, kArp);
+      arpOn(h, {{"arp.gate", 100}});
+      if (modulated) route(h, R"([{"src":"const","dst":"arp.phraseRelease","amt":1}])");
+      h.run(24000 + 12000, {{0, on(60)}, {24000, off(60)}});
+      return phrase(h);
+    };
+    CHECK(tail(false) < 0.01f);
+    CHECK(tail(true) > 0.5f);
   }
 }
 
