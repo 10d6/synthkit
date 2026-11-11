@@ -140,7 +140,12 @@ class ArpPatternPanel {
                        : "Rows are semitones up or down from each key you play (Key is the key itself; ±12 the octaves). Every key gets its own copy of the pattern.")
         + " Click to add a note; drag to move; drag its end to lengthen; double-click to remove."
       : "Rows are chord tones: 1 is the lowest note you hold, 2 the next… Rows past the notes you hold play an octave up. Click to add a note; drag to move; drag its end to lengthen; double-click to remove.";
-    this.root.querySelector(".panel-title").textContent = this.isSeq() ? "Sequencer pattern" : "Arp pattern";
+    // Rename only the title's text: a folding panel's title holds its toggle
+    // (the name in a span) and maybe an info button, which must survive.
+    const name = this.isSeq() ? "Sequencer pattern" : "Arp pattern";
+    const title = this.root.querySelector(":scope > .panel-title");
+    const label = title.querySelector(".panel-toggle > span") || [...title.childNodes].find((n) => n.nodeType === 3);
+    if (label) label.textContent = name; else title.prepend(name);
   }
 
   // Geometry -------------------------------------------------------------------------

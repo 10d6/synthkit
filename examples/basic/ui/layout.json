@@ -123,7 +123,8 @@
     },
     {
       "kit": "arpPattern",
-      "wide": true
+      "wide": true,
+      "collapsed": false
     },
     {
       "kit": "arpEnv"
