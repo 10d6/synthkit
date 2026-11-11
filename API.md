@@ -739,6 +739,7 @@ Both are also mod sources (`arp.env`, `arp.phrase`, §6), along with
 |---|---|
 | `arp.gate`, `arp.swing`, `arp.evolve`, `arp.pattern` | read when a step plays, with global modulation (per-voice sources such as velocity or a per-voice LFO count as 0, as in `processEvents`). `arp.pattern` rounds to a pattern, so a shape or LFO can switch between them (say, a different pattern each bar) |
 | `arp.xfade` | read as each note starts, with global modulation |
+| `arp.phraseAttack`, `…Decay`, `…Sustain`, `…Release` | the phrase envelope (each sequencer lane's too), with global modulation, updated once per host block. A phrase follows its settings as they move: a changed Sustain is reached at the Decay rate, and a stage in progress takes on its new rate |
 | `arp.keyLevel`, `arp.seqLevel` | per voice, like `sk.level`: each key or sequenced note follows its own sources (velocity, key, a per-voice LFO, `arp.env`), ramped across each control block |
 
 The step-time ones see the sources as of the last control block before the

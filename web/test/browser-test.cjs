@@ -118,6 +118,14 @@ async function main() {
           await toggle.click();
           if (exp0 !== "false" || glide0 || exp1 !== "true" || !glide1) fail(`accordion: folded ${exp0}/${glide0}, opened ${exp1}/${glide1}`);
           else pass("accordion panels fold and open at their titles");
+          // A folding pattern panel keeps its toggle when it renames itself (Arp ↔ Sequencer pattern).
+          const patTitle = () => page.evaluate(() => { const t = document.querySelector(".arp-pattern-panel > .panel-title"); return t && { toggle: !!t.querySelector(".panel-toggle"), text: t.textContent }; });
+          const arpWas = await page.evaluate(() => window.synthkit.model.get("arp.on"));
+          await page.evaluate(() => window.synthkit.model.set("arp.on", 2));
+          const pt = await patTitle();
+          await page.evaluate((v) => window.synthkit.model.set("arp.on", v), arpWas);
+          if (!pt || !pt.toggle || !/Sequencer pattern/.test(pt.text)) fail(`pattern panel title after switching to the sequencer: ${JSON.stringify(pt)}`);
+          else pass("the pattern panel keeps its fold toggle when it renames itself");
           // Info icons: on a control, a kit control (paramInfo) and a panel.
           await page.click('[data-param="filter.drive"] .info-btn');
           const pop = await page.evaluate(() => { const p = document.querySelector(".info-pop"); return p && !p.hidden ? p.textContent : null; });
