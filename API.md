@@ -901,6 +901,13 @@ as 0, and aftertouch as channel pressure. Values update once per control block
 (32 samples). Use `ctx.ramp(p)` for anything that would zipper, such as
 amplitude.
 
+**Modulating LFOs and shapes.** `lfoN.rate/phase/depth` and
+`shapeN.rate/offset/depth` follow the matrix like any other destination. They
+see the sources already computed this block (envelopes, velocity, mod wheel,
+custom sources, and so on) and the previous block's value of any LFO or shape
+that is computed later, so a per-voice LFO or shape can't yet be driven by a
+later per-voice one (it reads 0).
+
 **Custom sources:**
 
 ```cpp

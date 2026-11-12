@@ -169,7 +169,10 @@ class Modulation {
   int modSlots() const { return modSlots_; }
 
  private:
-  void computeShape(ShapeRun& r, int s, const float* values, const Transport& t, int len);
+  void computeShape(ShapeRun& r, int s, const float* values, const float* src, const Transport& t, int len);
+  // One parameter's value with the matrix applied (sources: src). Lets LFOs and
+  // shapes be modulated by the sources computed so far this block.
+  float modulatedParam(int p, const float* values, const float* src) const;
   void startShape(ShapeRun& r, int s, const float* values, const Transport& t, int note, float vel);
   double shapeLengthBeats(int s, const float* values, const Transport& t) const;
   float lfoValue(LfoRun& r, int shape, double phase, dsp::Rng& rng);

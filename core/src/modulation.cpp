@@ -260,12 +260,12 @@ void Modulation::startShape(ShapeRun& r, int s, const float* values, const Trans
   r.startAt = st == 0 ? t.beat : quantizeUp(t.beat, starts[st], t);
 }
 
-void Modulation::computeShape(ShapeRun& r, int s, const float* values, const Transport& t, int len) {
+void Modulation::computeShape(ShapeRun& r, int s, const float* values, const float* src, const Transport& t, int len) {
   const auto& P = shapeP_[static_cast<std::size_t>(s)];
   int trig = choiceAt(values, P.trigger);
   int loop = choiceAt(values, P.loop);
   bool sync = values[P.sync] >= 0.5f;
-  double rate = values[P.rate];
+  double rate = modulatedParam(P.rate, values, src);
   double lenBeats = shapeLengthBeats(s, values, t);
   double lenSec = std::max(0.001f, values[P.time]);
   double spbSec = 60.0 / t.bpm;
@@ -274,7 +274,7 @@ void Modulation::computeShape(ShapeRun& r, int s, const float* values, const Tra
   int ci = std::clamp(static_cast<int>(values[P.curve] + 0.5f) - 1, 0, kMaxCurves - 1);
   const auto& curves = bank.shapes[static_cast<std::size_t>(s)];
   const ShapeCurve& curve = curves[static_cast<std::size_t>(std::min<int>(ci, static_cast<int>(curves.size()) - 1))];
-  float off = values[P.offset];
+  float off = modulatedParam(P.offset, values, src);
 
   double pos;
   bool transportLocked = trig == TrBar || trig == TrBeat || trig == TrFree;
@@ -311,13 +311,29 @@ void Modulation::computeShape(ShapeRun& r, int s, const float* values, const Tra
   bool wraps = loop == LoLoop || loop == LoPing;
   double phOff = wraps ? frac(ph + off) : std::min(ph + off, 1.0);
   r.phase = static_cast<float>(phOff);
-  r.value = curve.eval(r.phase) * values[P.depth];
+  r.value = curve.eval(r.phase) * modulatedParam(P.depth, values, src);
   float sm = values[P.smooth];
   if (sm <= 0.001f) r.out = r.value;
   else r.out = r.value + (r.out - r.value) * std::exp(static_cast<float>(-dtSec) / (sm * 0.25f));
 }
 
 // ---------------------------------------------------------------- per block
+
+float Modulation::modulatedParam(int p, const float* values, const float* src) const {
+  const auto& m = matrix_->read();
+  float off = 0;
+  bool hit = false;
+  for (const auto& r : m.routes) {
+    if (r.dst != p) continue;
+    float v = src[r.src] * r.amt;
+    if (r.via >= 0) v *= src[r.via];
+    off += v;
+    hit = true;
+  }
+  if (!hit) return values[p];
+  const auto& sp = store_->spec(p);
+  return static_cast<float>(sp.fromNorm(std::clamp(sp.toNorm(values[p]) + off, 0.0, 1.0)));
+}
 
 void Modulation::applyRoutes(const float* src, const float* values, float* out, bool) const {
   const auto& m = matrix_->read();
@@ -342,32 +358,8 @@ void Modulation::applyRoutes(const float* src, const float* values, float* out, 
 void Modulation::beginBlock(const float* values, const Transport& t, double, int len, float modwheel, float bend, float aftertouch) {
   curValues_ = values;
   double dt = len / sr_;
-  for (int l = 0; l < nLfo_; ++l) {
-    const auto& P = lfoP_[static_cast<std::size_t>(l)];
-    auto& r = glfo_[static_cast<std::size_t>(l)];
-    int idx = firstLfo_ + l;
-    bool perVoice = choiceAt(values, P.mode) == LfoVoice;
-    srcVoice_[static_cast<std::size_t>(idx)] = perVoice || values[P.fade] > 0.0005f;
-    if (perVoice) { gsrc_[static_cast<std::size_t>(idx)] = 0; continue; }
-    double phase;
-    if (values[P.sync] >= 0.5f) {
-      int di = std::clamp(choiceAt(values, P.division), 0, static_cast<int>(std::size(kLfoDivs)) - 1);
-      phase = t.beat / divBeats(kLfoDivs[di], t);
-    } else {
-      r.phase = r.phase + values[P.rate] * dt;
-      r.phase -= std::floor(r.phase);
-      phase = r.phase;
-    }
-    gsrc_[static_cast<std::size_t>(idx)] = lfoValue(r, choiceAt(values, P.shape), phase + values[P.phase], grng_) * values[P.depth];
-  }
-  for (int s = 0; s < nShape_; ++s) {
-    int idx = firstShape_ + s;
-    bool perVoice = choiceAt(values, shapeP_[static_cast<std::size_t>(s)].trigger) == TrNote;
-    srcVoice_[static_cast<std::size_t>(idx)] = perVoice;
-    if (perVoice) { gsrc_[static_cast<std::size_t>(idx)] = 0; continue; }
-    computeShape(gshape_[static_cast<std::size_t>(s)], s, values, t, len);
-    gsrc_[static_cast<std::size_t>(idx)] = gshape_[static_cast<std::size_t>(s)].out;
-  }
+  // Simple sources first, so LFOs and shapes can be modulated by them (and by
+  // the other LFOs and shapes, as of the previous block).
   for (int e = 0; e < nEnv_; ++e) { gsrc_[static_cast<std::size_t>(e)] = 0; srcVoice_[static_cast<std::size_t>(e)] = 1; }
   double inBar = t.beat - t.barStart;
   double unit = 4.0 / t.timeSigDen;
@@ -392,6 +384,32 @@ void Modulation::beginBlock(const float* values, const Transport& t, double, int
   }
   for (int c = 0; c < nCustom_; ++c) set(firstCustom_ + c, gcustom_[static_cast<std::size_t>(c)], sources_[static_cast<std::size_t>(firstCustom_ + c)].desc.perVoice);
 
+  for (int l = 0; l < nLfo_; ++l) {
+    const auto& P = lfoP_[static_cast<std::size_t>(l)];
+    auto& r = glfo_[static_cast<std::size_t>(l)];
+    int idx = firstLfo_ + l;
+    bool perVoice = choiceAt(values, P.mode) == LfoVoice;
+    srcVoice_[static_cast<std::size_t>(idx)] = perVoice || values[P.fade] > 0.0005f;
+    if (perVoice) { gsrc_[static_cast<std::size_t>(idx)] = 0; continue; }
+    double phase;
+    if (values[P.sync] >= 0.5f) {
+      int di = std::clamp(choiceAt(values, P.division), 0, static_cast<int>(std::size(kLfoDivs)) - 1);
+      phase = t.beat / divBeats(kLfoDivs[di], t);
+    } else {
+      r.phase = r.phase + modulatedParam(P.rate, values, gsrc_.data()) * dt;
+      r.phase -= std::floor(r.phase);
+      phase = r.phase;
+    }
+    gsrc_[static_cast<std::size_t>(idx)] = lfoValue(r, choiceAt(values, P.shape), phase + modulatedParam(P.phase, values, gsrc_.data()), grng_) * modulatedParam(P.depth, values, gsrc_.data());
+  }
+  for (int s = 0; s < nShape_; ++s) {
+    int idx = firstShape_ + s;
+    bool perVoice = choiceAt(values, shapeP_[static_cast<std::size_t>(s)].trigger) == TrNote;
+    srcVoice_[static_cast<std::size_t>(idx)] = perVoice;
+    if (perVoice) { gsrc_[static_cast<std::size_t>(idx)] = 0; continue; }
+    computeShape(gshape_[static_cast<std::size_t>(s)], s, values, gsrc_.data(), t, len);
+    gsrc_[static_cast<std::size_t>(idx)] = gshape_[static_cast<std::size_t>(s)].out;
+  }
   std::copy(gvals_.begin(), gvals_.end(), gprev_.begin());
   std::copy(values, values + gvals_.size(), gvals_.begin());
   applyRoutes(gsrc_.data(), values, gvals_.data(), true);
@@ -402,6 +420,17 @@ void Modulation::voiceBlock(ModVoice& v, const VoiceIn& in, const float* values,
   v.age += dt;
   std::copy(gsrc_.begin(), gsrc_.end(), v.src.begin());
   for (int e = 0; e < std::min(nEnv_, in.nEnv); ++e) v.src[static_cast<std::size_t>(e)] = in.env[e];
+  v.src[static_cast<std::size_t>(iVel_)] = in.vel;
+  v.src[static_cast<std::size_t>(iKey_)] = std::clamp((in.note - 60) / 60.f, -1.f, 1.f);
+  v.src[static_cast<std::size_t>(iRandom_)] = v.random;
+  v.src[static_cast<std::size_t>(iAT_)] = in.aftertouch;
+  double span = pAgeSpan_ >= 0 ? values[pAgeSpan_] : 4.0;
+  v.src[static_cast<std::size_t>(iAge_)] = static_cast<float>(std::clamp((t.beat - v.startBeat) / span, 0.0, 1.0));
+  v.src[static_cast<std::size_t>(iOff_)] = v.offbeat;
+  if (iArpEnv_ >= 0) v.src[static_cast<std::size_t>(iArpEnv_)] = in.arpEnv;
+  for (int c = 0; c < nCustom_; ++c)
+    if (!std::isnan(v.custom[static_cast<std::size_t>(c)])) v.src[static_cast<std::size_t>(firstCustom_ + c)] = v.custom[static_cast<std::size_t>(c)];
+
   for (int l = 0; l < nLfo_; ++l) {
     const auto& P = lfoP_[static_cast<std::size_t>(l)];
     int idx = firstLfo_ + l;
@@ -415,10 +444,10 @@ void Modulation::voiceBlock(ModVoice& v, const VoiceIn& in, const float* values,
         int di = std::clamp(choiceAt(values, P.division), 0, static_cast<int>(std::size(kLfoDivs)) - 1);
         phase = (t.beat - v.startBeat) / divBeats(kLfoDivs[di], t);
       } else {
-        r.phase += values[P.rate] * dt;
+        r.phase += modulatedParam(P.rate, values, v.src.data()) * dt;
         phase = r.phase;
       }
-      v.src[static_cast<std::size_t>(idx)] = lfoValue(r, choiceAt(values, P.shape), phase + values[P.phase], v.rng) * values[P.depth] * fade;
+      v.src[static_cast<std::size_t>(idx)] = lfoValue(r, choiceAt(values, P.shape), phase + modulatedParam(P.phase, values, v.src.data()), v.rng) * modulatedParam(P.depth, values, v.src.data()) * fade;
     } else {
       v.src[static_cast<std::size_t>(idx)] = gsrc_[static_cast<std::size_t>(idx)] * fade;
     }
@@ -427,20 +456,9 @@ void Modulation::voiceBlock(ModVoice& v, const VoiceIn& in, const float* values,
     int idx = firstShape_ + s;
     if (!srcVoice_[static_cast<std::size_t>(idx)]) continue;
     auto& r = v.shape[static_cast<std::size_t>(s)];
-    computeShape(r, s, values, t, len);
+    computeShape(r, s, values, v.src.data(), t, len);
     v.src[static_cast<std::size_t>(idx)] = r.out;
   }
-  v.src[static_cast<std::size_t>(iVel_)] = in.vel;
-  v.src[static_cast<std::size_t>(iKey_)] = std::clamp((in.note - 60) / 60.f, -1.f, 1.f);
-  v.src[static_cast<std::size_t>(iRandom_)] = v.random;
-  v.src[static_cast<std::size_t>(iAT_)] = in.aftertouch;
-  double span = pAgeSpan_ >= 0 ? values[pAgeSpan_] : 4.0;
-  v.src[static_cast<std::size_t>(iAge_)] = static_cast<float>(std::clamp((t.beat - v.startBeat) / span, 0.0, 1.0));
-  v.src[static_cast<std::size_t>(iOff_)] = v.offbeat;
-  if (iArpEnv_ >= 0) v.src[static_cast<std::size_t>(iArpEnv_)] = in.arpEnv;
-  for (int c = 0; c < nCustom_; ++c)
-    if (!std::isnan(v.custom[static_cast<std::size_t>(c)])) v.src[static_cast<std::size_t>(firstCustom_ + c)] = v.custom[static_cast<std::size_t>(c)];
-
   std::swap(v.vals, v.prevVals);
   std::copy(values, values + v.vals.size(), v.vals.begin());
   applyRoutes(v.src.data(), values, v.vals.data(), false);
