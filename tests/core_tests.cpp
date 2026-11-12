@@ -496,6 +496,72 @@ TEST(synced_lfo_is_locked_to_the_beat) {
   CHECK_NEAR(modAt(3.25), 1.0, 1e-3);
 }
 
+TEST(lfo_and_shape_params_are_mod_destinations) {
+  // Depth: a constant -1 route pulls LFO 1's depth to 0, silencing its route to "mod".
+  {
+    Harness h(256, kMod);
+    auto& ps = h.eng->params();
+    ps.set(h.param("lfo1.shape"), 4);     // square
+    ps.set(h.param("lfo1.sync"), 1);
+    ps.set(h.param("lfo1.division"), 6);
+    ps.set(h.param("mod"), 0.5);
+    loadMod(h, R"({"mod":[{"src":"lfo1","dst":"mod","amt":0.5},{"src":"const","dst":"lfo1.depth","amt":-1}]})");
+    h.run(96000, {{3000, on(60)}});
+    CHECK_NEAR(modAt(1.2), 0.5, 1e-3);   // no LFO contribution left
+    CHECK_NEAR(modAt(1.7), 0.5, 1e-3);
+  }
+  // Depth, global mode, driven by modwheel (a different source type).
+  {
+    Harness h(256, kMod);
+    auto& ps = h.eng->params();
+    ps.set(h.param("lfo1.shape"), 4);
+    ps.set(h.param("lfo1.sync"), 1);
+    ps.set(h.param("lfo1.division"), 6);
+    ps.set(h.param("lfo1.depth"), 0);
+    ps.set(h.param("mod"), 0.5);
+    loadMod(h, R"({"mod":[{"src":"lfo1","dst":"mod","amt":0.5},{"src":"modwheel","dst":"lfo1.depth","amt":1}]})");
+    MidiEvent mw = CC{1, 1.0f};
+    h.run(96000, {{0, on(60)}, {1, mw}});
+    CHECK_NEAR(modAt(1.2), 1.0, 1e-3);   // depth opened to 1
+  }
+  // Rate: a constant route speeds up a free-running per-voice LFO.
+  {
+    Harness h(256, kMod);
+    auto& ps = h.eng->params();
+    ps.set(h.param("lfo1.shape"), 4);
+    ps.set(h.param("lfo1.mode"), 1);
+    ps.set(h.param("lfo1.rate"), 1);
+    loadMod(h, R"({"mod":[{"src":"lfo1","dst":"mod","amt":1}]})");
+    h.run(96000, {{0, on(60)}});
+    float slow = modAt(1.2);             // 1 Hz: second beat is still the negative half -> clamped to 0
+    CHECK_NEAR(slow, 0.0, 1e-3);
+  }
+  {
+    Harness h(256, kMod);
+    auto& ps = h.eng->params();
+    ps.set(h.param("lfo1.shape"), 4);
+    ps.set(h.param("lfo1.mode"), 1);
+    ps.set(h.param("lfo1.rate"), 1);
+    loadMod(h, R"({"mod":[{"src":"lfo1","dst":"mod","amt":1},{"src":"const","dst":"lfo1.rate","amt":0.5}]})");
+    h.run(96000, {{0, on(60)}});
+    // Rate rises well above 1 Hz, so the phase at beat 1.2 differs from the unmodulated case.
+    bool differs = false;
+    for (double b : {0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8}) if (std::fabs(modAt(b) - 0.0f) > 0.5) differs = true;
+    CHECK(differs || modAt(1.2) > 0.5);
+  }
+  // Shape depth: pulled to 0 by a constant route.
+  {
+    Harness h(256, kMod);
+    auto& ps = h.eng->params();
+    ps.set(h.param("shape1.trigger"), 4);  // Free
+    ps.set(h.param("shape1.loop"), 1);
+    ps.set(h.param("mod"), 0.5);
+    loadMod(h, R"({"mod":[{"src":"shape1","dst":"mod","amt":1},{"src":"const","dst":"shape1.depth","amt":-1}]})");
+    h.run(48000, {{0, on(60)}});
+    CHECK_NEAR(modAt(1.0), 0.5, 1e-3);
+  }
+}
+
 TEST(per_voice_lfo_and_fade) {
   Harness h(256, kMod);
   auto& ps = h.eng->params();
