@@ -198,6 +198,8 @@ void Modulation::prepare(double sampleRate, int nParams, const float* values) {
   gprev_.assign(static_cast<std::size_t>(nParams), 0.f);
   for (int i = 0; i < nParams; ++i) gvals_[static_cast<std::size_t>(i)] = gprev_[static_cast<std::size_t>(i)] = store_->get(i);
   glfo_.assign(static_cast<std::size_t>(nLfo_), {});
+  gwave_.assign(static_cast<std::size_t>(nLfo_), 0.f);
+  lfoPvDepth_.assign(static_cast<std::size_t>(nLfo_), 0);
   gshape_.assign(static_cast<std::size_t>(nShape_), {});
   gcustom_.assign(static_cast<std::size_t>(nCustom_), 0.f);
   off_.assign(static_cast<std::size_t>(nParams), 0.f);
@@ -400,7 +402,9 @@ void Modulation::beginBlock(const float* values, const Transport& t, double, int
       r.phase -= std::floor(r.phase);
       phase = r.phase;
     }
-    gsrc_[static_cast<std::size_t>(idx)] = lfoValue(r, choiceAt(values, P.shape), phase + modulatedParam(P.phase, values, gsrc_.data()), grng_) * modulatedParam(P.depth, values, gsrc_.data());
+    float wave = lfoValue(r, choiceAt(values, P.shape), phase + modulatedParam(P.phase, values, gsrc_.data()), grng_);
+    gwave_[static_cast<std::size_t>(l)] = wave;
+    gsrc_[static_cast<std::size_t>(idx)] = wave * modulatedParam(P.depth, values, gsrc_.data());
   }
   for (int s = 0; s < nShape_; ++s) {
     int idx = firstShape_ + s;
@@ -410,6 +414,22 @@ void Modulation::beginBlock(const float* values, const Transport& t, double, int
     computeShape(gshape_[static_cast<std::size_t>(s)], s, values, gsrc_.data(), t, len);
     gsrc_[static_cast<std::size_t>(idx)] = gshape_[static_cast<std::size_t>(s)].out;
   }
+  // A Global LFO whose Depth a per-voice source drives (velocity, a Note
+  // shape, a Per Voice LFO…) keeps one shared wave but takes its depth per
+  // voice: voiceBlock scales gwave_ by the voice's own Depth.
+  {
+    const auto& m = matrix_->read();
+    for (int l = 0; l < nLfo_; ++l) {
+      const auto& P = lfoP_[static_cast<std::size_t>(l)];
+      int idx = firstLfo_ + l;
+      char pv = 0;
+      if (choiceAt(values, P.mode) != LfoVoice)
+        for (const auto& r : m.routes)
+          if (r.dst == P.depth && (srcVoice_[static_cast<std::size_t>(r.src)] || (r.via >= 0 && srcVoice_[static_cast<std::size_t>(r.via)]))) { pv = 1; break; }
+      lfoPvDepth_[static_cast<std::size_t>(l)] = pv;
+      if (pv) srcVoice_[static_cast<std::size_t>(idx)] = 1;
+    }
+  }
   std::copy(gvals_.begin(), gvals_.end(), gprev_.begin());
   std::copy(values, values + gvals_.size(), gvals_.begin());
   applyRoutes(gsrc_.data(), values, gvals_.data(), true);
@@ -418,7 +438,14 @@ void Modulation::beginBlock(const float* values, const Transport& t, double, int
 void Modulation::voiceBlock(ModVoice& v, const VoiceIn& in, const float* values, const Transport& t, int len) {
   double dt = len / sr_;
   v.age += dt;
-  std::copy(gsrc_.begin(), gsrc_.end(), v.src.begin());
+  // Shared sources come from gsrc_. A per-voice LFO or shape keeps this
+  // voice's value from the previous block until it is computed below, so an
+  // LFO can follow a shape (or a later LFO) a block behind rather than reading 0.
+  for (std::size_t i = 0; i < gsrc_.size(); ++i) {
+    int ii = static_cast<int>(i);
+    bool own = srcVoice_[i] && ((ii >= firstLfo_ && ii < firstLfo_ + nLfo_) || (ii >= firstShape_ && ii < firstShape_ + nShape_));
+    if (!own) v.src[i] = gsrc_[i];
+  }
   for (int e = 0; e < std::min(nEnv_, in.nEnv); ++e) v.src[static_cast<std::size_t>(e)] = in.env[e];
   v.src[static_cast<std::size_t>(iVel_)] = in.vel;
   v.src[static_cast<std::size_t>(iKey_)] = std::clamp((in.note - 60) / 60.f, -1.f, 1.f);
@@ -448,6 +475,8 @@ void Modulation::voiceBlock(ModVoice& v, const VoiceIn& in, const float* values,
         phase = r.phase;
       }
       v.src[static_cast<std::size_t>(idx)] = lfoValue(r, choiceAt(values, P.shape), phase + modulatedParam(P.phase, values, v.src.data()), v.rng) * modulatedParam(P.depth, values, v.src.data()) * fade;
+    } else if (lfoPvDepth_[static_cast<std::size_t>(l)]) {
+      v.src[static_cast<std::size_t>(idx)] = gwave_[static_cast<std::size_t>(l)] * modulatedParam(P.depth, values, v.src.data()) * fade;
     } else {
       v.src[static_cast<std::size_t>(idx)] = gsrc_[static_cast<std::size_t>(idx)] * fade;
     }
@@ -476,6 +505,9 @@ void Modulation::noteOn(ModVoice& v, int note, float vel, const Transport& t, ui
   v.offbeat = static_cast<float>(std::clamp((t.beat - nearest) * 2.0, -1.0, 1.0));
   v.fresh = true;
   for (auto& c : v.custom) c = NAN;
+  // A new note's LFOs and shapes start from 0 (voiceBlock reads them a block behind).
+  for (int l = 0; l < nLfo_; ++l) v.src[static_cast<std::size_t>(firstLfo_ + l)] = 0;
+  for (int s = 0; s < nShape_; ++s) v.src[static_cast<std::size_t>(firstShape_ + s)] = 0;
   const float* values = curValues_;
   if (!values) return;
   for (int l = 0; l < nLfo_; ++l) v.lfo[static_cast<std::size_t>(l)] = LfoRun{};

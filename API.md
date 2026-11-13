@@ -905,8 +905,17 @@ amplitude.
 `shapeN.rate/offset/depth` follow the matrix like any other destination. They
 see the sources already computed this block (envelopes, velocity, mod wheel,
 custom sources, and so on) and the previous block's value of any LFO or shape
-that is computed later, so a per-voice LFO or shape can't yet be driven by a
-later per-voice one (it reads 0).
+computed later. LFOs are computed before shapes, in order, so an LFO driven by a
+shape follows it a block (32 samples) behind; per voice, that's the voice's own
+shape.
+
+A Global LFO is one wave shared by every voice, so per-voice sources can't
+move its Rate or Phase. They can set its **Depth**: when a route from a
+per-voice source (velocity, key, random, a Note-triggered shape, a Per Voice
+LFO, …) reaches `lfoN.depth`, each voice scales the shared wave by its own
+Depth, and the LFO counts as per voice for routes from it. The same holds for
+global shapes (triggered by First Note, Bar, Beat, Free or Manual): only
+global sources move their Rate, Offset and Depth.
 
 **Custom sources:**
 
