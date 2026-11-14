@@ -292,7 +292,10 @@ void Arp::process(const MidiEvent* in, int nIn, MidiEvent* out, int& outCount, i
       sustained_.fill(false);
       wasOn_ = false;
     }
+    // The pedal keeps being tracked while off, so that a pedal-up that happens now
+    // isn't missed when this is turned back on (no later one would ever come).
     for (int i = 0; i < nIn; ++i) {
+      if (in[i].isCC(64)) pedal_ = in[i].value >= 0.5f;
       if (outCount >= outCap) { ++dropped; continue; }
       out[outCount++] = in[i];
     }

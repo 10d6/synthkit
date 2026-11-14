@@ -1,5 +1,7 @@
 // Unit tests for synthkit core. Deliberately dependency-free: a few macros
 // and a test synth defined right here.
+#include <map>
+#include <set>
 #include <synthkit/engine.h>
 
 #include "../core/src/arp.h"   // internal: the scale table, tested directly
@@ -128,6 +130,7 @@ struct Harness {
   long pos = 0;
   bool accumulateBeats = false;  // add up the beat per block, as the browser does
   double accBeat = 0;
+  double beatOffset = 0;         // added to the host beat: a transport jump when it changes
   explicit Harness(int block = 256, const char* extra = "") {
     auto s = std::make_unique<TestSynth>();
     synth = s.get();
@@ -155,7 +158,7 @@ struct Harness {
         ev.push_back(e);
         ++ei;
       }
-      if (ht.playing) ht.beat = accumulateBeats ? accBeat : pos / sr * ht.bpm / 60.0;
+      if (ht.playing) ht.beat = (accumulateBeats ? accBeat : pos / sr * ht.bpm / 60.0) + beatOffset;
       float* o[2] = {l.data(), r.data()};
       eng->process(o, 2, b, ev.data(), static_cast<int>(ev.size()), ht);
       accBeat += (b / sr) * (ht.bpm / 60.0);
@@ -1993,6 +1996,128 @@ TEST(arp_sources_and_reserved_ids) {
   CHECK_THROWS(Engine(std::make_unique<Clash>(), testInfo(kArp)));
   Engine fine(std::make_unique<Clash>(), testInfo());   // without the feature, the ID is the synth's
   CHECK(fine.params().find("arp.speed") >= 0);
+}
+
+
+
+// The arpeggiator and the sequencer each keep their own copy of the sustain
+// pedal. It must not go stale when the pedal moves while they are off: no
+// later pedal-up would ever arrive to let go of a sustained key.
+static void pedalReleasedWhileOff(int type) {
+  Harness h(256, kArp);
+  seqOn(h);
+  auto& P = h.eng->params();
+  P.set(h.param("arp.on"), type);
+  h.run(4800, {{0, CC{64, 1.f, 0}}});            // pedal down while it's on
+  P.set(h.param("arp.on"), type == 1 ? 2 : 1);   // switched to the other one…
+  h.run(4800, {{0, CC{64, 0.f, 0}}});            // …and the pedal comes up there
+  P.set(h.param("arp.on"), type);
+  h.run(4800, {{0, on(60)}, {2400, off(60)}});   // a tap, no pedal: the key must let go
+  h.run(48000);
+  int maxActive = 0;
+  for (int i = 0; i < 200; ++i) { h.run(480); maxActive = std::max(maxActive, h.eng->takeStats().activeVoices); }
+  CHECK(maxActive == 0);
+}
+TEST(arp_pedal_released_while_off) { pedalReleasedWhileOff(1); }
+TEST(seq_pedal_released_while_off) { pedalReleasedWhileOff(2); }
+
+// Whatever is played (pedal, overlapping presses of one key, parameter and mode
+// changes, transport jumps and stops, any block size), once every press has been
+// matched by its release no voice may stay held: the sequencer's note-offs must
+// always arrive.
+namespace stress {
+struct Seg {
+  double seqSync, envMode, gate, rate, pattern, quantize, swing, on, bpm, beatOffset;
+  int playing;
+  std::vector<std::pair<long, MidiEvent>> ev;   // absolute sample times
+};
+struct Case { int mode, block; std::vector<Seg> segs; };
+
+static Case make(int mode, int seed) {
+  Case c;
+  c.mode = mode;
+  c.block = seed % 3 == 0 ? 64 : seed % 3 == 1 ? 256 : seed % 2 ? 480 : 2048;
+  uint64_t r = 0x9E3779B97F4A7C15ull * static_cast<uint64_t>(seed * 7 + mode + 1);
+  auto rnd = [&](int n) { r ^= r << 13; r ^= r >> 7; r ^= r << 17; return static_cast<int>(r % static_cast<uint64_t>(n)); };
+  std::map<int, int> down;
+  bool pedal = false;
+  int playing = seed % 4 != 0;
+  double beatOffset = 0;
+  long t = 0;
+  for (int seg = 0; seg < 12; ++seg) {
+    Seg g{};
+    g.seqSync = rnd(2); g.envMode = rnd(4); g.gate = 5 + rnd(196); g.rate = rnd(10); g.pattern = 1 + rnd(4);
+    g.quantize = rnd(2); g.swing = rnd(60);
+    if (rnd(2)) beatOffset = rnd(64) - 8.0 * rnd(3);   // a transport jump
+    if (seed % 4 == 1) playing = rnd(2);
+    g.bpm = 60 + rnd(180);
+    g.on = rnd(8) == 0 ? rnd(3) : 2;
+    g.beatOffset = beatOffset;
+    g.playing = playing;
+    for (int i = 0; i < 12; ++i) {
+      t += rnd(seed % 5 == 0 ? 200000 : 9000);
+      int n = 48 + rnd(14), k = rnd(10);
+      if (k == 0) {
+        pedal = !pedal || rnd(3) == 0;   // sometimes down again while down
+        MidiEvent e = CC{64, pedal ? 1.f : 0.f, 0};
+        g.ev.push_back({t, e});
+        if (rnd(2)) g.ev.push_back({t + 1, e});
+      } else if (down.count(n) || (!down.empty() && k < 4)) {
+        int m = down.count(n) ? n : down.begin()->first;
+        g.ev.push_back({t, off(m)});
+        if (--down[m] == 0) down.erase(m);
+      } else {
+        g.ev.push_back({t, on(n)});
+        ++down[n];
+        if (k == 9) { g.ev.push_back({t + 1, on(n)}); ++down[n]; }   // pressed twice (two controllers, say)
+      }
+    }
+    c.segs.push_back(std::move(g));
+  }
+  Seg fin{};
+  fin.seqSync = 1; fin.envMode = 0; fin.gate = 100; fin.rate = 3; fin.pattern = 1; fin.bpm = 120; fin.on = 2;
+  fin.playing = playing; fin.beatOffset = beatOffset;
+  if (pedal) fin.ev.push_back({++t, CC{64, 0.f, 0}});
+  for (auto& [m, n] : down) for (int i = 0; i < n; ++i) fin.ev.push_back({++t, off(m)});
+  c.segs.push_back(std::move(fin));
+  return c;
+}
+
+// Plays a case and returns how many voices are still held 5 s after the last release.
+static int run(const Case& c) {
+  Harness h(c.block, kArp);
+  seqOn(h);
+  auto& P = h.eng->params();
+  P.set(h.param("voiceMode"), c.mode);
+  for (const Seg& g : c.segs) {
+    P.set(h.param("arp.seqSync"), g.seqSync); P.set(h.param("arp.envMode"), g.envMode);
+    P.set(h.param("arp.gate"), g.gate); P.set(h.param("arp.rate"), g.rate);
+    P.set(h.param("arp.pattern"), g.pattern); P.set(h.param("arp.quantize"), g.quantize);
+    P.set(h.param("arp.swing"), g.swing); P.set(h.param("arp.on"), g.on);
+    h.ht.bpm = g.bpm; h.ht.playing = g.playing; h.beatOffset = g.beatOffset;
+    long last = h.pos;
+    for (auto& [at, e] : g.ev) last = std::max(last, at);
+    std::vector<std::pair<long, MidiEvent>> ev;
+    for (auto& [at, e] : g.ev) ev.push_back({std::max(at, h.pos), e});
+    h.run(last - h.pos + 1, ev, c.block);
+  }
+  h.run(48000 * 5, {}, c.block);
+  return h.eng->takeStats().activeVoices;
+}
+}  // namespace stress
+
+TEST(seq_never_leaves_notes_stuck) {
+  int bad = 0;
+  for (int mode = 0; mode < 3; ++mode) {
+    for (int seed = 1; seed <= 24; ++seed) {
+      stress::Case c = stress::make(mode, seed);
+      if (const int stuck = stress::run(c)) {
+        ++bad;
+        std::printf("  stuck: voiceMode %d seed %d: %d voices\n", mode, seed, stuck);
+      }
+    }
+  }
+  CHECK(bad == 0);
 }
 
 int main() {
