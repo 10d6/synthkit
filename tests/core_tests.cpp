@@ -562,6 +562,50 @@ TEST(lfo_and_shape_params_are_mod_destinations) {
   }
 }
 
+TEST(per_voice_sources_drive_lfo_depth) {
+  // Shape 1 (Note-triggered, so per voice; a flat curve at 1) pulls LFO 1's
+  // Depth to 0, in both LFO modes. Before: a Global LFO ignored per-voice
+  // sources, and a Per Voice LFO read the later shape as 0.
+  auto swing = [&](int mode, bool routed) {
+    Harness h(256, kMod);
+    auto& ps = h.eng->params();
+    ps.set(h.param("lfo1.shape"), 4);     // square
+    ps.set(h.param("lfo1.sync"), 1);
+    ps.set(h.param("lfo1.division"), 6);
+    ps.set(h.param("lfo1.mode"), mode);
+    ps.set(h.param("mod"), 0.5);
+    std::string m = R"({"shapes":[{"curves":[{"points":[[0,1,0,0],[1,1,0,0]]}]}],"mod":[{"src":"lfo1","dst":"mod","amt":0.5})";
+    if (routed) m += R"(,{"src":"shape1","dst":"lfo1.depth","amt":-1})";
+    m += "]}";
+    loadMod(h, m.c_str());
+    h.run(96000, {{0, on(60)}});
+    float lo = 1e9f, hi = -1e9f;
+    for (double b = 0.5; b < 3.5; b += 0.05) { float v = modAt(b); lo = std::min(lo, v); hi = std::max(hi, v); }
+    return hi - lo;
+  };
+  for (int mode : {0, 1}) {
+    CHECK(swing(mode, false) > 0.4f);     // the LFO moves "mod"
+    CHECK(swing(mode, true) < 1e-3f);     // Depth 0 from the shape: it doesn't
+  }
+  // Velocity on a Global LFO's Depth: one shared wave, a depth per note.
+  {
+    Harness h(256, kMod);
+    auto& ps = h.eng->params();
+    ps.set(h.param("lfo1.shape"), 4);
+    ps.set(h.param("lfo1.sync"), 1);
+    ps.set(h.param("lfo1.division"), 6);
+    ps.set(h.param("lfo1.depth"), 0);
+    ps.set(h.param("mod"), 0.5);
+    loadMod(h, R"({"mod":[{"src":"lfo1","dst":"mod","amt":0.5},{"src":"velocity","dst":"lfo1.depth","amt":1}]})");
+    h.run(96000, {{0, on(60, 1.0f)}, {0, on(64, 0.5f)}});
+    for (double b : {1.1, 1.6, 2.1}) {
+      float a = modAt(b, 60) - 0.5f, c = modAt(b, 64) - 0.5f;
+      CHECK(std::fabs(a) > 0.2f);
+      CHECK_NEAR(c, a * 0.5f, 0.02f);     // same phase, half the depth
+    }
+  }
+}
+
 TEST(per_voice_lfo_and_fade) {
   Harness h(256, kMod);
   auto& ps = h.eng->params();

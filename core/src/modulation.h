@@ -199,6 +199,8 @@ class Modulation {
   double sr_ = 48000;
   std::vector<float> gsrc_, gvals_, gprev_;
   std::vector<LfoRun> glfo_;
+  std::vector<float> gwave_;      // each Global LFO's wave this block, before Depth
+  std::vector<char> lfoPvDepth_;  // a Global LFO whose Depth a per-voice source drives
   std::vector<ShapeRun> gshape_;
   std::vector<float> gcustom_;
   dsp::Rng grng_{0x10F0};
