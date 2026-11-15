@@ -140,6 +140,10 @@ button, input, select { font: inherit; color: inherit; }
 .level.is-hot .level-fill { background: var(--error); }
 .voice-count { font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .top-actions { display: flex; gap: 4px; }
+.undo { display: flex; gap: 2px; }
+.undo .btn-icon { display: inline-flex; align-items: center; justify-content: center; padding: 5px 7px; }
+.undo .btn:disabled { opacity: 0.35; }
+.undo-icon.is-redo { transform: scaleX(-1); }
 .theme-btn { display: inline-flex; align-items: center; justify-content: center; }
 
 .start-banner {
@@ -174,6 +178,7 @@ button, input, select { font: inherit; color: inherit; }
 }
 .panel.is-wide { flex-basis: 100%; }
 .panel-title {
+  display: flex; align-items: center; min-height: 22px;
   margin: 0 0 10px; font-size: 13px; font-weight: 650; color: var(--ink);
   font-variation-settings: "wdth" 80;
 }
@@ -228,6 +233,17 @@ button, input, select { font: inherit; color: inherit; }
 .info-dot { fill: currentColor; }
 .info-btn:hover, .info-btn[aria-expanded="true"] { color: var(--accent); }
 .panel-title .info-btn { margin-left: 2px; }
+
+/* A panel's reset button (reset.js), at the right of its title. */
+.reset-btn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 24px; height: 24px; padding: 4px; margin: -4px -6px -4px auto;
+  border: 0; border-radius: 6px; background: none; cursor: pointer; color: var(--ink-soft);
+}
+.reset-btn svg { width: 14px; height: 14px; display: block; }
+.reset-arc { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.reset-btn:hover:not(:disabled) { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.reset-btn:disabled { opacity: 0.3; cursor: default; }
 .info-pop {
   position: fixed; z-index: 25; max-width: min(280px, calc(100vw - 16px)); padding: 8px 11px;
   border-radius: 8px; background: var(--cap); color: #f1f3ef; font-size: 12px; line-height: 1.4;

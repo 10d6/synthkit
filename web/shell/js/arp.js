@@ -21,6 +21,8 @@ class ArpPatternPanel {
 
     const { root } = skSection(title || "Arp pattern", "arp-pattern-panel is-wide");
     this.root = root;
+    // Its reset button covers the patterns of the bank showing (arp or sequencer).
+    root.skGroup = { custom: () => [this.bankId()].filter((id) => this.m.info.custom.includes(id)) };
 
     // Pattern slots, bound to arp.pattern.
     this.slotSeg = h("div", { class: "seg seg-small", role: "radiogroup", "aria-label": "Pattern" });

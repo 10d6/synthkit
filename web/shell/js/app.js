@@ -10,6 +10,8 @@ class App {
     this.audio = skHost ? new HostAudio() : new Audio(wasmBytes);
     this.controls = [];
     this.widgets = new Map();
+    model.history = new SkHistory(model);   // undo / redo (history.js)
+    this.history = model.history;
     this.transport = skStore.get("synthkit:transport", { bpm: 120, playing: false, num: 4, den: 4 });
     this.transport.playing = false;
     this.transportSubs = new Set();
@@ -38,6 +40,9 @@ class App {
     this.spacePlays = true;           // Space starts the tempo clock (a page can turn it off)
 
     this.presets = new PresetBar(this);
+    this.resets = new SkResets(this);     // the panels' reset buttons (reset.js)
+    this.presets.listeners.add(() => this.resets.queue());
+    this.undoEl = skUndoButtons(this);
     this.midi = new MidiInput(this);
     this.keyboard = new Keyboard(this);
     this.buildParts();
@@ -78,6 +83,7 @@ class App {
     this.audio.onParams = (changes) => { for (const [i, v] of changes) this.model.applyHost(i, v); };
 
     this.presets.restoreSession();
+    this.history.clear();   // starting up isn't a step to undo
     if (this.host) {
       // The plugin makes the sound: changes go straight to it.
       this.model.sink = this.audio.sink();
@@ -111,6 +117,16 @@ class App {
     document.addEventListener("pointerdown", kick, { capture: true });
     document.addEventListener("keydown", kick, { capture: true });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") { this.midi.cancelLearn(); this.closeMenu(); } });
+    // Undo: Ctrl/⌘+Z; redo: Ctrl/⌘+Shift+Z or Ctrl+Y. Text fields keep their own.
+    document.addEventListener("keydown", (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      const z = e.code === "KeyZ", y = e.code === "KeyY" && !e.shiftKey;
+      if (!z && !y) return;
+      e.preventDefault();
+      if (z && !e.shiftKey) this.history.undo(); else this.history.redo();
+    });
 
     if (this.clockSource === "midi" && !this.host) this.setClockSource("midi");
     this.audio.onMeter = (mtr) => this.meter(mtr);
@@ -242,6 +258,7 @@ class App {
         h("h1", { class: "synth-name", text: info.name }),
         h("span", { class: "synth-meta", text: [info.vendor, info.version && "v" + info.version].filter(Boolean).join(" ") })),
       this.presets.root,
+      this.undoEl,
       this.outputEl,
       h("div", { class: "top-actions" }, this.panicBtn, this.themeBtn));
   }
@@ -483,6 +500,12 @@ class App {
       parse: (id, text) => m.parse(id, text),
       reset: (id) => m.reset(id),
       gesture: (id, on) => m.gesture(id, on),
+
+      // undo / redo
+      undo: () => app.history.undo(),
+      redo: () => app.history.redo(),
+      batch: (label, fn) => app.history.batch(label, fn),
+      onHistory: (fn) => { const off = app.history.onChange(fn); fn(app.history.state()); return off; },
       onParam: (id, fn) => { const off = m.on(id, fn); fn(m.get(id)); return off; },
 
       // custom state (API.md §5a)
@@ -584,6 +607,7 @@ class App {
         return el;
       case "output": part = this.outputEl; break;
       case "panic": part = this.panicBtn; break;
+      case "undo": part = this.undoEl; break;
       case "theme": part = this.themeBtn; break;
       case "panels": {
         const p = new Panels(this);

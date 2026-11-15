@@ -442,6 +442,74 @@ async function main() {
         if (!seqView.controls || seqView.title !== "Sequencer pattern" || !seqView.key || !seqView.notes) fail(`sequencer view: ${JSON.stringify(seqView)}`);
         else pass("sequencer: its own controls, interval rows and pattern bank");
       }
+
+      // Undo / redo (history.js) and the panels' reset buttons (reset.js).
+      {
+        const ev = (fn, arg) => page.evaluate(fn, arg);
+        const get = (id) => ev((id) => window.synthkit.model.get(id), id);
+        const cur = () => ev(() => ({ ...window.synthkit.app.presets.current, dirty: !!window.synthkit.model.dirty }));
+        await ev(() => window.synthkit.app.presets.load(window.synthkit.app.presets.entries().find((e) => e.name === "Pluck")));
+        const pluckCut = await get("filter.cutoff");
+        // A drag is one step.
+        const dial = page.locator('[data-param="filter.cutoff"] .knob-dial');
+        await dial.scrollIntoViewIfNeeded();
+        const db = await dial.boundingBox();
+        await page.mouse.move(db.x + db.width / 2, db.y + db.height / 2);
+        await page.mouse.down();
+        for (let i = 1; i <= 8; i++) await page.mouse.move(db.x + db.width / 2, db.y + db.height / 2 - i * 6);
+        await page.mouse.up();
+        const dragged = await get("filter.cutoff");
+        await page.waitForTimeout(800);
+        await page.locator(".undo-btn").click();
+        const afterUndo = await get("filter.cutoff"), c1 = await cur();
+        if (!(dragged > pluckCut) || afterUndo !== pluckCut || c1.name !== "Pluck" || c1.dirty) fail(`undo a drag: ${pluckCut} → ${dragged} → ${afterUndo}, ${JSON.stringify(c1)}`);
+        else pass("a knob drag undoes in one step, and the preset shows as unchanged again");
+        await page.keyboard.press("Control+Shift+Z");
+        if ((await get("filter.cutoff")) !== dragged) fail("Ctrl+Shift+Z didn't redo the drag"); else pass("Ctrl+Shift+Z redoes");
+        // Picking a preset can be undone, label and all.
+        await page.selectOption(".preset-select", { label: "Init" });
+        await page.locator("main").click({ position: { x: 4, y: 4 } });
+        await page.keyboard.press("Control+Z");
+        const c2 = await cur();
+        const near = (a, b) => Math.abs(a - b) <= 1e-4 * Math.max(1, Math.abs(b));   // patches store values as text
+        if (!near(await get("filter.cutoff"), dragged) || c2.name !== "Pluck" || !c2.dirty) fail(`undoing a preset change: cutoff ${await get("filter.cutoff")}, ${JSON.stringify(c2)}`);
+        else pass("undoing a preset change brings back the sound and its preset name");
+        // Reset buttons: back to the saved preset, then to the defaults; one undo step each.
+        const lfoDef = await ev(() => window.synthkit.model.param("lfo1.rate").def);
+        await ev(() => { const m = window.synthkit.model; m.set("lfo1.rate", 5, "ui"); });
+        await ev(() => window.synthkit.app.presets.store("Reset test"));
+        await ev(() => { const m = window.synthkit.model; m.set("lfo1.rate", 9, "ui"); m.set("lfo1.depth", 0.25, "ui"); });
+        const btn = page.locator(".lfo-panel .reset-btn").first();
+        await page.click('.tab:text-is("LFOs")');
+        await page.waitForTimeout(50);
+        const t1 = await btn.getAttribute("title");
+        await btn.click();
+        const r1 = [await get("lfo1.rate"), await get("lfo1.depth")];
+        await page.waitForTimeout(50);
+        const t2 = await btn.getAttribute("title");
+        await btn.click();
+        const r2 = await get("lfo1.rate");
+        await page.waitForTimeout(100);
+        const t3 = await btn.getAttribute("title");
+        const off = await page.locator(".lfo-panel .reset-btn").nth(1).isDisabled();   // LFO 2: untouched
+        if (!/Reset test/.test(t1) || r1[0] !== 5 || r1[1] !== 1 || !/defaults/.test(t2) || Math.abs(r2 - lfoDef) > 1e-6 || !/Reset test/.test(t3) || !off) fail(`LFO reset: "${t1}" → ${r1}, "${t2}" → ${r2} (default ${lfoDef}), then "${t3}"; untouched LFO 2's button disabled: ${off}`);
+        else pass("a panel's reset button reverts to the saved preset, then to defaults (an untouched panel's is off)");
+        await page.keyboard.press("Control+Z");
+        const u1 = await get("lfo1.rate");
+        await page.keyboard.press("Control+Z");
+        const u2 = [await get("lfo1.rate"), await get("lfo1.depth")];
+        if (u1 !== 5 || u2[0] !== 9 || u2[1] !== 0.25) fail(`undoing resets gave ${u1}, then ${u2}`); else pass("each reset is one undo step");
+        // A shape panel's reset covers its curve.
+        const shapeBefore = await ev(() => JSON.stringify(window.synthkit.model.shapes()[0]));
+        await ev(() => { const m = window.synthkit.model, s = m.shapes(); s[0] = { curves: [{ points: [[0, 0, 0, 0], [0.5, 1, 0, 0], [1, 0.2, 0, 0]] }] }; m.setShapes(s); });
+        const shapeBtn = page.locator(".shape-panel .reset-btn").first();
+        await page.click('.tab:text-is("Shapes")');
+        await page.waitForTimeout(50);
+        await shapeBtn.click();
+        const shapeAfter = await ev(() => JSON.stringify(window.synthkit.model.shapes()[0]));
+        if (shapeAfter !== shapeBefore) fail(`shape reset left ${shapeAfter} (saved ${shapeBefore})`); else pass("a shape panel's reset restores its curve");
+        await ev(() => { window.synthkit.app.presets.remove(); });
+      }
       }  // kitUi
     }
     if (errors.length) fail(`${name}: console errors: ${errors.join(" | ")}`); else pass(`${name}: boots with no console errors`);
