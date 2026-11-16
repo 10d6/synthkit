@@ -54,6 +54,7 @@ core/src/                engine.cpp (voices, events, transport), modulation.cpp
                          params, json
 cmake/                   synthkit_add_synth() + preset embedding
 tools/render/            <synth>_render: scenarios, generic checks, WAV output
+tools/stress.py          random playing through <synth>_render: every note must stop
 tools/wa_parity/         synthkit_wa_parity: renders tests/webaudio with sk::wa
 examples/basic/          subtractive synth exercising the whole API
 examples/reed/           pump organ with its own page (ui/page.*), messages
@@ -71,7 +72,7 @@ web/pack.py              inlines everything into one <synth>.html (and joins a
                          synth's ui/page.js modules into one scope)
 web/test/                headless Chromium tests (page; page's plugin mode; a
                          synth's own page, page-test.cjs) + browser-vs-native
-                         compare + sk::wa parity
+                         compare + sk::wa parity + bench-web.cjs (browser speed)
 plugin/                  JUCE adapter: Processor (engine, params, state,
                          transport), Editor (web view + page bridge), Settings
                          (shared store), test/PluginCheck (DAW-style check)
@@ -123,6 +124,7 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/synthkit_tests                                        # kit unit tests
 ./build/examples/basic/basic_render --check examples/basic --out build/renders
 ./build/examples/basic/basic_render examples/basic/tests/chord.json --out x.wav
+python3 tools/stress.py build/examples/basic/basic_render 100   # random playing; --mode overlap too
 ```
 
 Browser build (`tools/ci/deps.sh web`):
@@ -132,6 +134,7 @@ cmake -S . -B build-web -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/wasm32-wasi.cmake 
 node web/test/browser-test.cjs build-web/web/basic.html build-web/test examples/basic/tests/demo-pump.json --kit-ui
 ./build/examples/basic/basic_render examples/basic/tests/demo-pump.json --block 128 --out build-web/test/native.wav
 python3 web/test/compare.py build-web/test/web-render.f32 build-web/test/native.wav
+node web/test/bench-web.cjs build-web/web/basic.html examples/basic/tests/demo-pump.json   # browser speed
 ```
 
 Web Audio blocks (`sk::wa`, API.md §8a) against Chromium's own nodes:
@@ -218,7 +221,7 @@ The repo is public, with GitHub Pages serving the `gh-pages` branch: CI
 publishes `main` at https://10d6.github.io/synthkit/ and each PR at
 `/pr/<number>/` (with examples/reed at `…/reed.html`), and comments the link
 on the PR. On every PR: Linux build + tests (release and sanitizers, both
-examples' `--check`), the browser build, the kit's page and plugin-mode tests,
+examples' `--check` and `tools/stress.py`), the browser build, the kit's page and plugin-mode tests,
 the reed's own-page test, browser-vs-native comparisons for both examples, and
 the `sk::wa` parity check against Chromium. Plugin
 builds run on every PR too: Windows, macOS (universal + AU) and Linux, each
