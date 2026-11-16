@@ -684,6 +684,7 @@ class ShapePanel {
   constructor(app, n, title) {
     const pre = `shape${n}.`, m = app.model;
     const { root, controls } = skSection(title || `Shape ${n}`, "shape-panel is-wide");
+    root.skGroup = { shapes: [n] };   // its reset button covers the curve too
     this.editor = new ShapeEditor(app, n);
     const body = h("div", { class: "shape-body" }, this.editor.root, controls);
     root.append(body);
@@ -814,6 +815,7 @@ class MatrixPanel {
   constructor(app) {
     this.app = app; this.m = app.model;
     const { root } = skSection("Modulation", "matrix-panel is-wide");
+    root.skGroup = { routes: true };
     this.list = h("div", { class: "matrix" });
     this.count = h("span", { class: "matrix-count" });
     this.add = h("button", { type: "button", class: "btn", onclick: () => this.addRoute() }, "Add route");

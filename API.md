@@ -1176,6 +1176,7 @@ and output panels.
 | `wide` | `true` makes the panel take a full row |
 | `info` | text for an ⓘ icon beside the panel's title (kit panels too) |
 | `collapsed` | makes the panel fold at its title: `true` starts folded, `false` starts open |
+| `reset` | `false` leaves out the panel's reset button (below) |
 
 **Grouping panels.** Besides panels, `sections` (and the lists inside these)
 can hold:
@@ -1222,6 +1223,30 @@ focus, and stays up after a click or tap until the next click elsewhere.
   right-click for MIDI learn, reset and **Modulate…** (adds a matrix route from
   any source). Modulated knobs show a live outer ring for the most recent
   voice.
+
+**Undo and redo.** The header has undo and redo buttons (Ctrl/⌘+Z;
+Ctrl/⌘+Shift+Z or Ctrl+Y), covering everything that's saved in a patch:
+parameters, modulation routes, shapes, custom state (arp/sequencer patterns,
+a widget's tables), the patch's tempo, and picking or importing a preset. A
+drag is one step (controls wrap it in a gesture; a page or widget can do the
+same with `gesture`), quick repeats of the same change (wheel ticks, arrow
+keys) merge, and each step knows which preset was showing, so undoing back to
+a saved sound clears the "changed" dot. Automation and controller moves from
+the DAW, and mapped MIDI controllers, aren't steps; a project the DAW loads
+starts a fresh history. Text fields keep their own Ctrl+Z.
+
+**Reset buttons.** Every panel built from the layout (kit panels included)
+has a ↺ button at the right of its title covering that panel's controls; an
+LFO's resets that LFO, a shape panel's also its curve, the arp pattern
+panel's the patterns of the bank showing, the matrix's the routes. A click
+puts them back to how they are in the preset that's loaded (or was last
+saved); when they already are, to the parameters' defaults, so clicks
+alternate between the two. Right-click offers both. When the sound isn't one
+of the presets (a deleted one, say), it resets to the defaults. The button
+is greyed out when there's nothing to put back, and each reset is one undo
+step. `"reset": false` on a section leaves the button out. The saved and
+default values come from a second, silent copy of the synth, so they are
+exactly what loading the preset gives (`migratePatch` included).
 
 **Custom widgets** (`ui/custom.js`): a plain script with no imports that
 defines `register`:
@@ -1287,9 +1312,10 @@ export function mount(sk, root) {
   | `presets` | the preset bar (pick, step, save, rename, delete, import, export) |
   | `keyboard` | the on-screen keyboard and wheels; computer keys play while it's on the page (`typing: false` to stop that). Its bar also takes the tempo and MIDI controls unless the page placed them (`tempo: false`, `midi: false`). |
   | `midi`, `tempo`, `output`, `panic`, `theme` | the Connect MIDI control, tempo controls (a readout in the plugin; `space: false` if the page uses Space itself), scope and level, Stop all sound, light/dark switch |
+  | `undo` | the undo and redo buttons (§9). Ctrl/⌘+Z works on every page, mounted or not |
   | `hostbar` | the host bar (below), here instead of at the top of the page |
   | `panels` | panels for a whole layout (`{ sections: [...] }` as in layout.json; default: `ui/layout.json`) |
-  | `section` | one panel, from one layout section (`{ title, controls }` or `{ kit: "env1" }`, `"modMatrix"`, `"shape1"`, …) |
+  | `section` | one panel, from one layout section (`{ title, controls }` or `{ kit: "env1" }`, `"modMatrix"`, `"shape1"`, …); without its reset button, which comes with `panels` |
   | `control` | one control, from one layout control (`{ param, type, label, size }`) |
 
 - **The bridge** (`sk`):
@@ -1299,6 +1325,7 @@ export function mount(sk, root) {
   | `info` | `{ synth, params, messages, custom }` |
   | `get(id)`, `set(id, v)`, `norm(id)`, `setNorm(id, n)`, `format(id, v?)`, `parse(id, text)`, `reset(id)`, `param(id)`, `onParam(id, fn)`, `gesture(id, on)` | parameters (wrap a drag in `gesture` so a DAW records one automation move) |
   | `custom(id)`, `setCustom(id, v)`, `onCustom(id, fn)` | custom state (§5a) |
+  | `undo()`, `redo()`, `onHistory(fn)`, `batch(label, fn)` | undo and redo (§9): every `set`, `setCustom` and preset load is recorded. `onHistory` gets `{ canUndo, canRedo, undoLabel, redoLabel }` now and on each change; `batch` makes everything `fn` changes one step (`label` shows as "Undo *label*") |
   | `send(id, ...values)`, `onMessage(id, fn)` | messages (§9b) |
   | `arpGenerate(settings)` | a generated arpeggiator or sequencer pattern (§4b) |
   | `onMeter(sourceId, fn)` | a mod source's value, ~30 times a second, whether or not anything is playing (a synth's own source makes a good gauge) |

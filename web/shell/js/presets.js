@@ -42,6 +42,23 @@ class PresetBar {
     skStore.on(this.key("presets"), () => { this.user = skStore.get(this.key("presets"), {}); this.refresh(); });
     this.current = { kind: "factory", name: "Init" };
     this.listeners = new Set();   // a synth's own page following the presets
+    // Undo/redo (history.js) brings back which preset was showing, and
+    // whether the sound had changed since.
+    const hist = this.model.history;
+    if (hist) {
+      hist.uiState = () => ({ current: { ...this.current }, dirty: !!this.model.dirty });
+      hist.onRestore = (ui) => {
+        if (ui && ui.current) {
+          const c = ui.current;
+          const gone = (c.kind === "user" && !this.user[c.name]) || (c.kind === "factory" && !this.factory.some((p) => p.name === c.name));
+          this.current = gone ? { kind: "session", name: c.name } : { ...c };
+          this.model.dirty = gone || !!ui.dirty;
+        }
+        this.refresh();
+        this.saveSession();
+        if (this.app.applyPatchTempo) this.app.applyPatchTempo();
+      };
+    }
     this.build();
     this.model.onAny(() => this.changed());
   }
@@ -87,6 +104,14 @@ class PresetBar {
     this.notify();
   }
 
+  // The patch the current preset was loaded from (or last saved as), or null
+  // when the sound isn't one of the presets.
+  baseline() {
+    if (this.current.kind === "factory") { const f = this.factory.find((p) => p.name === this.current.name); return f ? f.patch : null; }
+    if (this.current.kind === "user") return this.user[this.current.name] || null;
+    return null;
+  }
+
   notify() {
     const state = { ...this.current, dirty: !!this.model.dirty };
     for (const fn of this.listeners) { try { fn(state); } catch (err) { console.error(err); } }
@@ -116,6 +141,8 @@ class PresetBar {
     const factory = this.factory.find((p) => p.name === name);
     this.current = ui.current || (factory ? { kind: "factory", name } : { kind: "session", name: name || "Untitled" });
     this.model.dirty = !!ui.dirty;
+    // A different sound from the DAW (a project opened): earlier steps don't apply.
+    if (this.model.history) this.model.history.clear();
     this.refresh();
     return true;
   }
@@ -167,6 +194,7 @@ class PresetBar {
     if (!skStore.set(this.key("presets"), this.user)) this.app.toast("This browser isn't letting the page store presets. Use Export to keep a file instead.", "error");
     this.model.dirty = false;
     this.current = { kind: "user", name };
+    if (this.model.history) this.model.history.saved(this.current);
     this.refresh();
     this.saveSession();
     this.app.toast(`Saved "${name}"`);
@@ -194,9 +222,11 @@ class PresetBar {
   renameTo(name) {
     if (this.current.kind !== "user" || !name) return false;
     const p = this.user[this.current.name];
+    const old = this.current;
     delete this.user[this.current.name];
     this.user[name] = { ...p, name };
     this.current = { kind: "user", name };
+    if (this.model.history) this.model.history.renamed(old, this.current);
     skStore.set(this.key("presets"), this.user);
     this.model.setName(name);
     this.refresh();
@@ -210,6 +240,7 @@ class PresetBar {
     delete this.user[name];
     skStore.set(this.key("presets"), this.user);
     this.current = { kind: "session", name };
+    if (this.model.history) this.model.history.renamed({ kind: "user", name }, this.current);
     this.model.dirty = true;
     this.refresh();
     this.app.toast(`Deleted "${name}". The sound stays loaded until you pick another preset.`);

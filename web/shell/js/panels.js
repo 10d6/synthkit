@@ -199,10 +199,27 @@ class Panels {
       sec.skReveal = () => { if (body.hidden) sec.skOpen(true, true); };
       btn.addEventListener("click", () => sec.skOpen(body.hidden, true));
       // The whole title row folds it (the button is there for the keyboard).
-      title.addEventListener("click", (e) => { if (!e.target.closest(".panel-toggle, .info-btn")) sec.skOpen(body.hidden, true); });
+      title.addEventListener("click", (e) => { if (!e.target.closest(".panel-toggle, .info-btn, .reset-btn")) sec.skOpen(body.hidden, true); });
       sec.skOpen(typeof this.ui[key] === "boolean" ? this.ui[key] : spec.collapsed !== true, false);
     }
     if (spec.info) title.append(skInfoButton(spec.info, text));
+    // A button that puts the panel's controls back (reset.js); "reset": false leaves it out.
+    if (spec.reset !== false && this.app.resets) {
+      const g = this.groupOf(sec);
+      if (g.params.length || g.shapes || g.routes || g.custom) title.append(this.app.resets.button(text, g));
+    }
+  }
+
+  // What a panel's reset button covers: the parameters of its controls, and
+  // whatever else a kit panel says it holds (sec.skGroup).
+  groupOf(sec) {
+    const params = [];
+    for (const el of sec.querySelectorAll("[data-param], [data-params]")) {
+      if (el.dataset.param) params.push(el.dataset.param);
+      if (el.dataset.params) params.push(...el.dataset.params.split(" "));
+    }
+    const extra = sec.skGroup || {};
+    return { ...extra, params: [...new Set(params.concat(extra.params || []))].filter((id) => this.model.param(id)) };
   }
 
   // { "accordion": [ sections… ], "single": true }: panels stacked in one
@@ -333,9 +350,16 @@ class Panels {
       const [a, b] = (c.params || []).map((id) => this.model.param(id));
       if (!a || !b) { this.problems.push(`An xy control needs two known params (got ${JSON.stringify(c.params)}).`); return null; }
       this.placed.add(a.id); this.placed.add(b.id);
-      return new XYPad(this.app, a, b, c).root;
+      const pad = new XYPad(this.app, a, b, c).root;
+      pad.dataset.params = `${a.id} ${b.id}`;
+      return pad;
     }
-    if (c.type && this.app.widgets.has(c.type)) return this.app.customWidget(c);
+    if (c.type && this.app.widgets.has(c.type)) {
+      const el = this.app.customWidget(c);
+      const ids = [c.param, ...(Array.isArray(c.params) ? c.params : [])].filter((id) => typeof id === "string" && this.model.param(id));
+      if (el && ids.length && !el.dataset.param) el.dataset.params = ids.join(" ");
+      return el;
+    }
     const p = this.model.param(c.param);
     if (!p) {
       // Kit params only exist for some feature combinations; skip those quietly.

@@ -91,12 +91,21 @@ async function main() {
   check(Math.abs((await get("filter.cutoff")) - 3000) < 1 && /^3(\.00)? kHz$/.test(shown) && (await sent("param")).length === 0,
     "host automation updates the knob and isn't sent back", `after automation: ${await get("filter.cutoff")}, "${shown}", sent ${JSON.stringify(await sent())}`);
 
-  // 5. The DAW loads a project.
+  // 4b. Undo reaches the plugin too; automation isn't a step to undo.
+  await page.evaluate(() => window.synthkit.model.set("filter.cutoff", 1200, "ui"));
+  await clear();
+  await page.evaluate(() => window.synthkit.app.history.undo());
+  const undoSent = (await sent("param")).filter((m) => m.i === idx).pop();
+  check(Math.abs((await get("filter.cutoff")) - 3000) < 1 && undoSent && Math.abs(undoSent.v - 3000) < 1,
+    "undo goes back past the page's change (not the DAW's) and tells the plugin", `after undo: ${await get("filter.cutoff")}, sent ${JSON.stringify(undoSent)}`);
+
+  // 5. The DAW loads a project (and earlier steps no longer apply).
   await clear();
   await page.evaluate(() => window.__deliver({ t: "state", patch: { synth: "sk-basic", name: "Pluck", params: { "filter.cutoff": 260 } }, ui: {} }));
   const label5 = await page.evaluate(() => document.querySelector(".preset-select").selectedOptions[0].textContent);
   check(Math.abs((await get("filter.cutoff")) - 260) < 1 && label5 === "Pluck" && (await sent("patch")).length === 0,
     "a project load from the DAW shows its sound (factory name recognised)", `after state: cutoff ${await get("filter.cutoff")}, "${label5}", sent ${JSON.stringify((await sent()).map((m) => m.t))}`);
+  check(!(await page.evaluate(() => window.synthkit.app.history.canUndo)), "a project load from the DAW starts a fresh undo history", "undo steps survived a project load");
 
   // 6. Picking a preset sends the patch and notes the preset for the project.
   await clear();
