@@ -1239,11 +1239,11 @@ starts a fresh history. Text fields keep their own Ctrl+Z.
 has a ↺ button at the right of its title covering that panel's controls; an
 LFO's resets that LFO, a shape panel's also its curve, the arp pattern
 panel's the patterns of the bank showing, the matrix's the routes. A click
-puts them back to how they are in the preset that's loaded (or was last
-saved); when they already are, to the parameters' defaults, so clicks
-alternate between the two. Right-click offers both. When the sound isn't one
-of the presets (a deleted one, say), it resets to the defaults. The button
-is greyed out when there's nothing to put back, and each reset is one undo
+always puts them back to how they are in the preset that's loaded (or was
+last saved); when the sound isn't one of the presets (a deleted one, say), a
+click resets them to the parameters' defaults. Right-click offers **Reset to
+defaults** (and the revert) either way. The button is greyed out when a click
+would change nothing, but still takes a right-click; each reset is one undo
 step. `"reset": false` on a section leaves the button out. The saved and
 default values come from a second, silent copy of the synth, so they are
 exactly what loading the preset gives (`migratePatch` included).

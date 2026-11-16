@@ -3,9 +3,8 @@
 // shape's curve, the modulation routes or the arp/sequencer patterns.
 //
 // A click puts the group back to how it is in the preset that's loaded (or
-// was last saved); if it already is, it resets the group to its defaults.
-// Right-click offers both. When the sound isn't one of the presets, the
-// saved state is the defaults.
+// was last saved). When the sound isn't one of the presets, a click resets
+// the group to its defaults. Right-click offers both.
 //
 // The saved and default states are read from a second, silent copy of the
 // synth (the same WebAssembly module), so they come out exactly as loading
@@ -78,12 +77,12 @@ class SkResets {
   }
 
   // What a click does now: { kind: "saved" | "default", state } or null.
+  // With a preset loaded a click only ever goes back to it.
   target(g) {
     if (!this.defaults) return null;
     const saved = this.savedState();
-    if (saved && this.differs(g, saved)) return { kind: "saved", state: saved };
-    if (this.differs(g, this.defaults)) return { kind: "default", state: this.defaults };
-    return null;
+    if (saved) return this.differs(g, saved) ? { kind: "saved", state: saved } : null;
+    return this.differs(g, this.defaults) ? { kind: "default", state: this.defaults } : null;
   }
 
   apply(g, st, label) {
@@ -143,11 +142,13 @@ class SkResets {
 
   update(b) {
     const t = this.target(b.skGroup());
-    b.disabled = !t;
-    const what = !t ? (this.defaults ? `${b.skTitle}: nothing to reset` : `Reset ${b.skTitle}`)
+    b.setAttribute("aria-disabled", String(!t));
+    const what = !t ? (this.defaults ? `${b.skTitle} is as saved` : `Reset ${b.skTitle}`)
       : t.kind === "saved" ? `Revert ${b.skTitle} to “${this.presetName()}”` : `Reset ${b.skTitle} to defaults`;
-    b.title = what + (t ? " (right-click for both)" : "");
+    b.title = what + " (right-click to reset to defaults)";
     b.setAttribute("aria-label", what);
+    // Disabled buttons get no right-click, and defaults may still be a step away.
+    b.classList.toggle("is-idle", !t);
   }
 
   queue() {
