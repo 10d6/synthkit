@@ -50,10 +50,12 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/{{TARGET}}_render --check . --out build/renders
 ./build/{{TARGET}}_render tests/chord.json --out x.wav
 ./build/{{TARGET}}_render --params
+python3 synthkit/tools/stress.py build/{{TARGET}}_render 300   # random playing: every note must stop (API.md §10)
 
 # browser page (API.md §11)
 cmake -S . -B build-web -G Ninja -DCMAKE_TOOLCHAIN_FILE=synthkit/cmake/wasm32-wasi.cmake && cmake --build build-web
 node synthkit/web/test/browser-test.cjs build-web/web/{{TARGET}}.html build-web/test tests/chord.json
+node synthkit/web/test/bench-web.cjs build-web/web/{{TARGET}}.html tests/chord.json   # browser speed
 
 # plugins (API.md §12)
 cmake -S . -B build-plugin -G Ninja -DSYNTHKIT_PLUGIN=ON -DSYNTHKIT_WEB_UI_DIR=$PWD/build-web/web && cmake --build build-plugin

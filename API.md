@@ -1475,6 +1475,43 @@ basic_render --params                                # list every parameter
 
 CI runs `--check` on every PR and attaches the rendered WAVs.
 
+**Random playing** (`tools/stress.py`, standard-library Python). Hand-written
+scenarios miss the orderings that leave a note sounding forever: a release
+that reaches a voice before its strike, a restrike in the same sample as a
+pedal change. This plays random passages (fast repeats, chords, overlapping
+notes, sustain-pedal changes; every note-on gets its note-off) and reports any
+still above −80 dBFS 3 s after everything was released. Run it after any
+change to voice handling, notes or the pedal; healthy is 0 failures in both
+modes.
+
+```
+python3 synthkit/tools/stress.py build/<name>_render 300                  # balanced: a key is let go before it's struck again
+python3 synthkit/tools/stress.py build/<name>_render 200 --mode overlap   # struck again while down (a sequencer)
+python3 synthkit/tools/stress.py build/<name>_render 300 --keys 21-88 --tail 5 env1.release=2
+```
+
+`--keys LO-HI` (default 21-108) keeps passages to the keys that should stop
+(say, below the keys a piano leaves undamped), `--tail` and `--below` set how
+long after the last release and how quiet, `--no-pedal` leaves CC 64 out,
+`--patch` picks the starting patch, and `id=value` sets a parameter in every
+passage. Passage n always uses seed n, so a run is repeatable. A failing
+passage is saved as `stuck_<seed>.json` (in `--out`, default the temp
+directory), a scenario to render and investigate. It exits 1 if any failed.
+
+**Browser speed** (`web/test/bench-web.cjs`). The render tool reports native
+speed; the browser build is usually slower, and it's what people play. This
+renders a scenario offline through the page's real AudioWorklet in headless
+Chromium and reports the multiple of realtime (best of `runs`, default 3):
+
+```
+node synthkit/web/test/bench-web.cjs build-web/web/<name>.html tests/<heaviest>.json [runs]
+```
+
+The scenario is the render tool's format (the `expect` block is ignored). The
+machine's speed varies, so compare a change against the previous build on the
+same machine; a scenario that plays the synth's worst case (every voice, the
+longest tails) is the one to watch.
+
 ## 11. The browser build
 
 ```
