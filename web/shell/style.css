@@ -242,8 +242,8 @@ button, input, select { font: inherit; color: inherit; }
 }
 .reset-btn svg { width: 14px; height: 14px; display: block; }
 .reset-arc { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.reset-btn:hover:not(:disabled) { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.reset-btn:disabled { opacity: 0.3; cursor: default; }
+.reset-btn:hover:not(.is-idle) { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.reset-btn.is-idle { opacity: 0.3; cursor: default; }
 .info-pop {
   position: fixed; z-index: 25; max-width: min(280px, calc(100vw - 16px)); padding: 8px 11px;
   border-radius: 8px; background: var(--cap); color: #f1f3ef; font-size: 12px; line-height: 1.4;

@@ -474,7 +474,8 @@ async function main() {
         const near = (a, b) => Math.abs(a - b) <= 1e-4 * Math.max(1, Math.abs(b));   // patches store values as text
         if (!near(await get("filter.cutoff"), dragged) || c2.name !== "Pluck" || !c2.dirty) fail(`undoing a preset change: cutoff ${await get("filter.cutoff")}, ${JSON.stringify(c2)}`);
         else pass("undoing a preset change brings back the sound and its preset name");
-        // Reset buttons: back to the saved preset, then to the defaults; one undo step each.
+        // Reset buttons: a click goes back to the saved preset (and only there);
+        // right-click → Reset to defaults. One undo step each.
         const lfoDef = await ev(() => window.synthkit.model.param("lfo1.rate").def);
         await ev(() => { const m = window.synthkit.model; m.set("lfo1.rate", 5, "ui"); });
         await ev(() => window.synthkit.app.presets.store("Reset test"));
@@ -485,15 +486,19 @@ async function main() {
         const t1 = await btn.getAttribute("title");
         await btn.click();
         const r1 = [await get("lfo1.rate"), await get("lfo1.depth")];
-        await page.waitForTimeout(50);
-        const t2 = await btn.getAttribute("title");
-        await btn.click();
+        await page.waitForTimeout(100);
+        const idle = await btn.evaluate((b) => b.classList.contains("is-idle"));
+        await btn.click({ force: true });   // (aria-disabled: Playwright would wait)
+        const again = await get("lfo1.rate");
+        await btn.click({ button: "right", force: true });
+        await page.click('.menu-item:has-text("Reset to defaults")');
         const r2 = await get("lfo1.rate");
         await page.waitForTimeout(100);
         const t3 = await btn.getAttribute("title");
-        const off = await page.locator(".lfo-panel .reset-btn").nth(1).isDisabled();   // LFO 2: untouched
-        if (!/Reset test/.test(t1) || r1[0] !== 5 || r1[1] !== 1 || !/defaults/.test(t2) || Math.abs(r2 - lfoDef) > 1e-6 || !/Reset test/.test(t3) || !off) fail(`LFO reset: "${t1}" → ${r1}, "${t2}" → ${r2} (default ${lfoDef}), then "${t3}"; untouched LFO 2's button disabled: ${off}`);
-        else pass("a panel's reset button reverts to the saved preset, then to defaults (an untouched panel's is off)");
+        const off = await page.locator(".lfo-panel .reset-btn").nth(1).evaluate((b) => b.classList.contains("is-idle"));   // LFO 2: untouched
+        if (!/Reset test/.test(t1) || r1[0] !== 5 || r1[1] !== 1 || !idle || again !== 5 || Math.abs(r2 - lfoDef) > 1e-6 || !/Reset test/.test(t3) || !off)
+          fail(`LFO reset: "${t1}" → ${r1}, idle ${idle}, clicked again → ${again}; right-click defaults → ${r2} (default ${lfoDef}), then "${t3}"; untouched LFO 2 idle: ${off}`);
+        else pass("a panel's reset button always goes back to the saved preset; right-click resets to defaults");
         await page.keyboard.press("Control+Z");
         const u1 = await get("lfo1.rate");
         await page.keyboard.press("Control+Z");
