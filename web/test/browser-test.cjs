@@ -653,13 +653,20 @@ async function main() {
     await strict.close();
   }
 
-  // Dark theme screenshot.
+  // Dark is the default theme; also check the light one (chosen from the header).
   {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(url);
     await page.waitForFunction(() => window.synthkit && window.synthkit.model);
+    const dflt = await page.evaluate(() => document.documentElement.dataset.theme);
+    if (dflt !== "dark") fail(`default theme is ${dflt}, not dark`); else pass("the page starts in the dark theme");
+    await page.evaluate(() => localStorage.setItem("synthkit:theme", JSON.stringify("light")));
+    await page.reload();
+    await page.waitForFunction(() => window.synthkit && window.synthkit.model);
     await page.waitForTimeout(200);
-    await page.screenshot({ path: path.join(outDir, "ui-dark.png"), fullPage: true });
+    const chosen = await page.evaluate(() => document.documentElement.dataset.theme);
+    if (chosen !== "light") fail(`choosing light gave ${chosen}`);
+    await page.screenshot({ path: path.join(outDir, "ui-light.png"), fullPage: true });
     await page.close();
   }
 

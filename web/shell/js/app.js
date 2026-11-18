@@ -25,8 +25,10 @@ class App {
     const m = this.model;
     const theme = this.layout.theme || {};
     if (theme.accent) document.documentElement.style.setProperty("--accent-base", theme.accent);
-    const mode = skStore.get("synthkit:theme", "auto");
+    // Dark unless you've chosen otherwise (the header's light/dark button).
+    const mode = skStore.get("synthkit:theme", "dark");
     if (mode !== "auto") document.documentElement.dataset.theme = mode;
+    else delete document.documentElement.dataset.theme;   // the page starts dark (template.html)
 
     if (window.__skCustomRegister) {
       try {
@@ -327,7 +329,7 @@ class App {
   }
 
   cycleTheme() {
-    const order = ["auto", "light", "dark"];
+    const order = ["dark", "light", "auto"];
     const cur = document.documentElement.dataset.theme || "auto";
     const next = order[(order.indexOf(cur) + 1) % order.length];
     if (next === "auto") delete document.documentElement.dataset.theme;

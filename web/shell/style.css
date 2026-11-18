@@ -487,7 +487,8 @@ button, input, select { font: inherit; color: inherit; }
 .pick-list { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 1px; align-content: flex-start; }
 .pick-item { display: flex; align-items: baseline; gap: 8px; border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 6px; cursor: pointer; color: inherit; }
 .pick-item:hover, .pick-item:focus-visible { background: var(--field); outline: none; }
-.pick-item[aria-selected="true"] { box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
+.pick-item[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-weight: 600; }
+.pick-item[aria-selected="true"]:hover, .pick-item[aria-selected="true"]:focus-visible { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 .pick-name { flex: 1; }
 .pick-hint { color: var(--ink-soft); font-size: 11px; white-space: nowrap; }
 .pick-extra { padding: 4px 6px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--edge); }
