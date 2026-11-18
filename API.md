@@ -415,6 +415,18 @@ needs something unusual:
   `state(i)`, `note(i)`, `age(i)`, `level(i)`, `findFree()`, `fadeOut(i)` and
   `defaultAllocate(n)` (the policy above). Example: a fixed voice per key,
   like a piano emulation.
+  - `state(i)` is a `VoicePool::State`: `Free`, `Held` (key or pedal down),
+    `Released` (let go, still sounding) or `Fading` (being stolen).
+  - Returning a slot that's in use restarts that voice with the new note:
+    its `start` gets `StartInfo::sounding` set (and no glide, since this is
+    Poly), so the voice decides how to move from what it was playing. A
+    `Fading` slot is cut off first.
+  - It's called for every note (and unison layer) in Poly, and in Mono and
+    Legato only when no voice is sounding; otherwise the sounding voice moves
+    to the new note.
+  - It gets no parameter access. A policy that depends on a parameter reads it
+    in `processEvents` (§4a), which runs first in the same block, and keeps it
+    in the synth.
 - `processGlobal` → anything that happens after the voices are mixed (a
   reservoir that playing drains, a whole-instrument effect chain).
 - Messages (§9b) → input from the page that isn't a parameter (a held treadle,
