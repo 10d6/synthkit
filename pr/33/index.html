@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -497,7 +497,8 @@ button, input, select { font: inherit; color: inherit; }
 .pick-list { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 1px; align-content: flex-start; }
 .pick-item { display: flex; align-items: baseline; gap: 8px; border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 6px; cursor: pointer; color: inherit; }
 .pick-item:hover, .pick-item:focus-visible { background: var(--field); outline: none; }
-.pick-item[aria-selected="true"] { box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
+.pick-item[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-weight: 600; }
+.pick-item[aria-selected="true"]:hover, .pick-item[aria-selected="true"]:focus-visible { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 .pick-name { flex: 1; }
 .pick-hint { color: var(--ink-soft); font-size: 11px; white-space: nowrap; }
 .pick-extra { padding: 4px 6px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--edge); }
@@ -4901,8 +4902,10 @@ class App {
     const m = this.model;
     const theme = this.layout.theme || {};
     if (theme.accent) document.documentElement.style.setProperty("--accent-base", theme.accent);
-    const mode = skStore.get("synthkit:theme", "auto");
+    // Dark unless you've chosen otherwise (the header's light/dark button).
+    const mode = skStore.get("synthkit:theme", "dark");
     if (mode !== "auto") document.documentElement.dataset.theme = mode;
+    else delete document.documentElement.dataset.theme;   // the page starts dark (template.html)
 
     if (window.__skCustomRegister) {
       try {
@@ -5203,7 +5206,7 @@ class App {
   }
 
   cycleTheme() {
-    const order = ["auto", "light", "dark"];
+    const order = ["dark", "light", "auto"];
     const cur = document.documentElement.dataset.theme || "auto";
     const next = order[(order.indexOf(cur) + 1) % order.length];
     if (next === "auto") delete document.documentElement.dataset.theme;
