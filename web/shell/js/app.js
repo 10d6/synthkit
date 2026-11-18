@@ -10,6 +10,7 @@ class App {
     this.audio = skHost ? new HostAudio() : new Audio(wasmBytes);
     this.controls = [];
     this.widgets = new Map();
+    this.enable = new SkEnable(this);   // greying out controls that do nothing right now (controls.js)
     model.history = new SkHistory(model);   // undo / redo (history.js)
     this.history = model.history;
     this.transport = skStore.get("synthkit:transport", { bpm: 120, playing: false, num: 4, den: 4 });
@@ -24,11 +25,18 @@ class App {
     const m = this.model;
     const theme = this.layout.theme || {};
     if (theme.accent) document.documentElement.style.setProperty("--accent-base", theme.accent);
-    const mode = skStore.get("synthkit:theme", "auto");
+    // Dark unless you've chosen otherwise (the header's light/dark button).
+    const mode = skStore.get("synthkit:theme", "dark");
     if (mode !== "auto") document.documentElement.dataset.theme = mode;
+    else delete document.documentElement.dataset.theme;   // the page starts dark (template.html)
 
     if (window.__skCustomRegister) {
-      try { window.__skCustomRegister({ widget: (name, factory) => this.widgets.set(name, factory) }); }
+      try {
+        window.__skCustomRegister({
+          widget: (name, factory) => this.widgets.set(name, factory),
+          enabledWhen: (id, fn, why) => this.enable.setRule(id, fn, why),
+        });
+      }
       catch (err) { console.error(err); this.later(`ui/custom.js failed to load: ${err.message}`, "error"); }
     }
 
@@ -116,7 +124,7 @@ class App {
     const kick = () => { if (!this.audio.running) this.startAudio(); };
     document.addEventListener("pointerdown", kick, { capture: true });
     document.addEventListener("keydown", kick, { capture: true });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { this.midi.cancelLearn(); this.closeMenu(); } });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { this.midi.cancelLearn(); this.midi.learnCC(null); this.closeMenu(); skPicker.close(); } });
     // Undo: Ctrl/⌘+Z; redo: Ctrl/⌘+Shift+Z or Ctrl+Y. Text fields keep their own.
     document.addEventListener("keydown", (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -161,8 +169,9 @@ class App {
     if (!this.audio.node) { this.startAudio().then(() => this.audio.midi(bytes)); return; }
     this.audio.midi(bytes);
   }
-  noteOn(n, v) { this.keyboard.light(n, true); this.sendMidi([0x90, n, v]); }
-  noteOff(n) { this.keyboard.light(n, false); this.sendMidi([0x80, n, 64]); }
+  noteOn(n, v) { this.keyboard.light(n, true, v); this.sendMidi([0x90, n, v]); }
+  // v: the key-up (release) velocity, 1–127; 64 means "none".
+  noteOff(n, v = 64) { this.keyboard.light(n, false); this.sendMidi([0x80, n, Math.max(0, Math.min(127, Math.round(v)))]); }
 
   // ---- messages (API.md §9b) -----------------------------------------------
 
@@ -320,7 +329,7 @@ class App {
   }
 
   cycleTheme() {
-    const order = ["auto", "light", "dark"];
+    const order = ["dark", "light", "auto"];
     const cur = document.documentElement.dataset.theme || "auto";
     const next = order[(order.indexOf(cur) + 1) % order.length];
     if (next === "auto") delete document.documentElement.dataset.theme;
@@ -423,17 +432,10 @@ class App {
     ].filter(Boolean));
   }
 
+  // Modulate…: the source picker (modulation.js), then a new route.
   modulateMenu(ctl, x, y) {
-    const items = [];
-    for (const [label, test] of SK_SOURCE_GROUPS) {
-      const group = this.model.mod.sources.filter(test);
-      if (!group.length) continue;
-      if (items.length) items.push(null);
-      for (const s of group) items.push({ label: s.name, run: () => this.addModulation(s, ctl) });
-    }
-    const custom = this.model.mod.sources.filter((s) => !SK_SOURCE_GROUPS.some(([, t]) => t(s)));
-    if (custom.length) { items.push(null); for (const s of custom) items.push({ label: s.name, run: () => this.addModulation(s, ctl) }); }
-    this.menu(x, y, items);
+    skPicker.open(this, { x, y }, { title: `Modulate ${ctl.label} with`, groups: skSourceGroups(this),
+      onPick: (id) => { const s = this.model.mod.sources.find((q) => q.id === id); if (s) this.addModulation(s, ctl); } });
   }
   addModulation(src, ctl) {
     const routes = this.model.routes();
@@ -507,6 +509,10 @@ class App {
       batch: (label, fn) => app.history.batch(label, fn),
       onHistory: (fn) => { const off = app.history.onChange(fn); fn(app.history.state()); return off; },
       onParam: (id, fn) => { const off = m.on(id, fn); fn(m.get(id)); return off; },
+      // greying out (API.md §9): a rule for a parameter, and following one
+      enabledWhen: (id, fn, why) => app.enable.setRule(id, fn, why),
+      enabled: (id) => app.enable.enabled(id),
+      onEnabled: (id, fn) => app.enable.onEnabled(id, fn),
 
       // custom state (API.md §5a)
       custom: (id) => m.custom(id),
@@ -526,7 +532,7 @@ class App {
 
       // playing
       noteOn: (n, v = 100) => app.noteOn(n, v),
-      noteOff: (n) => app.noteOff(n),
+      noteOff: (n, v = 64) => app.noteOff(n, v),
       midi: (bytes) => app.sendMidi(bytes),
       onMidi: (fn) => { app.midiListeners.add(fn); return () => app.midiListeners.delete(fn); },
       takeMidi: (fn) => { app.midiTaps.add(fn); return () => app.midiTaps.delete(fn); },
@@ -657,12 +663,14 @@ class App {
       set: (id, v) => m.set(id, v, "ui"),
       format: (id, v) => m.format(id, v),
       onParam: (id, fn) => { const off = m.on(id, fn); fn(m.get(id)); return off; },
+      enabled: (id) => this.enable.enabled(id),
+      onEnabled: (id, fn) => this.enable.onEnabled(id, fn),
       custom: (id) => m.custom(id),
       setCustom: (id, v) => m.setCustom(id, v),
       onCustom: (id, fn) => { const off = m.onCustom(id, fn); fn(m.custom(id)); return off; },
       onMeter: (id, fn) => this.modMeters.onSource(id, fn),
       noteOn: (n, v = 100) => this.noteOn(n, v),
-      noteOff: (n) => this.noteOff(n),
+      noteOff: (n, v = 64) => this.noteOff(n, v),
       send: (id, ...values) => this.sendMessage(id, values),
       onMessage: (id, fn) => this.onMessage(id, fn),
       arpGenerate: (settings) => m.arpGenerate(settings),

@@ -221,6 +221,8 @@ element.
 | `envN.sustain` | | 0…1 | 0.8 (amp env), 0.3 |
 | `envN.release` | | 0.002…20 s | 0.25 (amp env), 0.4 |
 | `envN.velocity` | | 0…1: how much velocity scales the envelope | 0.5 (amp env), 0 |
+| `envN.relVel` | | −1…1: how much key-up velocity changes the release time (below) | 0 |
+| `sk.halfPedal` | always | toggle: a continuous sustain pedal half down lets notes fade (§4) | on |
 
 "Amp env" is `env1` when `ampEnv` is on; other envelopes get the second
 default.
@@ -324,6 +326,8 @@ void MyVoice::render(VoiceContext& ctx, Buffer& out) {
 | `ramp(p)` | `.at(i)` gives a per-sample ramp across this block, for zipper-free gain |
 | `pitchHz()`, `pitch()` | current pitch in Hz / as a fractional MIDI note |
 | `key()`, `velocity()`, `channel()` | the note that started the voice |
+| `releaseVelocity()` | the key-up velocity, 0…1, once the key is up (0 while it's down) |
+| `pedal()` | the sustain pedal's depth, 0…1, after the half-pedal mapping below |
 | `released()`, `legato()` | key is up; last start was legato |
 | `arpNote()`, `arpEnv()` | the arpeggiator played this note; its note envelope (block start, 0 for other notes) (§4b) |
 | `env(n)`, `envSamples(n)` | standard envelope n (1-based): block-start value / per-sample array |
@@ -355,7 +359,24 @@ size (the kit checks this, §10).
   legato, at a constant time per glide.
 - **Unison** voices are spread across `±unisonDetune` cents and panned across
   `unisonSpread`, each at 1/√n gain.
-- **MIDI.** Velocity 0 counts as note-off. CC64 is sustain. CC120 cuts all
+- **Release velocity.** A note-off's velocity is how quickly the key came
+  up. Keyboards that don't measure it send 64, and a note-on with velocity 0
+  (or a note-off with 0) counts as 64 too. With `envN.relVel` above 0, a
+  quick key-up shortens that envelope's release (to ¼ at +1 and full
+  velocity) and a gentle one lengthens it (up to 4×); below 0 turns that
+  round; key-up velocity 64 never changes anything. A voice reads it with
+  `ctx.releaseVelocity()`, and the matrix as `release.vel` (§6).
+- **Half pedal.** With `sk.halfPedal` on (the default), CC64 is read as a
+  pedal depth: below 10% the pedal is up, above 85% it's down, and in
+  between keys you let go fade with the kit envelopes' release stretched by
+  1 ÷ (1 − depth)² (about 4× half way), following the pedal as it moves, like
+  a piano's dampers touching the strings. Easing a fully-down pedal back to
+  half way lets the notes it held start fading; lifting it lets them finish
+  at the normal release. On/off pedals (0 or 127) work exactly as before.
+  With `sk.halfPedal` off, the pedal is down from half way. A synth without
+  the amp envelope reads `ctx.pedal()` and `ctx.released()` to do the same
+  in its own release.
+- **MIDI.** Velocity 0 counts as note-off. CC64 is sustain (above). CC120 cuts all
   voices. CC123 releases all notes. The kit's own *Stop all sound* and all
   notes off reach `processEvents` as CC120 and CC123 too, so a synth keeping
   its own note state (a coupler, a held phrase) can let go. Pitch bend is smoothed over ~4 ms. Every
@@ -862,7 +883,9 @@ Turned on by `features`: `modSlots` (matrix routes), `standardLfos` and
 | `key` | (note − 60) / 60, bipolar: 0 at C4 | ✓ |
 | `random` | a new value for each note, bipolar | ✓ |
 | `aftertouch` | the larger of channel and poly pressure | ✓ |
+| `release.vel` | key-up velocity, from the moment the key goes up (0 while it's down) | ✓ |
 | `modwheel`, `bend` | CC 1; pitch bend (bipolar) | |
+| `cc.0` … `cc.119` | any MIDI controller's last value (CC 1 is `modwheel`): `cc.2` breath, `cc.4` foot, `cc.11` expression, `cc.64` sustain pedal, …; a controller MIDI-learned on the page (§9) moves its control instead | |
 | `const` | always 1, so a route adds a fixed offset (useful with `via`) | |
 | `beat.phase` | 0→1 ramp over each quarter note | |
 | `bar.phase` | 0→1 ramp over each bar (follows the time signature) | |
@@ -928,7 +951,7 @@ void defineModSources(ModSourceBuilder& b) override {
 // in processEvents / processGlobal:  ctx.setSource(synth.phraseStep, value);  (global value)
 ```
 
-Custom sources show up in the matrix, in custom widgets (`ctx.onMeter`) and
+Custom source IDs can't reuse the kit's (including `release.vel` and `cc.N`). Custom sources show up in the matrix, in custom widgets (`ctx.onMeter`) and
 on a synth's own page (`sk.onMeter`, §9a) like the built-in ones; a global
 source set in `processGlobal` makes a good gauge, and its meter keeps moving
 with nothing playing. A per-voice source that a voice hasn't set uses the
@@ -1158,8 +1181,9 @@ and output panels.
 |---|---|
 | `sections` | the panels, in order (below) |
 | `theme` | `{ "accent": "#rrggbb" }`: the controls' colour (dark mode derives a lighter shade) |
-| `keyboard` | `false` leaves out the on-screen keyboard and computer-key playing (default `true`) |
+| `keyboard` | `false` leaves out the on-screen keyboard and computer-key playing (default `true`). A click plays louder the nearer the key's front edge (velocity 20–127), and where you let go sets the key-up velocity; lit keys show how hard each note was played. |
 | `paramInfo` | info text per parameter ID (below) |
+| `enabledWhen` | when each parameter's controls are greyed out, per parameter ID (below) |
 
 | Control field | |
 |---|---|
@@ -1168,11 +1192,12 @@ and output panels.
 | `label` | text under the control (default: the parameter's name) |
 | `size` | `small` or `large` knob |
 | `info` | text for an ⓘ icon beside the label (also on `xy`) |
+| `enabledWhen` | when this control is greyed out (below); wins over the parameter's own rule |
 
 | Section field | |
 |---|---|
 | `title`, `controls` | a panel of controls |
-| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range), `master` (level, A4), and with `features.arp`: `arp` (type, then the arpeggiator's or sequencer's own controls), `arpPattern` (the piano roll, for whichever type is on), `arpEnv` and `arpPhrase` (the note and phrase envelopes, §4b) |
+| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range, half pedal), `master` (level, A4), and with `features.arp`: `arp` (type, then the arpeggiator's or sequencer's own controls), `arpPattern` (the piano roll, for whichever type is on), `arpEnv` and `arpPhrase` (the note and phrase envelopes, §4b) |
 | `wide` | `true` makes the panel take a full row |
 | `info` | text for an ⓘ icon beside the panel's title (kit panels too) |
 | `collapsed` | makes the panel fold at its title: `true` starts folded, `false` starts open |
@@ -1224,6 +1249,39 @@ focus, and stays up after a click or tap until the next click elsewhere.
   any source). Modulated knobs show a live outer ring for the most recent
   voice.
 
+**Greying out controls.** A control is dimmed while its parameter has no
+effect: it stays adjustable (so it can be set up before it's needed), and
+hovering its label says why. The kit does this for its own parameters: Glide
+in Poly mode, Unison Detune and Spread with one voice, the arpeggiator's
+settings while it's off (and Fixed vel. unless Velocity is Fixed). A synth
+says when its own parameters do nothing with `enabledWhen`, top-level (per
+parameter ID, for every control showing it, kit panels included) or on one
+control:
+
+```json
+"enabledWhen": {
+  "osc2.detune": { "param": "osc2.on" },
+  "pw":          { "param": "wave", "is": "Square" },
+  "fm.ratio":    { "when": { "param": "fm.amount", "above": 0 }, "why": "Turn up FM Amount to hear this." },
+  "glide":       true
+}
+```
+
+| Condition | Enabled when |
+|---|---|
+| `{ "param": id }` | the parameter is on (a toggle, or any value but 0) |
+| `{ "param": id, "is": v }` | it equals `v`; also `isNot`, `in: [..]`, `notIn: [..]` (choices by index or by name), `above`, `below` |
+| `[ … ]` or `{ "all": [ … ] }`, `{ "any": [ … ] }`, `{ "not": … }` | combinations |
+| `true` / `false` | always / never |
+| `{ "when": cond, "why": text }` | `cond`, with `text` shown on hover while greyed out |
+
+An entry for a kit parameter replaces the kit's rule (`true` keeps it always
+enabled). For logic that doesn't fit, `ui/custom.js` can give a rule in code
+(`register(sk)` gets `sk.enabledWhen(id, (get) => bool, why)`; `null`
+removes a rule), and so can a synth's own page (§9a). Widgets and pages
+follow a parameter's state with `enabled(id)` and `onEnabled(id, fn)`, to
+grey out their own drawing.
+
 **Undo and redo.** The header has undo and redo buttons (Ctrl/⌘+Z;
 Ctrl/⌘+Shift+Z or Ctrl+Y), covering everything that's saved in a patch:
 parameters, modulation routes, shapes, custom state (arp/sequencer patterns,
@@ -1258,8 +1316,9 @@ export function register(sk) {
     ctx.onCustom("keys", (table) => { /* custom state (§5a) as JSON */ });
     // ctx.get(id), ctx.set(id, value), ctx.format(id, value), ctx.param(id)
     // ctx.custom(id), ctx.setCustom(id, json)
-    // ctx.noteOn(note, vel), ctx.noteOff(note)
+    // ctx.noteOn(note, vel), ctx.noteOff(note, vel?)   vel 1–127; noteOff's is the key-up velocity (default 64)
     // ctx.onMeter(sourceId, fn)    live value of any mod source (~30 times a second, playing or not)
+    // ctx.enabled(id), ctx.onEnabled(id, fn)   whether a parameter is greyed out (above)
     // ctx.send(messageId, ...values), ctx.onMessage(messageId, fn)   messages (§9b)
     // ctx.arpGenerate(settings)    a generated arp/sequencer pattern (§4b)
     // ctx.toast(text, kind)
@@ -1324,13 +1383,14 @@ export function mount(sk, root) {
   |---|---|
   | `info` | `{ synth, params, messages, custom }` |
   | `get(id)`, `set(id, v)`, `norm(id)`, `setNorm(id, n)`, `format(id, v?)`, `parse(id, text)`, `reset(id)`, `param(id)`, `onParam(id, fn)`, `gesture(id, on)` | parameters (wrap a drag in `gesture` so a DAW records one automation move) |
+  | `enabledWhen(id, (get) => bool, why?)`, `enabled(id)`, `onEnabled(id, fn)` | greying out (§9): a rule for a parameter (kit controls the page mounts follow it), and following its state for the page's own controls |
   | `custom(id)`, `setCustom(id, v)`, `onCustom(id, fn)` | custom state (§5a) |
   | `undo()`, `redo()`, `onHistory(fn)`, `batch(label, fn)` | undo and redo (§9): every `set`, `setCustom` and preset load is recorded. `onHistory` gets `{ canUndo, canRedo, undoLabel, redoLabel }` now and on each change; `batch` makes everything `fn` changes one step (`label` shows as "Undo *label*") |
   | `send(id, ...values)`, `onMessage(id, fn)` | messages (§9b) |
   | `arpGenerate(settings)` | a generated arpeggiator or sequencer pattern (§4b) |
   | `onMeter(sourceId, fn)` | a mod source's value, ~30 times a second, whether or not anything is playing (a synth's own source makes a good gauge) |
   | `onMeters(fn)` | every meter frame (`voices`, `peak`, `beat`, `playing`, `bpm`, …) |
-  | `noteOn(n, vel)`, `noteOff(n)`, `midi(bytes)`, `allNotesOff()`, `panic()` | playing (`allNotesOff()` and `panic()` also let go of keys held on the on-screen keyboard) |
+  | `noteOn(n, vel)`, `noteOff(n, vel?)` (key-up velocity, default 64), `midi(bytes)`, `allNotesOff()`, `panic()` | playing (`allNotesOff()` and `panic()` also let go of keys held on the on-screen keyboard) |
   | `onMidi(fn)` | listen to Web MIDI input: `fn(bytes)` sees every message, and the synth still gets it |
   | `takeMidi(fn)` | take Web MIDI messages: when `fn(bytes)` returns `true`, the synth doesn't get that one (a page's own MIDI Learn, say). Anything else goes on |
   | `connectMidi()` | start Web MIDI without the button |
@@ -1436,7 +1496,7 @@ Scenarios in `tests/*.json` render offline and are checked in CI:
 | `transport` | `bpm` (120), `timeSig` (`[4, 4]`), `playing` (false) |
 | `sampleRate` | default 48000 |
 | `length` / `lengthBeats` | how long to render |
-| `events` | time in seconds (`t`) or beats (`beat`); `on`/`off` (+`vel` 0–127, `ch`), `cc` + `value` (0–127), `bend` (−1…1), `at` (0–127), or `msg` + `values` (a message from the page, §9b; the render splits its block there, so the result doesn't depend on block size) |
+| `events` | time in seconds (`t`) or beats (`beat`); `on`/`off` (+`vel` 0–127, `ch`; an `off`'s `vel` is the key-up velocity, default 64), `cc` + `value` (0–127), `bend` (−1…1), `at` (0–127), or `msg` + `values` (a message from the page, §9b; the render splits its block there, so the result doesn't depend on block size) |
 
 | Expectation | Passes when |
 |---|---|

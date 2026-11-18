@@ -46,7 +46,7 @@ struct NoteOn {
 struct NoteOff {
   int note = 60;
   int channel = 0;
-  float vel = 0.5f;
+  float vel = 64.f / 127.f;  // key-up velocity; 64 is MIDI's "none"
   operator MidiEvent() const {
     MidiEvent e;
     e.type = MidiEvent::Type::NoteOff;

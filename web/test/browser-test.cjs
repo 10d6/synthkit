@@ -85,7 +85,8 @@ async function main() {
         const before = await page.evaluate(() => window.synthkit.model.routes().length);
         await page.click('[data-param="filter.cutoff"] .knob-dial', { button: "right" });
         await page.click('.menu-item:has-text("Modulate")');
-        await page.click('.menu-item:has-text("LFO 1")');
+        await page.click('.pick-pop .pick-cat:text-is("LFOs")');
+        await page.click('.pick-pop .pick-item:has-text("LFO 1")');
         const after = await page.evaluate(() => window.synthkit.model.routes());
         if (after.length !== before + 1 || after[after.length - 1].dst !== "filter.cutoff") fail("Modulate… didn't add an LFO 1 → cutoff route");
         else pass("right-click → Modulate adds a route");
@@ -296,6 +297,67 @@ async function main() {
           const expected = routes0[idx].amt + (60 / tr.w) * 2;
           if (Math.abs(a1 - Math.min(1, expected)) > 0.05) fail(`amount drag moved ${routes0[idx].amt.toFixed(2)} → ${a1.toFixed(2)} (expected ≈ ${Math.min(1, expected).toFixed(2)})`);
           else pass(`modulation amount follows the whole drag (${(routes0[idx].amt * 100).toFixed(0)}% → ${(a1 * 100).toFixed(0)}%)`);
+        }
+
+        // The source picker: search, a controller by number, and "scaled by".
+        {
+          const idx = (await page.evaluate(() => window.synthkit.model.routes().length)) - 1;
+          const srcBtn = `.route:nth-child(${idx + 1}) .route-src .pick-btn`;
+          await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: "center" }), srcBtn);
+          await page.click(srcBtn);
+          await page.fill(".pick-pop .pick-search", "expression");
+          await page.click('.pick-pop .pick-item:has-text("Expression")');
+          let r = await page.evaluate((i) => window.synthkit.model.routes()[i], idx);
+          if (r.src !== "cc.11") fail(`searching the source picker gave ${r.src}`); else pass("source picker: search finds CC 11 Expression");
+          await page.click(srcBtn);
+          await page.click('.pick-pop .pick-cat:text-is("MIDI CC")');
+          await page.fill(".pick-pop .pick-num", "74");
+          await page.keyboard.press("Enter");
+          r = await page.evaluate((i) => window.synthkit.model.routes()[i], idx);
+          if (r.src !== "cc.74") fail(`typing a CC number gave ${r.src}`); else pass("source picker: any CC by number");
+          await page.click(`.route:nth-child(${idx + 1}) .route-via .pick-btn`);
+          await page.click('.pick-pop .pick-cat:text-is("Note")');
+          await page.click('.pick-pop .pick-item:has-text("Release Velocity")');
+          r = await page.evaluate((i) => window.synthkit.model.routes()[i], idx);
+          await page.click(`.route:nth-child(${idx + 1}) .route-via .pick-btn`);
+          await page.keyboard.press("Escape");
+          const open = await page.evaluate(() => !!document.querySelector(".pick-pop"));
+          if (r.via !== "release.vel" || open) fail(`"scaled by" picker: via ${r.via}, still open after Esc: ${open}`); else pass("scaled-by picker works and Esc closes it");
+          // Put the route back as it was.
+          await page.evaluate((i) => { const m = window.synthkit.model, rs = m.routes(); rs[i].src = "lfo1"; delete rs[i].via; m.setRoutes(rs); }, idx);
+        }
+
+        // Greyed-out controls follow the settings that make them matter.
+        {
+          const dim = (id) => page.evaluate((id) => { const e = document.querySelector(`.ctl[data-param="${id}"]`); return e ? e.classList.contains("is-disabled") : null; }, id);
+          const set = (id, v) => page.evaluate(([id, v]) => window.synthkit.model.set(id, v, "ui"), [id, v]);
+          const was = await page.evaluate(() => ({ mode: window.synthkit.model.get("voiceMode"), uni: window.synthkit.model.get("unison") }));
+          await set("voiceMode", 0); await set("unison", 1); await page.waitForTimeout(50);
+          const a = [await dim("glide"), await dim("unisonDetune"), await dim("unison")];
+          await set("voiceMode", 1); await set("unison", 3); await page.waitForTimeout(50);
+          const b = [await dim("glide"), await dim("unisonDetune")];
+          await set("voiceMode", was.mode); await set("unison", was.uni);
+          if (a.join() !== "true,true,false" || b.join() !== "false,false") fail(`greying out: poly/1 voice ${a}, mono/3 voices ${b}`);
+          else pass("Glide and Unison Detune grey out when they do nothing");
+        }
+
+        // The on-screen keyboard: lower on a key is louder, and where you let
+        // go is the key-up velocity.
+        {
+          await page.evaluate(() => { const app = window.synthkit.app; app.sentMidi = []; const send = app.sendMidi.bind(app); app.sendMidi = (b, ...r) => { app.sentMidi.push([...b]); return send(b, ...r); }; });
+          const k = await page.evaluate(() => { const e = document.querySelector('.key-white[data-note="60"]'); e.scrollIntoView({ block: "center" }); const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y, h: r.height }; });
+          await page.mouse.move(k.x, k.y + k.h * 0.75); await page.mouse.down(); await page.mouse.move(k.x, k.y + k.h * 0.95); await page.mouse.up();
+          await page.mouse.move(k.x, k.y + k.h * 0.70); await page.mouse.down(); await page.mouse.move(k.x, k.y + k.h * 0.72); await page.mouse.up();
+          const sent = await page.evaluate(() => window.synthkit.app.sentMidi.filter((b) => (b[0] & 0xe0) === 0x80 && b[1] === 60));
+          const ons = sent.filter((b) => b[0] === 0x90).map((b) => b[2]), offs = sent.filter((b) => b[0] === 0x80).map((b) => b[2]);
+          if (ons.length !== 2 || offs.length !== 2 || !(offs[0] > offs[1]) || ons[0] < 20 || ons[0] > 127) fail(`keyboard velocities: on ${ons}, off ${offs}`);
+          else pass(`keyboard: velocity follows where you click (on ${ons}, key-up ${offs})`);
+          const top = await page.evaluate(() => { const e = document.querySelector('.key-white[data-note="62"]'); const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y }; });
+          await page.mouse.click(top.x, top.y + 4);
+          const bottom = await page.evaluate(() => { const e = document.querySelector('.key-white[data-note="62"]'); const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.bottom }; });
+          await page.mouse.click(bottom.x, bottom.y - 3);
+          const v62 = await page.evaluate(() => window.synthkit.app.sentMidi.filter((b) => b[0] === 0x90 && b[1] === 62).map((b) => b[2]));
+          if (!(v62.length === 2 && v62[0] < 35 && v62[1] > 115)) fail(`top vs bottom of a key: ${v62}`); else pass(`keyboard: back of a key is soft, front is loud (${v62})`);
         }
 
         // Editing one shape never undoes another shape's edits.
@@ -591,13 +653,20 @@ async function main() {
     await strict.close();
   }
 
-  // Dark theme screenshot.
+  // Dark is the default theme; also check the light one (chosen from the header).
   {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(url);
     await page.waitForFunction(() => window.synthkit && window.synthkit.model);
+    const dflt = await page.evaluate(() => document.documentElement.dataset.theme);
+    if (dflt !== "dark") fail(`default theme is ${dflt}, not dark`); else pass("the page starts in the dark theme");
+    await page.evaluate(() => localStorage.setItem("synthkit:theme", JSON.stringify("light")));
+    await page.reload();
+    await page.waitForFunction(() => window.synthkit && window.synthkit.model);
     await page.waitForTimeout(200);
-    await page.screenshot({ path: path.join(outDir, "ui-dark.png"), fullPage: true });
+    const chosen = await page.evaluate(() => document.documentElement.dataset.theme);
+    if (chosen !== "light") fail(`choosing light gave ${chosen}`);
+    await page.screenshot({ path: path.join(outDir, "ui-light.png"), fullPage: true });
     await page.close();
   }
 

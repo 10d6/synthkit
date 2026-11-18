@@ -63,6 +63,7 @@ class VoiceContext {
   double pitch() const;         // same, as a fractional MIDI note
   int key() const;              // the MIDI note that started this voice
   float velocity() const;       // 0…1
+  float releaseVelocity() const; // key-up velocity 0…1 once the key is up (64/127 if the keyboard sends none), 0 while held
   int channel() const;
   bool released() const;        // key up (after sustain pedal)
   bool legato() const;          // last start() was a legato transition
@@ -79,6 +80,7 @@ class VoiceContext {
   float aftertouch() const;             // max of channel and poly pressure
   float bend() const;                   // -1…1
   float cc(int n) const;                // last value of any CC, 0…1
+  float pedal() const;                  // sustain pedal depth 0…1 (half pedal, API.md §4)
   Beats noteAge() const;                // beats since the note started
 
   // Modulation (API.md §6). Values are this voice's, for this block.

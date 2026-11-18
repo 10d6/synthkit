@@ -369,6 +369,93 @@ TEST(sustain_pedal_holds_notes) {
   CHECK(h.eng->takeStats().activeVoices == 0);
 }
 
+// Samples until the output stays below -80 dB (the end of a release).
+static long tailLength(const std::vector<float>& out, long from) {
+  long last = from;
+  for (long i = from; i < static_cast<long>(out.size()); ++i) if (std::fabs(out[static_cast<std::size_t>(i)]) > 1e-4f) last = i;
+  return last - from;
+}
+
+TEST(release_velocity_scales_the_release) {
+  auto tail = [](float amount, float rv) {
+    Harness h;
+    h.eng->params().set(h.param("env1.release"), 0.2);
+    h.eng->params().set(h.param("env1.relVel"), amount);
+    MidiEvent up = NoteOff{60, 0, rv};
+    auto out = h.run(96000, {{0, on(60)}, {4800, up}});
+    return tailLength(out, 4800);
+  };
+  long plain = tail(0, 1.f), neutral = tail(1, 64.f / 127.f), quick = tail(1, 1.f), slow = tail(1, 0.05f), inverted = tail(-1, 1.f);
+  CHECK(std::abs(neutral - plain) < 300);        // velocity 64 changes nothing
+  CHECK(quick < plain * 0.4);                     // a quick key-up shortens it…
+  CHECK(slow > plain * 2.5);                      // …a gentle one lengthens it
+  CHECK(inverted > plain * 2.5);                  // negative amounts turn that round
+  // A note-on with velocity 0 (running status) counts as 64.
+  Harness h;
+  h.eng->params().set(h.param("env1.release"), 0.2);
+  h.eng->params().set(h.param("env1.relVel"), 1);
+  auto out = h.run(96000, {{0, on(60)}, {4800, on(60, 0.f)}});
+  CHECK(std::abs(tailLength(out, 4800) - plain) < 300);
+}
+
+TEST(release_velocity_reaches_voices_and_the_matrix) {
+  Harness h(256, R"(,"modSlots":4)");
+  Json p = Json::parse(R"({"synth":"test","mod":[{"src":"release.vel","dst":"mod","amt":1}]})");
+  h.eng->loadPatch(p);
+  h.eng->params().set(h.param("env1.release"), 1);
+  MidiEvent up = NoteOff{60, 0, 0.75f};
+  h.run(4800, {{0, on(60)}});
+  CHECK_NEAR(gLog.mods.back().value, 0, 1e-6);    // 0 while the key is down
+  h.run(4800, {{h.pos + 10, up}});
+  CHECK_NEAR(gLog.mods.back().value, 0.75, 1e-4);
+}
+
+TEST(half_pedal_lets_notes_fade_slowly) {
+  auto activeAfter = [](float pedal, bool halfPedal, long wait) {
+    Harness h;
+    h.eng->params().set(h.param("env1.release"), 0.05);
+    h.eng->params().set(h.param("sk.halfPedal"), halfPedal ? 1 : 0);
+    MidiEvent ped = CC{64, pedal};
+    h.run(4800 + wait, {{0, ped}, {10, on(60)}, {4800, off(60)}});
+    return h.eng->takeStats().activeVoices;
+  };
+  CHECK(activeAfter(0.f, true, 4800) == 0);       // pedal up: the 50 ms release
+  CHECK(activeAfter(0.5f, true, 4800) == 1);      // half down: still fading after 100 ms…
+  CHECK(activeAfter(0.5f, true, 96000) == 0);     // …but gone in 2 s
+  CHECK(activeAfter(1.f, true, 96000) == 1);      // fully down holds
+  CHECK(activeAfter(0.5f, false, 96000) == 1);    // half pedal off: past half way is down
+  // Easing a held pedal to half way lets the held notes fade.
+  Harness h;
+  h.eng->params().set(h.param("env1.release"), 0.05);
+  MidiEvent down = CC{64, 1.f}, half = CC{64, 0.45f}, up = CC{64, 0.f};
+  h.run(48000, {{0, down}, {10, on(60)}, {4800, off(60)}});
+  CHECK(h.eng->takeStats().activeVoices == 1);
+  auto out = h.run(96000, {{h.pos + 10, half}});
+  long from = 10;
+  long t = tailLength(out, from);
+  CHECK(t > 4800 && t < 90000);
+  // A key released while the pedal is half down fades too, and lifting the
+  // pedal lets it finish at the normal speed.
+  h.run(4800, {{h.pos + 10, half}, {h.pos + 20, on(64)}, {h.pos + 2400, off(64)}});
+  CHECK(h.eng->takeStats().activeVoices == 1);
+  h.run(9600, {{h.pos + 10, up}});
+  CHECK(h.eng->takeStats().activeVoices == 0);
+}
+
+TEST(midi_controllers_are_mod_sources) {
+  Harness h(256, R"(,"modSlots":4)");
+  Json p = Json::parse(R"({"synth":"test","mod":[{"src":"cc.11","dst":"mod","amt":1},{"src":"cc.64","dst":"mod","amt":0.25}]})");
+  h.eng->loadPatch(p);
+  bool hasMw = false, hasCc1 = false;
+  for (auto& s : h.eng->modSources()) { hasMw |= s.id == "modwheel"; hasCc1 |= s.id == "cc.1"; }
+  CHECK(hasMw && !hasCc1);   // the mod wheel has its own source
+  MidiEvent expr = CC{11, 0.5f}, ped = CC{64, 1.f};
+  h.run(4800, {{0, on(60)}, {10, expr}});
+  CHECK_NEAR(gLog.mods.back().value, 0.5, 1e-4);
+  h.run(4800, {{h.pos + 10, ped}});
+  CHECK_NEAR(gLog.mods.back().value, 0.75, 1e-4);
+}
+
 TEST(mono_and_legato) {
   {
     Harness h;

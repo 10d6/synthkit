@@ -252,6 +252,9 @@ button, input, select { font: inherit; color: inherit; }
 
 /* ---- controls -------------------------------------------------------- */
 .ctl { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 62px; position: relative; }
+/* Greyed out: the parameter does nothing right now (still adjustable). */
+.ctl.is-disabled { opacity: 0.38; filter: saturate(0); transition: opacity 0.15s; }
+.ctl.is-disabled:hover, .ctl.is-disabled:focus-within { opacity: 0.6; }
 .ctl-label { font-size: 12px; color: var(--ink-soft); text-align: center; max-width: 9em; line-height: 1.2; }
 .ctl-value {
   border: 0; background: none; padding: 1px 4px; border-radius: 4px; cursor: text;
@@ -336,8 +339,12 @@ button, input, select { font: inherit; color: inherit; }
   width: var(--black-w); min-width: 12px; height: 62%; background: var(--key-black); z-index: 1;
   border-radius: 0 0 4px 4px; box-shadow: 0 -4px 0 rgba(255, 255, 255, 0.08) inset;
 }
-.key-white.is-down { background: color-mix(in srgb, var(--accent) 30%, var(--key)); }
-.key-black.is-down { background: var(--accent); }
+/* A faint shading towards the front: clicking lower plays louder. */
+.key-white { background-image: linear-gradient(to bottom, transparent 45%, color-mix(in srgb, var(--accent) 7%, transparent)); }
+/* Lit keys: the harder the note was played (--kv, 0…1), the stronger the colour. */
+.key-white.is-down { background: color-mix(in srgb, var(--accent) calc(12% + var(--kv, 0.8) * 30%), var(--key)); }
+.key-black.is-down { background: color-mix(in srgb, var(--accent) calc(45% + var(--kv, 0.8) * 55%), var(--key-black)); }
+.kb-vel.is-live { color: var(--ink); }
 .key-name { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; font-size: 10px; color: #6b736f; pointer-events: none; }
 
 /* ---- menus, toasts, errors ------------------------------------------- */
@@ -454,10 +461,46 @@ button, input, select { font: inherit; color: inherit; }
 .amt-fill { position: absolute; top: 9px; height: 4px; background: var(--accent); border-radius: 2px; }
 .amt-value { min-width: 4.2em; text-align: right; }
 .matrix-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+
+/* The source / destination picker: a button, and a searchable grouped list. */
+.pick-btn {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 13rem; min-width: 7rem;
+  background: var(--field); border: 1px solid var(--edge); border-radius: 7px; padding: 5px 8px;
+  font-size: 12px; text-align: left; cursor: pointer; color: inherit;
+}
+.pick-btn:hover { border-color: var(--ink-soft); }
+.pick-btn-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-btn-chev { color: var(--ink-soft); font-size: 10px; }
+.pick-pop {
+  position: fixed; z-index: 25; width: min(460px, calc(100vw - 16px)); display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; box-shadow: 0 10px 32px rgba(0, 0, 0, 0.22);
+}
+.pick-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--edge); }
+.pick-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.pick-search { flex: 1; min-width: 0; background: var(--field); border: 1px solid var(--edge); border-radius: 7px; padding: 5px 8px; color: inherit; }
+.pick-body { display: flex; height: min(320px, 60vh); }
+.pick-cats { display: flex; flex-direction: column; gap: 1px; padding: 6px; border-right: 1px solid var(--edge); overflow-y: auto; flex: 0 0 auto; }
+.pick-pop.is-searching .pick-cats { display: none; }
+.pick-cat { border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 6px; cursor: pointer; color: var(--ink-soft); white-space: nowrap; }
+.pick-cat:hover, .pick-cat:focus-visible { background: var(--field); color: var(--ink); outline: none; }
+.pick-cat[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--ink); font-weight: 600; }
+.pick-list { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 1px; align-content: flex-start; }
+.pick-item { display: flex; align-items: baseline; gap: 8px; border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 6px; cursor: pointer; color: inherit; }
+.pick-item:hover, .pick-item:focus-visible { background: var(--field); outline: none; }
+.pick-item[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-weight: 600; }
+.pick-item[aria-selected="true"]:hover, .pick-item[aria-selected="true"]:focus-visible { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.pick-name { flex: 1; }
+.pick-hint { color: var(--ink-soft); font-size: 11px; white-space: nowrap; }
+.pick-extra { padding: 4px 6px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--edge); }
+.pick-cc { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); }
+.pick-num { width: 5.5em; background: var(--field); border: 1px solid var(--edge); border-radius: 6px; padding: 3px 6px; color: inherit; }
+.pick-empty { color: var(--ink-soft); margin: 8px 10px; }
 .matrix-count { color: var(--ink-soft); font-size: 12px; }
 
 @media (max-width: 720px) {
-  .route select { max-width: 100%; }
+  .route select, .pick-btn { max-width: 100%; }
+  .pick-body { flex-direction: column; height: min(420px, 70vh); }
+  .pick-cats { flex-direction: row; border-right: 0; border-bottom: 1px solid var(--edge); overflow-x: auto; overflow-y: hidden; }
   .amt-track { width: 110px; }
   .shape-hint { display: none; }
 }

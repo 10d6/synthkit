@@ -178,6 +178,9 @@
     }
   ],
   "keyboard": true,
+  "enabledWhen": {
+    "osc1.pw": { "when": { "param": "osc1.wave", "is": "Square" }, "why": "Pulse width shapes the Square wave." }
+  },
   "paramInfo": {
     "sk.a4": "Concert pitch: the frequency of the A above middle C.",
     "unisonSpread": "Pans unison voices across the stereo field."
