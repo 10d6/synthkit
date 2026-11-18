@@ -34,6 +34,25 @@ std::vector<std::string> names(const Div (&d)[N]) {
 
 int choiceAt(const float* values, int p) { return static_cast<int>(values[p] + 0.5f); }
 
+// The MIDI spec's names for the controllers people actually use.
+const char* ccName(int n) {
+  switch (n) {
+    case 0: return "Bank Select"; case 2: return "Breath"; case 4: return "Foot Pedal"; case 5: return "Portamento Time";
+    case 7: return "Volume"; case 8: return "Balance"; case 10: return "Pan"; case 11: return "Expression";
+    case 12: return "Effect 1"; case 13: return "Effect 2";
+    case 16: return "General 1"; case 17: return "General 2"; case 18: return "General 3"; case 19: return "General 4";
+    case 64: return "Sustain Pedal"; case 65: return "Portamento"; case 66: return "Sostenuto"; case 67: return "Soft Pedal";
+    case 68: return "Legato"; case 69: return "Hold 2";
+    case 70: return "Variation"; case 71: return "Resonance"; case 72: return "Release Time"; case 73: return "Attack Time";
+    case 74: return "Brightness"; case 75: return "Decay Time"; case 76: return "Vibrato Rate"; case 77: return "Vibrato Depth";
+    case 78: return "Vibrato Delay"; case 79: return "Sound 10";
+    case 80: return "General 5"; case 81: return "General 6"; case 82: return "General 7"; case 83: return "General 8";
+    case 84: return "Portamento Control"; case 91: return "Reverb"; case 92: return "Tremolo"; case 93: return "Chorus";
+    case 94: return "Detune"; case 95: return "Phaser";
+    default: return "";
+  }
+}
+
 enum LfoMode { LfoGlobal = 0, LfoVoice = 1 };
 enum Trigger { TrNote = 0, TrFirst = 1, TrBar = 2, TrBeat = 3, TrFree = 4, TrManual = 5 };
 enum Loop { LoOnce = 0, LoLoop = 1, LoHeld = 2, LoPing = 3, LoRelease = 4 };
@@ -164,6 +183,13 @@ void Modulation::init(const ParamStore& store, const SynthInfo& info, std::vecto
   iDown_ = add("downbeat", "Downbeat", Src::Downbeat, 0, false, false);
   iAge_ = add("note.age", "Note Age", Src::NoteAge, 0, true, false);
   iOff_ = add("note.offbeat", "Off-Beat", Src::NoteOffbeat, 0, true, true);
+  iRelVel_ = add("release.vel", "Release Velocity", Src::ReleaseVel, 0, true, false);
+  firstCc_ = static_cast<int>(sources_.size());
+  for (int c = 0; c < kCcSources; ++c) {
+    int n = ccSourceNumber(c);
+    const char* nm = ccName(n);
+    add("cc." + std::to_string(n), "CC " + std::to_string(n) + (*nm ? std::string(" ") + nm : std::string()), Src::Cc, n, false, false);
+  }
   if (info.features.arp) {
     iArpEnv_ = add("arp.env", "Arp Envelope", Src::ArpEnv, 0, true, false);
     iArpPhrase_ = add("arp.phrase", "Arp Phrase", Src::ArpPhrase, 0, false, false);
@@ -357,7 +383,7 @@ void Modulation::applyRoutes(const float* src, const float* values, float* out, 
   touched.clear();
 }
 
-void Modulation::beginBlock(const float* values, const Transport& t, double, int len, float modwheel, float bend, float aftertouch) {
+void Modulation::beginBlock(const float* values, const Transport& t, double, int len, float modwheel, float bend, float aftertouch, const float* ccs) {
   curValues_ = values;
   double dt = len / sr_;
   // Simple sources first, so LFOs and shapes can be modulated by them (and by
@@ -379,6 +405,8 @@ void Modulation::beginBlock(const float* values, const Transport& t, double, int
   set(iDown_, inBar < unit ? 1.f : 0.f, false);
   set(iAge_, 0, true);
   set(iOff_, 0, true);
+  set(iRelVel_, 0, true);
+  for (int c = 0; c < kCcSources; ++c) set(firstCc_ + c, ccs ? ccs[ccSourceNumber(c)] : 0.f, false);
   if (iArpEnv_ >= 0) {
     set(iArpEnv_, 0, true);
     set(iArpPhrase_, arpPhrase_, false);
@@ -454,6 +482,7 @@ void Modulation::voiceBlock(ModVoice& v, const VoiceIn& in, const float* values,
   double span = pAgeSpan_ >= 0 ? values[pAgeSpan_] : 4.0;
   v.src[static_cast<std::size_t>(iAge_)] = static_cast<float>(std::clamp((t.beat - v.startBeat) / span, 0.0, 1.0));
   v.src[static_cast<std::size_t>(iOff_)] = v.offbeat;
+  v.src[static_cast<std::size_t>(iRelVel_)] = in.relVel;
   if (iArpEnv_ >= 0) v.src[static_cast<std::size_t>(iArpEnv_)] = in.arpEnv;
   for (int c = 0; c < nCustom_; ++c)
     if (!std::isnan(v.custom[static_cast<std::size_t>(c)])) v.src[static_cast<std::size_t>(firstCustom_ + c)] = v.custom[static_cast<std::size_t>(c)];

@@ -202,6 +202,8 @@ struct Slot {
   float level = 0;
   int quietSamples = 0;
   float polyAT = 0;
+  float relVel = 0;                           // key-up velocity (0 while the key is down)
+  bool pedalDamp = false;                     // released under a half-down pedal
   dsp::Rng rng;
   Beats startBeat = 0;
   ModVoice mv;
@@ -224,7 +226,8 @@ struct Core {
   std::vector<std::unique_ptr<CustomSlotBase>> customs;
 
   int pMaster = -1, pVoiceMode = -1, pGlide = -1, pBend = -1, pUnison = -1, pUniDetune = -1, pUniSpread = -1, pA4 = -1;
-  struct EnvP { int a, d, s, r, vel; };
+  struct EnvP { int a, d, s, r, vel, relVel; };
+  int pHalfPedal = -1;
   std::vector<EnvP> envP;
   std::vector<Mode> modes;  // index of voiceMode param -> Mode
 
@@ -241,7 +244,8 @@ struct Core {
 
   float modwheel = 0, aftertouch = 0, bend = 0, bendTarget = 0;
   float ccs[128] = {};
-  bool sustain = false;
+  bool sustain = false;   // pedal fully down: key-ups are held
+  float pedal = 0;        // pedal depth 0…1 after the half-pedal mapping
   int held[128] = {};
   int heldCount = 0;
   int mode = Poly;
@@ -398,8 +402,10 @@ struct Core {
       ep.s = b.count(); b.addKit(p + "sustain").name(n + "Sustain").range(0, 1).def(amp ? 0.8 : 0.3).group(g);
       ep.r = b.count(); b.addKit(p + "release").name(n + "Release").range(0.002, 20).log().def(amp ? 0.25 : 0.4).unit("s").group(g);
       ep.vel = b.count(); b.addKit(p + "velocity").name(n + "Velocity").range(0, 1).def(amp ? 0.5 : 0).group(g);
+      ep.relVel = b.count(); b.addKit(p + "relVel").name(n + "Release Velocity").range(-1, 1).def(0).group(g);
       envP.push_back(ep);
     }
+    pHalfPedal = b.count(); b.addKit("sk.halfPedal").name("Half Pedal").toggle().def(1).group("Voices");
     hasArp = f.arp;
     if (hasArp) {
       // With the arpeggiator, "arp." IDs are the kit's.
@@ -495,6 +501,8 @@ struct Core {
     s.level = 0;
     s.quietSamples = 0;
     s.polyAT = 0;
+    s.relVel = 0;
+    s.pedalDamp = false;
     for (auto& e : s.envs) e.reset();
     s.arp = false;
     s.arpLane = -1;
@@ -576,6 +584,7 @@ struct Core {
       for (auto& s : slots) resetSlot(s);
       heldCount = 0;
       sustain = false;
+      pedal = 0;
       for (auto& q : queue) q.used = false;
       arp.reset();
       sequencer.reset();
@@ -807,7 +816,7 @@ struct Core {
         if (arpType() == ArpTypeSeq) mod.setArp(sequencer.phraseAt(pos), sequencer.stepPosAt(pos));
         else mod.setArp(arp.phrase()[pos], arp.stepPosAt(pos));
       }
-      mod.beginBlock(values.data(), transport, 0, len, modwheel, bend, aftertouch);
+      mod.beginBlock(values.data(), transport, 0, len, modwheel, bend, aftertouch, ccs);
       gvals = mod.globalValues();
       gprev = mod.prevGlobalValues();
     } else {
@@ -839,6 +848,29 @@ struct Core {
     atomicMax(statPeak, peak);
   }
 
+  // How much longer (or shorter) a released note's envelopes take: the key-up
+  // velocity (envN.relVel: + makes a quick key-up shorten the release, -
+  // lengthen it; velocity 64 changes nothing) and a half-down pedal, which
+  // stretches the release from 1x (up) towards a hold (fully down).
+  float releaseScale(float relAmt, const Slot& s) const {
+    float k = 1.f;
+    if (relAmt != 0) k *= std::exp2(-4.f * relAmt * (s.relVel - 64.f / 127.f));
+    if (s.pedalDamp) {
+      float d = std::min(pedal, 0.97f);
+      k *= 1.f / ((1.f - d) * (1.f - d));
+    }
+    return k;
+  }
+
+  // CC 64 as a pedal depth. With half pedal on, the travel between "up"
+  // (below 10%) and "down" (above 85%) is a partly lifted damper; otherwise
+  // the pedal is down from half way.
+  float pedalDepth(float raw) const {
+    if (pHalfPedal < 0 || values[pHalfPedal] < 0.5f) return raw >= 0.5f ? 1.f : 0.f;
+    constexpr float lo = 0.1f, hi = 0.85f;
+    return std::clamp((raw - lo) / (hi - lo), 0.f, 1.f);
+  }
+
   void renderSlot(Slot& s, int pos, int len) {
     using St = VoicePool::State;
     if (s.glideRate > 0) {
@@ -849,7 +881,9 @@ struct Core {
     }
     for (std::size_t e = 0; e < s.envs.size(); ++e) {
       auto& p = envP[e];
-      s.envs[e].set(values[p.a], values[p.d], values[p.s], values[p.r]);
+      float rel = values[p.r];
+      if (s.state == VoicePool::State::Released) rel *= releaseScale(values[p.relVel], s);
+      s.envs[e].set(values[p.a], values[p.d], values[p.s], rel);
       float velAmt = values[p.vel];
       float scale = 1.f - velAmt + velAmt * s.vel;
       for (int i = 0; i < len; ++i) s.envBuf[e][static_cast<std::size_t>(i)] = s.envs[e].next() * scale;
@@ -880,7 +914,7 @@ struct Core {
       std::array<float, 8> envStart{};
       for (std::size_t e = 0; e < s.envs.size() && e < envStart.size(); ++e) envStart[e] = s.envBuf[e][0];
       VoiceIn in{envStart.data(), static_cast<int>(std::min<std::size_t>(s.envs.size(), envStart.size())), s.vel, s.note,
-                 std::max(aftertouch, s.polyAT), s.arp ? s.arpBuf[0] : 0.f};
+                 std::max(aftertouch, s.polyAT), s.arp ? s.arpBuf[0] : 0.f, s.relVel};
       mod.voiceBlock(s.mv, in, values.data(), transport, len);
       vv = s.mv.vals.data();
       vp = s.mv.prevVals.data();
@@ -980,6 +1014,8 @@ struct Core {
                   // next unison layer or chord note can't steal them
     s.quietSamples = 0;
     s.polyAT = 0;
+    s.relVel = 0;
+    s.pedalDamp = false;
     s.startBeat = e.beat;
     s.rng.seed(dsp::hashSeed(serial, static_cast<uint64_t>(u), 0x51u));
     for (auto& env : s.envs) env.gate(true);
@@ -1010,6 +1046,8 @@ struct Core {
     if (sustain && !ignorePedal) { s.sustained = true; return; }
     s.state = VoicePool::State::Released;
     s.sustained = false;
+    s.pedalDamp = pedal > 0 && !ignorePedal;   // a half-down pedal lets it fade slowly
+    if (s.relVel <= 0) s.relVel = 64.f / 127.f;  // released without a key-up (all notes off): MIDI's "none"
     for (auto& env : s.envs) env.gate(false);
     s.arpEnv.gate(false);
     if (s.xfStage == 1 || s.xfStage == 2) { s.xfStage = 3; s.xfFrom = s.xfAmp; s.xfPos = 0; }
@@ -1021,7 +1059,7 @@ struct Core {
     bool p = sustain;
     if (ignorePedal) sustain = false;
     for (auto& s : slots) {
-      if (s.state == VoicePool::State::Held) { s.sustained = false; releaseSlot(s); }
+      if (s.state == VoicePool::State::Held) { s.sustained = false; releaseSlot(s, ignorePedal); }
     }
     sustain = p && !ignorePedal;
     heldCount = 0;
@@ -1030,6 +1068,7 @@ struct Core {
   void allNotesOff() {
     releaseAll(true);
     sustain = false;
+    pedal = 0;
   }
 
   void handle(const MidiEvent& e) {
@@ -1040,7 +1079,7 @@ struct Core {
       case T::CC: {
         ccs[std::clamp(e.cc, 0, 127)] = e.value;
         if (e.cc == 1) modwheel = e.value;
-        else if (e.cc == 64) setSustain(e.value >= 0.5f);
+        else if (e.cc == 64) setPedal(e.value);
         else if (e.cc == 120) { for (auto& s : slots) resetSlot(s); heldCount = 0; }
         else if (e.cc == 123) allNotesOff();
         break;
@@ -1054,10 +1093,14 @@ struct Core {
     }
   }
 
-  void setSustain(bool on) {
-    if (on == sustain) return;
-    sustain = on;
-    if (on) return;
+  // CC 64. Fully down holds key-ups (s.sustained); half down lets them fade
+  // with a stretched release (releaseScale), which follows the pedal as it
+  // moves; up releases normally.
+  void setPedal(float raw) {
+    const bool was = sustain;
+    pedal = pedalDepth(raw);
+    sustain = pedal >= 1.f;
+    if (sustain || !was) return;
     if (mode != Poly && heldCount > 0) {
       for (auto& s : slots) if (s.mono) s.sustained = false;
       return;
@@ -1121,6 +1164,8 @@ struct Core {
       s.serial = serial;
       s.sustained = false;
       s.legato = legato;
+      s.relVel = 0;
+      s.pedalDamp = false;
       setGlide(s, from);
       if (!s.arp && fromArp) s.arpEnv.reset();
       s.arp = fromArp;
@@ -1146,7 +1191,14 @@ struct Core {
     }
   }
 
+  // Key-up velocity: a note-on with velocity 0 (running status) or a note-off
+  // with 0 carries none, so it counts as the MIDI default, 64.
+  static float keyUpVelocity(const MidiEvent& e) {
+    return e.type == MidiEvent::Type::NoteOff && e.vel > 0 ? std::min(e.vel, 1.f) : 64.f / 127.f;
+  }
+
   void noteOff(const MidiEvent& e) {
+    const float rv = keyUpVelocity(e);
     if (mode == Poly || e.arpLane >= 0) {
       uint64_t oldest = UINT64_MAX;
       for (auto& s : slots)
@@ -1154,7 +1206,7 @@ struct Core {
           oldest = std::min(oldest, s.serial);
       if (oldest == UINT64_MAX) return;
       for (auto& s : slots)
-        if (s.state == VoicePool::State::Held && s.serial == oldest) releaseSlot(s, e.arp);
+        if (s.state == VoicePool::State::Held && s.serial == oldest) { s.relVel = rv; releaseSlot(s, e.arp); }
       return;
     }
     removeHeld(e.note);
@@ -1172,7 +1224,7 @@ struct Core {
       monoTransition(back, vel, e.channel, tune(b, serial), serial, mode == Legato, e.arp, e.arpLane);
       return;
     }
-    for (auto& s : slots) if (s.mono) releaseSlot(s, e.arp);
+    for (auto& s : slots) if (s.mono && s.state == VoicePool::State::Held) { s.relVel = rv; releaseSlot(s, e.arp); }
   }
 };
 
@@ -1198,6 +1250,8 @@ double VoiceContext::pitch() const {
 }
 int VoiceContext::key() const { return slot_->note; }
 float VoiceContext::velocity() const { return slot_->vel; }
+float VoiceContext::releaseVelocity() const { return slot_->relVel; }
+float VoiceContext::pedal() const { return core_->pedal; }
 int VoiceContext::channel() const { return slot_->channel; }
 bool VoiceContext::released() const { return slot_->state != VoicePool::State::Held; }
 bool VoiceContext::legato() const { return slot_->legato; }

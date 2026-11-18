@@ -22,7 +22,7 @@ namespace detail {
 
 enum class Src : uint8_t {
   Env, Lfo, Shape, Velocity, Key, Random, Aftertouch, ModWheel, Bend, Const,
-  BeatPhase, BarPhase, BarBeat, Downbeat, NoteAge, NoteOffbeat, ArpEnv, ArpPhrase, ArpStep, Custom
+  BeatPhase, BarPhase, BarBeat, Downbeat, NoteAge, NoteOffbeat, ArpEnv, ArpPhrase, ArpStep, ReleaseVel, Cc, Custom
 };
 
 struct SourceInfo {
@@ -114,6 +114,7 @@ struct VoiceIn {
   int note;
   float aftertouch;
   float arpEnv;      // the arpeggiator's note envelope (0 for other notes)
+  float relVel;      // key-up velocity (0 while the key is down)
 };
 
 class Modulation {
@@ -135,7 +136,7 @@ class Modulation {
   // Audio thread -------------------------------------------------------------------
   // Once per control block, before voices: global sources and global values.
   void beginBlock(const float* values, const Transport& t, double seconds, int len,
-                  float modwheel, float bend, float aftertouch);
+                  float modwheel, float bend, float aftertouch, const float* ccs);
   const float* globalValues() const { return gvals_.data(); }
   // Global modulation applied to `vals` in place, with the sources as they
   // were at the last control block: for code that runs before this block's
@@ -188,6 +189,7 @@ class Modulation {
   int iVel_ = 0, iKey_ = 0, iRandom_ = 0, iAT_ = 0, iMW_ = 0, iBend_ = 0, iConst_ = 0;
   int iBeat_ = 0, iBar_ = 0, iBarBeat_ = 0, iDown_ = 0, iAge_ = 0, iOff_ = 0;
   int iArpEnv_ = -1, iArpPhrase_ = -1, iArpStep_ = -1;
+  int iRelVel_ = 0, firstCc_ = 0;
   float arpPhrase_ = 0, arpStep_ = 0;
 
   struct LfoP { int shape, rate, sync, division, mode, phase, depth, fade; };
@@ -222,6 +224,11 @@ class Modulation {
 // Divisions offered by LFO and shape length menus.
 const std::vector<std::string>& lfoDivisionNames();
 const std::vector<std::string>& shapeLengthNames();
+
+// MIDI controllers offered as mod sources (cc.N): 0…119 except 1 (the mod
+// wheel has its own source).
+constexpr int kCcSources = 119;
+inline int ccSourceNumber(int i) { return i < 1 ? i : i + 1; }
 
 }  // namespace detail
 }  // namespace sk

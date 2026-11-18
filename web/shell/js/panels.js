@@ -4,7 +4,8 @@
 const KIT_PANELS = {
   voices: { title: "Voices", controls: [
     ["voiceMode", "Mode"], ["glide", "Glide"], ["unison", "Unison"], ["unisonDetune", "Detune"],
-    ["unisonSpread", "Spread"], ["bendRange", "Bend"]] },
+    ["unisonSpread", "Spread"], ["bendRange", "Bend"],
+    ["sk.halfPedal", "Half pedal", "For a continuous sustain pedal: part way down, notes you let go of fade slowly instead of stopping or ringing on, like a piano's dampers. Off: the pedal is simply down past half way. On/off pedals work the same either way."]] },
   master: { title: "Output", controls: [["master", "Level"], ["sk.a4", "A4"]] },
   // The arpeggiator (features.arp, API.md §4b).
   arp: { title: "Arp / Sequencer", feature: "arp.on",
@@ -51,7 +52,8 @@ function envPanel(n, model) {
   return {
     title: amp ? "Amp envelope" : `Envelope ${n}`,
     env: ["attack", "decay", "sustain", "release"].map((s) => `env${n}.${s}`),
-    controls: ["attack", "decay", "sustain", "release", "velocity"].map((s) => [`env${n}.${s}`, s[0].toUpperCase() + s.slice(1)]),
+    controls: ["attack", "decay", "sustain", "release", "velocity"].map((s) => [`env${n}.${s}`, s[0].toUpperCase() + s.slice(1)])
+      .concat([[`env${n}.relVel`, "Rel. vel.", "Release velocity: how much the speed you let go of a key changes the release. Above 0, a quick key-up shortens it and a gentle one lengthens it; below 0, the other way round. Keyboards without release velocity send a middle value, which changes nothing."]]),
   };
 }
 
@@ -115,6 +117,8 @@ class Panels {
     const info = layout && layout.paramInfo;
     this.app.paramInfo = info && typeof info === "object" ? info : {};
     for (const id of Object.keys(this.app.paramInfo)) if (!this.model.param(id)) this.problems.push(`layout.json has paramInfo for "${id}", which isn't a parameter.`);
+    // When parameters' controls are greyed out (controls.js, SkEnable).
+    if (layout && this.app.enable) this.app.enable.load(layout.enabledWhen, this.problems);
     // Which tabs were showing and which panels were folded, per synth.
     this.storeKey = `synthkit:${this.model.info.synth.id}:ui`;
     this.ui = skStore.get(this.storeKey, {}) || {};

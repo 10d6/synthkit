@@ -720,33 +720,176 @@ class ShapePanel {
 
 // ---- matrix ---------------------------------------------------------------------------
 
+// Which group each kit source belongs to in the source picker.
 const SK_SOURCE_GROUPS = [
   ["Envelopes", (s) => /^env\d/.test(s.id)],
   ["LFOs", (s) => /^lfo\d/.test(s.id)],
   ["Shapes", (s) => /^shape\d/.test(s.id)],
-  ["Note", (s) => ["velocity", "key", "random", "aftertouch", "note.age", "note.offbeat"].includes(s.id)],
-  ["Controllers", (s) => ["modwheel", "bend"].includes(s.id)],
+  ["Note", (s) => ["velocity", "release.vel", "key", "random", "note.age", "note.offbeat"].includes(s.id)],
+  ["Controllers", (s) => ["modwheel", "bend", "aftertouch"].includes(s.id) || SK_FEATURED_CCS.includes(s.id)],
+  ["MIDI CC", (s) => /^cc\.\d+$/.test(s.id)],
   ["Musical time", (s) => ["beat.phase", "bar.phase", "bar.beat", "downbeat"].includes(s.id)],
+  ["Arp / Sequencer", (s) => /^arp\./.test(s.id)],
   ["Other", (s) => s.id === "const"],
 ];
+// Controllers common enough to list beside the mod wheel (they're in MIDI CC too).
+const SK_FEATURED_CCS = ["cc.2", "cc.4", "cc.11", "cc.64"];
 
-function skSourceSelect(model, value, onchange, allowNone) {
-  const sel = h("select", { class: "menu-select", onchange: () => onchange(sel.value) });
-  if (allowNone) sel.append(h("option", { value: "", text: "No scaling" }));
-  const used = new Set();
+// The source picker's groups: the kit's, then the synth's own sources.
+function skSourceGroups(app) {
+  const m = app.model, groups = [];
+  const item = (s) => ({ id: s.id, name: s.name, hint: s.perVoice ? "per voice" : "" });
   for (const [label, test] of SK_SOURCE_GROUPS) {
-    const og = h("optgroup", { label });
-    for (const s of model.mod.sources) if (test(s)) { og.append(h("option", { value: s.id, text: s.name })); used.add(s.id); }
-    if (og.children.length) sel.append(og);
+    const list = m.mod.sources.filter(test);
+    if (!list.length) continue;
+    const g = { label, items: list.map(item) };
+    if (label === "MIDI CC") g.extra = (pane, pick) => skCcPane(app, pane, pick);
+    groups.push(g);
   }
-  const custom = model.mod.sources.filter((s) => !used.has(s.id));
-  if (custom.length) {
-    const og = h("optgroup", { label: model.info.synth.name });
-    for (const s of custom) og.append(h("option", { value: s.id, text: s.name }));
-    sel.append(og);
+  const own = m.mod.sources.filter((s) => !SK_SOURCE_GROUPS.some(([, t]) => t(s)));
+  if (own.length) groups.splice(Math.min(3, groups.length), 0, { label: m.info.synth.name, items: own.map(item) });
+  return groups;
+}
+
+// The MIDI CC group's extras: any controller by number, or learn it from a
+// MIDI controller (in the browser; in a DAW the host routes MIDI).
+function skCcPane(app, pane, pick) {
+  const num = h("input", { class: "pick-num", type: "number", min: 0, max: 119, placeholder: "0–119", "aria-label": "Controller number" });
+  const use = () => {
+    const n = Math.round(Number(num.value));
+    if (!Number.isFinite(n) || n < 0 || n > 119 || num.value === "") { num.focus(); return; }
+    pick(n === 1 ? "modwheel" : `cc.${n}`);
+  };
+  num.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); use(); } });
+  const row = h("div", { class: "pick-cc" }, h("span", { text: "CC number" }), num, h("button", { type: "button", class: "btn btn-small", onclick: use }, "Use"));
+  if (!app.host && app.midi && navigator.requestMIDIAccess) {
+    const learn = h("button", { type: "button", class: "btn btn-small", "aria-pressed": "false" }, "Learn");
+    learn.addEventListener("click", () => {
+      if (learn.getAttribute("aria-pressed") === "true") { app.midi.learnCC(null); learn.setAttribute("aria-pressed", "false"); learn.textContent = "Learn"; return; }
+      learn.setAttribute("aria-pressed", "true");
+      learn.textContent = "Move a control…";
+      app.midi.learnCC((cc) => pick(cc === 1 ? "modwheel" : `cc.${cc}`));
+    });
+    row.append(learn);
   }
-  sel.value = value || "";
-  return sel;
+  pane.append(row);
+}
+
+// A searchable, grouped list in a popover, for choices too many for a menu
+// (mod sources, destinations). groups: [{ label, items: [{ id, name, hint }],
+// extra(pane, pick) }]. One is open at a time.
+const skPicker = {
+  open(app, at, { title, groups, value, onPick, none }) {
+    this.close();
+    const all = groups.flatMap((g) => g.items.map((it) => ({ ...it, group: g.label })));
+    if (none) groups = [{ label: none, items: [{ id: "", name: none }] }, ...groups];
+    const search = h("input", { class: "pick-search", type: "search", placeholder: "Search", "aria-label": `Search ${title.toLowerCase()}` });
+    const cats = h("div", { class: "pick-cats", role: "tablist", "aria-label": title, "aria-orientation": "vertical" });
+    const list = h("div", { class: "pick-list", role: "listbox", "aria-label": title });
+    const pop = h("div", { class: "pick-pop", role: "dialog", "aria-label": title },
+      h("div", { class: "pick-head" }, h("span", { class: "pick-title", text: title }), search),
+      h("div", { class: "pick-body" }, cats, list));
+    const pick = (id) => { app.midi && app.midi.learnCC(null); this.close(); onPick(id); };
+    const itemBtn = (it, showGroup) => h("button", { type: "button", class: "pick-item", role: "option", "aria-selected": String(it.id === (value || "")), "data-id": it.id, onclick: () => pick(it.id) },
+      h("span", { class: "pick-name", text: it.name }),
+      showGroup ? h("span", { class: "pick-hint", text: it.group }) : it.hint ? h("span", { class: "pick-hint", text: it.hint }) : null);
+    let current = 0;
+    const show = (i) => {
+      current = i;
+      [...cats.children].forEach((b, j) => { b.setAttribute("aria-selected", String(j === i)); b.tabIndex = j === i ? 0 : -1; });
+      list.textContent = "";
+      const g = groups[i];
+      if (g.extra) { const pane = h("div", { class: "pick-extra" }); g.extra(pane, pick); list.append(pane); }
+      for (const it of g.items) list.append(itemBtn(it, false));
+    };
+    groups.forEach((g, i) => cats.append(h("button", { type: "button", class: "pick-cat", role: "tab", text: g.label, onclick: () => show(i) })));
+    const filter = () => {
+      const q = search.value.trim().toLowerCase();
+      pop.classList.toggle("is-searching", !!q);
+      if (!q) { show(current); return; }
+      list.textContent = "";
+      // "74" or "cc 74" finds that controller even if it has no name.
+      const words = q.split(/\s+/);
+      const hits = all.filter((it) => words.every((w) => (it.name + " " + it.group + " " + it.id).toLowerCase().includes(w))).slice(0, 60);
+      for (const it of hits) list.append(itemBtn(it, true));
+      if (!hits.length) list.append(h("p", { class: "pick-empty", text: "Nothing matches." }));
+    };
+    search.addEventListener("input", filter);
+    // Keys: arrows move through the list (and the groups), Enter picks, Esc closes.
+    pop.addEventListener("keydown", (e) => {
+      e.stopPropagation();   // typing here never plays notes
+      const items = [...list.querySelectorAll(".pick-item")];
+      const at = items.indexOf(document.activeElement);
+      if (e.key === "Escape") { e.preventDefault(); this.close(true); return; }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (document.activeElement && document.activeElement.classList.contains("pick-cat")) {
+          const n = (current + (e.key === "ArrowDown" ? 1 : -1) + groups.length) % groups.length;
+          show(n); cats.children[n].focus(); return;
+        }
+        const n = at < 0 ? (e.key === "ArrowDown" ? 0 : items.length - 1) : Math.max(0, Math.min(items.length - 1, at + (e.key === "ArrowDown" ? 1 : -1)));
+        if (items[n]) items[n].focus();
+      }
+      if (e.key === "ArrowLeft" && at >= 0 && !pop.classList.contains("is-searching")) { e.preventDefault(); cats.children[current].focus(); }
+      if (e.key === "ArrowRight" && document.activeElement && document.activeElement.classList.contains("pick-cat")) { e.preventDefault(); const first = list.querySelector(".pick-item"); if (first) first.focus(); }
+    });
+    pop.addEventListener("keyup", (e) => e.stopPropagation());
+    const gi = Math.max(0, groups.findIndex((g) => g.items.some((it) => it.id === (value || ""))));
+    show(gi);
+    document.body.append(pop);
+    this.place(pop, at);
+    this.pop = pop;
+    this.returnTo = at && at.focus ? at : null;
+    const sel = list.querySelector('.pick-item[aria-selected="true"]');
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+    (matchMedia("(pointer: coarse)").matches && sel ? sel : search).focus({ preventScroll: true });
+    setTimeout(() => {
+      this.away = (e) => { if (!pop.contains(e.target)) this.close(); };
+      document.addEventListener("pointerdown", this.away, true);
+    });
+  },
+  // at: an element (opens below it) or { x, y }.
+  place(pop, at) {
+    const r = at && at.getBoundingClientRect ? at.getBoundingClientRect() : { left: at.x, bottom: at.y, top: at.y };
+    const w = pop.offsetWidth, ht = pop.offsetHeight, m = 8;
+    let y = r.bottom + 4;
+    if (y + ht > innerHeight - m) y = Math.max(m, Math.min(r.top - 4 - ht, innerHeight - ht - m));
+    pop.style.left = Math.max(m, Math.min(r.left, innerWidth - w - m)) + "px";
+    pop.style.top = y + "px";
+  },
+  close(refocus) {
+    if (!this.pop) return;
+    this.pop.remove();
+    this.pop = null;
+    document.removeEventListener("pointerdown", this.away, true);
+    if (refocus && this.returnTo) this.returnTo.focus({ preventScroll: true });
+  },
+};
+
+// A button showing the chosen source (or destination) that opens the picker.
+function skPickButton(app, { title, groups, value, onchange, none, label }) {
+  const names = new Map(groups.flatMap((g) => g.items.map((it) => [it.id, it.name])));
+  const text = h("span", { class: "pick-btn-text" });
+  const btn = h("button", { type: "button", class: "pick-btn", "aria-haspopup": "dialog", "aria-label": label }, text, h("span", { class: "pick-btn-chev", "aria-hidden": "true", text: "▾" }));
+  const set = (v) => {
+    btn.dataset.value = v || "";
+    text.textContent = v ? (names.get(v) || v) : (none || "");
+    btn.title = text.textContent;
+  };
+  set(value);
+  btn.addEventListener("click", () => skPicker.open(app, btn, { title, groups, value: btn.dataset.value, none,
+    onPick: (id) => { set(id); onchange(id); } }));
+  return btn;
+}
+
+function skDestinationGroups(model) {
+  const groups = new Map();
+  for (const p of model.modulatable()) {
+    const g = p.group || "Sound";
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push({ id: p.id, name: p.name });
+  }
+  return [...groups].map(([label, items]) => ({ label, items }));
 }
 
 // Bipolar amount slider for a route (not a parameter).
@@ -835,7 +978,7 @@ class MatrixPanel {
     if (!routes.length) {
       this.list.append(h("p", { class: "matrix-empty", text: "Nothing is modulated yet. Add a route here, or right-click a knob and choose Modulate." }));
     }
-    const dsts = this.m.modulatable();
+    const srcGroups = skSourceGroups(this.app), dstGroups = skDestinationGroups(this.m);
     routes.forEach((r, i) => {
       const update = (patch) => { const next = this.m.routes(); Object.assign(next[i], patch); if (patch.via === "") delete next[i].via; this.m.setRoutes(next); };
       const setAmt = (v) => {
@@ -844,20 +987,10 @@ class MatrixPanel {
         this.editing = true;
         try { this.m.setRoutes(next); } finally { this.editing = false; }
       };
-      const src = skSourceSelect(this.m, r.src, (v) => update({ src: v }));
-      src.setAttribute("aria-label", `Route ${i + 1} source`);
-      const dst = h("select", { class: "menu-select", "aria-label": `Route ${i + 1} destination`, onchange: () => update({ dst: dst.value }) });
-      const groups = new Map();
-      for (const p of dsts) {
-        const g = p.group || "Sound";
-        if (!groups.has(g)) groups.set(g, h("optgroup", { label: g }));
-        groups.get(g).append(h("option", { value: p.id, text: p.name }));
-      }
-      for (const og of groups.values()) dst.append(og);
-      dst.value = r.dst;
+      const src = skPickButton(this.app, { title: "Sources", groups: srcGroups, value: r.src, label: `Route ${i + 1} source`, onchange: (v) => update({ src: v }) });
+      const dst = skPickButton(this.app, { title: "Destinations", groups: dstGroups, value: r.dst, label: `Route ${i + 1} destination`, onchange: (v) => update({ dst: v }) });
       const amt = new AmountSlider(r.amt, setAmt);
-      const via = skSourceSelect(this.m, r.via, (v) => update({ via: v }), true);
-      via.setAttribute("aria-label", `Route ${i + 1} scaled by`);
+      const via = skPickButton(this.app, { title: "Scale by", groups: srcGroups, value: r.via || "", none: "No scaling", label: `Route ${i + 1} scaled by`, onchange: (v) => update({ via: v }) });
       const meter = h("span", { class: "route-meter" }, h("span", { class: "route-meter-fill" }));
       this.meters.push({ el: meter.firstChild, src: this.m.sourceIndex.get(r.src) });
       const remove = h("button", { type: "button", class: "btn btn-quiet btn-small", "aria-label": `Remove route ${i + 1}`, onclick: () => { const next = this.m.routes(); next.splice(i, 1); this.m.setRoutes(next); } }, "Remove");

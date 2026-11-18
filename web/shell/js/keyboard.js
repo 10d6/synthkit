@@ -1,6 +1,9 @@
 // On-screen keyboard, pitch/mod wheels, and the computer keyboard:
 //   A W S E D F T G Y H U J K O L P ; '  play notes
 //   Z / X  octave down / up     C / V  velocity down / up
+// Clicking a key plays louder the nearer its front edge you press (like
+// striking a real key further out), and where you let go is the key-up
+// (release) velocity.
 
 const SK_KEYMAP = {
   KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6, KeyG: 7, KeyY: 8, KeyH: 9,
@@ -21,6 +24,7 @@ class Keyboard {
     this.keys = new Map();         // note -> element
     this.lit = new Map();          // note -> count of presses from the page (mouse, typing, a page's noteOn)
     this.midiLit = new Set();      // "channel:note" held on a MIDI controller (a set: repeated note-ons don't stack)
+    this.vel = new Map();          // note -> velocity it was last played with (for the key's colour)
     this.typing = true;            // computer keys play notes (off on a page without the keyboard)
     this.build();
     document.addEventListener("keydown", (e) => this.key(e, true));
@@ -50,7 +54,7 @@ class Keyboard {
             h("button", { type: "button", class: "btn btn-icon", title: "Octave up", "aria-label": "Octave up", onclick: () => shift(12) }, "›")),
           this.slot = h("div", { class: "kb-slot" }),
           h("span", { class: "kb-spacer" }),
-          h("span", { class: "kb-hint", title: "Z / X shift the octave, C / V change velocity" }, "Play with A–K on your keyboard"),
+          h("span", { class: "kb-hint", title: "Click a key near its front edge to play louder, near the back for softer; where you let go sets the key-up (release) velocity. Typing: Z / X shift the octave, C / V change velocity." }, "Click lower on a key for louder · play with A–K"),
           this.velLabel),
         this.keysEl));
     this.keysEl.addEventListener("pointerdown", (e) => this.press(e));
@@ -111,17 +115,27 @@ class Keyboard {
         if (n % 12 === 0) k.append(h("span", { class: "key-name", text: skNoteName(n) }));
         wi++;
       }
-      if (this.isLit(n)) k.classList.add("is-down");
+      if (this.isLit(n)) { k.classList.add("is-down"); k.style.setProperty("--kv", ((this.vel.get(n) || 100) / 127).toFixed(2)); }
       this.keysEl.append(k);
       this.keys.set(n, k);
     }
     this.range.textContent = `${skNoteName(low)} – ${skNoteName(high)}`;
   }
 
+  // Velocity from where the pointer is on a key: nearer the front = louder.
+  // The back fifth of a white key sits behind the black keys and plays
+  // softest; the range is 20–127 so a soft click is still clearly audible.
   velocityFrom(e, key) {
     const r = key.getBoundingClientRect();
-    const y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
-    return Math.round(40 + y * 87);  // nearer the front of the key = louder
+    const y = Math.min(1, Math.max(0, (e.clientY - r.top) / Math.max(1, r.height)));
+    return Math.max(1, Math.min(127, Math.round(20 + y * 107)));
+  }
+  // Show the velocity a click played, then go back to the typing velocity.
+  flashVelocity(v, up) {
+    this.velLabel.textContent = up ? `Release ${v}` : `Velocity ${v}`;
+    this.velLabel.classList.add("is-live");
+    clearTimeout(this.velTimer);
+    this.velTimer = setTimeout(() => { this.velLabel.classList.remove("is-live"); this.showVelocity(); }, 1500);
   }
   noteAt(e) {
     const el = document.elementFromPoint(e.clientX, e.clientY);
@@ -135,20 +149,32 @@ class Keyboard {
     if (!hit) return;
     if (this.pointers.has(e.pointerId)) this.lift(e);   // pressed again without lifting: let go of the first
     this.pointers.set(e.pointerId, hit.note);
-    this.app.noteOn(hit.note, this.velocityFrom(e, hit.key));
+    const v = this.velocityFrom(e, hit.key);
+    this.app.noteOn(hit.note, v);
+    this.flashVelocity(v);
   }
   slide(e) {
     if (!this.pointers.has(e.pointerId)) return;
     const hit = this.noteAt(e);
     const cur = this.pointers.get(e.pointerId);
     if (!hit || hit.note === cur) return;
-    this.app.noteOff(cur);
+    const v = this.velocityFrom(e, hit.key);
+    this.app.noteOff(cur, v);
     this.pointers.set(e.pointerId, hit.note);
-    this.app.noteOn(hit.note, this.velocityFrom(e, hit.key));
+    this.app.noteOn(hit.note, v);
+    this.flashVelocity(v);
   }
   lift(e) {
     if (!this.pointers.has(e.pointerId)) return;
-    this.app.noteOff(this.pointers.get(e.pointerId));
+    const n = this.pointers.get(e.pointerId);
+    // Key-up velocity from where the pointer lets go, on the key it was
+    // playing (64, MIDI's "none", if it has left the keys).
+    const key = this.keys.get(n);
+    const r = key && key.getBoundingClientRect();
+    const inside = r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    const v = inside ? this.velocityFrom(e, key) : 64;
+    this.app.noteOff(n, v);
+    if (inside && e.type === "pointerup") this.flashVelocity(v, true);
     this.pointers.delete(e.pointerId);
   }
 
@@ -197,16 +223,19 @@ class Keyboard {
   }
 
   // Light keys for notes from the page (mouse, typing, a page's noteOn).
-  light(n, on) {
+  // A lit key's colour follows the velocity it was played with.
+  light(n, on, vel) {
     const c = (this.lit.get(n) || 0) + (on ? 1 : -1);
     if (c <= 0) this.lit.delete(n); else this.lit.set(n, c);
+    if (on && vel) this.vel.set(n, vel);
     this.refresh(n);
   }
   // Keys held on a MIDI controller: per channel and note, so a repeated
   // note-on doesn't stack and a note-off always clears it.
-  midiNote(channel, n, on) {
+  midiNote(channel, n, on, vel) {
     const id = `${channel}:${n}`;
     if (on) this.midiLit.add(id); else this.midiLit.delete(id);
+    if (on && vel) this.vel.set(n, vel);
     this.refresh(n);
   }
   midiAllOff(channel) {
@@ -222,7 +251,10 @@ class Keyboard {
   }
   refresh(n) {
     const k = this.keys.get(n);
-    if (k) k.classList.toggle("is-down", this.isLit(n));
+    if (!k) return;
+    const lit = this.isLit(n);
+    k.classList.toggle("is-down", lit);
+    if (lit) k.style.setProperty("--kv", ((this.vel.get(n) || 100) / 127).toFixed(2));
   }
   // All notes off: let go of everything held on the page and clear the lights.
   clearLights() {

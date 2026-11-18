@@ -141,7 +141,7 @@ Scenario parseScenario(const Json& j, const std::string& name, const fs::path& s
     else te.seconds = ev["t"].number(0);
     int ch = static_cast<int>(ev["ch"].number(0));
     if (ev.contains("on")) te.e = sk::NoteOn{static_cast<int>(ev["on"].number()), static_cast<float>(ev["vel"].number(100) / 127.0), ch};
-    else if (ev.contains("off")) te.e = sk::NoteOff{static_cast<int>(ev["off"].number()), ch};
+    else if (ev.contains("off")) te.e = sk::NoteOff{static_cast<int>(ev["off"].number()), ch, static_cast<float>(ev["vel"].number(64) / 127.0)};
     else if (ev.contains("cc")) te.e = sk::CC{static_cast<int>(ev["cc"].number()), static_cast<float>(ev["value"].number(0) / 127.0), ch};
     else if (ev.contains("bend")) {
       te.e.type = sk::MidiEvent::Type::PitchBend;
