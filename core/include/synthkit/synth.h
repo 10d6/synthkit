@@ -17,6 +17,7 @@
 #include "synthkit/patch.h"
 #include "synthkit/transport.h"
 #include "synthkit/webaudio.h"
+#include "synthkit/reverb.h"
 
 namespace sk {
 

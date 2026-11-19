@@ -1115,8 +1115,8 @@ Helpers: `mtof(note, a4 = 440)`, `ftom(hz)`, `dbToGain(db)`, `gainToDb(g)`,
 `panGains(p −1…1, l, r)` (equal power), `hashSeed(a, b, c)` (mix numbers into
 a seed for `Rng`), `flushDenormal(x)`, `kPi`, `kTwoPi`.
 
-New blocks are added to the kit when a second synth needs them; until then they
-live in the synth repo.
+A reverb (`dsp::Reverb`) is in §8b. New blocks are added to the kit when a
+second synth needs them; until then they live in the synth repo.
 
 ## 8a. Web Audio blocks
 
@@ -1162,6 +1162,62 @@ Porting a node graph:
   ```
 
   The two scripts are a template for a synth's own comparison with its sketch.
+
+## 8b. Reverb
+
+`sk::dsp::Reverb` (in `synthkit/reverb.h`, brought in by `synth.h`) is a
+generated hybrid reverb, first built for 10d6/piano (its `docs/MODEL.md`,
+Space, has the design and measurements). Each space's **early reflections**
+are an impulse response (a shoebox room's image sources, built in `prepare`,
+played by `wa::Convolver`); its **tail** is a 16-line feedback delay network,
+so decay, size and damping are continuous.
+
+| Space (`kReverbSpaces[i]`) | Shoebox | RT60 | Early part |
+|---|---|---|---|
+| 0 Room | 6 × 5 × 3 m | 0.6 s | 60 ms |
+| 1 Chamber | 10 × 8 × 5 m | 1.3 s | 90 ms |
+| 2 Hall | 32 × 20 × 14 m | 2.2 s | 140 ms |
+| 3 Cathedral | 60 × 24 × 28 m | 5.0 s | 220 ms |
+| 4 Plate | none | 2.4 s | a 12 ms bright burst |
+
+```cpp
+dsp::Reverb reverb;                       // in the synth: one, after the voices
+float revL[32], revR[32], wetL[32], wetR[32];
+
+void prepare(const PrepareInfo& info) override {
+  reverb.prepare(info.sampleRate);        // allocates: here only (optional 2nd argument below)
+}
+void processGlobal(GlobalContext& ctx, Buffer& io) override {
+  Ramp mix = ctx.ramp(room);              // 0…100 %
+  const int n = std::min(io.frames, 32);
+  bool on = false;
+  for (int i = 0; i < n; ++i) { revL[i] = io.left[i]; revR[i] = io.right[i]; on = on || mix.at(i) > 0; }
+  dsp::Reverb::Settings st{ctx.choice(space), decay, size, damping, predelayMs,
+                           earlyDb, lowCutHz, highCutHz, on};
+  reverb.process(st, revL, revR, wetL, wetR, n);   // writes the wet signal, unscaled by the mix
+  for (int i = 0; i < n; ++i) {
+    io.left[i] += mix.at(i) * 0.01f * kWet * wetL[i];
+    io.right[i] += mix.at(i) * 0.01f * kWet * wetR[i];
+  }
+}
+```
+
+- **`prepare(sampleRate, weightHz = 800)`** builds every space. The spaces are
+  levelled to the same energy for an impulse weighted by a one-pole low-pass at
+  `weightHz` (about the instrument's spectrum), so they sound about as loud as
+  each other at the same mix. The level is yours to set (`kWet` above: the
+  piano's is 0.1062).
+- **`Settings`**: `type` (the space), `decay` (× its RT60s), `size` (× its
+  delays, 0.5-2, gliding over 150 ms; the RT60 stays), `damping` (0-100: the
+  treble RT60 moves by 2^((50 − d)/30) from the space's own), `predelayMs`
+  (0-200), `earlyDb` (the reflections' level), `lowCutHz` and `highCutHz`
+  (Butterworth filters on the wet signal), and `on` (the mix is above 0
+  somewhere in the block).
+- **`process`** takes up to 32 frames (a control block). It returns false and
+  writes silence once every space has rung out with `on` false, so a reverb at
+  mix 0 costs nothing. Changing `type` fades the input over to the new space in
+  10 ms while the old one rings out.
+- **Cost**: about 2.6 % of a native core for one space; two while one rings out.
 
 ## 9. UI layout
 
