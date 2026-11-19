@@ -1114,6 +1114,72 @@ TEST(tempo_source_and_tempo_in_patches) {
 // (Bit-level agreement with the browser is checked by
 // web/test/webaudio-parity.cjs; these check the blocks on their own.)
 
+// The reverb (synthkit/reverb.h, from 10d6/piano): each space decays at its RT60, and it stops
+// (adds nothing, returns false) once the mix has been off for its ring-out.
+TEST(reverb_spaces_decay_at_their_rt60) {
+  const float sr = 48000;
+  for (int k = 0; k < dsp::kReverbSpaceCount; ++k) {
+    dsp::Reverb rv;
+    rv.prepare(sr);
+    const dsp::ReverbSpace& d = dsp::kReverbSpaces[k];
+    dsp::Reverb::Settings st{k, 1.f, 1.f, 50.f, 0.f, 0.f, 20.f, 20000.f, true};
+    const int block = 32, total = static_cast<int>((d.rt * 1.2f + 0.3f) * sr) / block * block;
+    std::vector<float> l(block), r(block), wl(block), wr(block);
+    std::vector<double> e;   // energy per 10 ms
+    double acc = 0;
+    int cnt = 0;
+    dsp::Rng rng(3);
+    // measured below the tail's 2 kHz split, as the piano measured it (500-1000 Hz): the treble
+    // decays faster by design (hfRatio)
+    dsp::OnePole lpL, lpR;
+    lpL.prepare(sr); lpR.prepare(sr); lpL.set(700); lpR.set(700);
+    for (int n = 0; n < total; n += block) {
+      for (int i = 0; i < block; ++i) l[i] = r[i] = n + i < static_cast<int>(0.05f * sr) ? rng.bipolar() : 0.f;
+      rv.process(st, l.data(), r.data(), wl.data(), wr.data(), block);
+      for (int i = 0; i < block; ++i) {
+        CHECK(std::isfinite(wl[i]) && std::isfinite(wr[i]));
+        float a0 = lpL.lowpass(wl[i]), a1 = lpR.lowpass(wr[i]);
+        acc += double(a0) * a0 + double(a1) * a1;
+        if (++cnt == static_cast<int>(0.01f * sr)) { e.push_back(acc); acc = 0; cnt = 0; }
+      }
+    }
+    // the slope of the energy (dB) from 5 to 25 dB under its peak after the input stops: T20 × 3
+    int peak = 0;
+    for (int i = 5; i < static_cast<int>(e.size()); ++i) if (e[i] > e[peak]) peak = i;
+    double top = 10 * std::log10(e[peak]);
+    int a = -1, b = -1;
+    for (int i = peak; i < static_cast<int>(e.size()); ++i) {
+      double v = 10 * std::log10(e[i] + 1e-30);
+      if (a < 0 && v < top - 5) a = i;
+      if (b < 0 && v < top - 25) { b = i; break; }
+    }
+    CHECK(a > 0 && b > a);
+    if (a > 0 && b > a) {
+      double rt = (b - a) * 0.01 * 3.0;
+      // the piano measured 0.79-1.07 of the design (Plate lowest: the input is still in its burst)
+      CHECK(rt / d.rt > 0.75 && rt / d.rt < 1.15);
+    }
+  }
+}
+
+TEST(reverb_stops_when_off) {
+  const float sr = 48000;
+  dsp::Reverb rv;
+  rv.prepare(sr);
+  dsp::Reverb::Settings st{0, 1.f, 1.f, 50.f, 0.f, 0.f, 20.f, 20000.f, true};
+  std::vector<float> l(32, 0.5f), r(32, 0.5f), wl(32), wr(32);
+  CHECK(rv.process(st, l.data(), r.data(), wl.data(), wr.data(), 32));
+  st.on = false;
+  std::fill(l.begin(), l.end(), 0.f);
+  std::fill(r.begin(), r.end(), 0.f);
+  int blocks = 0;
+  while (rv.process(st, l.data(), r.data(), wl.data(), wr.data(), 32) && blocks < 100000) ++blocks;
+  const float ringOut = dsp::kReverbSpaces[0].rt * 1.3f + dsp::kReverbSpaces[0].erLen + 0.02f;
+  CHECK(blocks * 32 < static_cast<int>(ringOut * sr) + 64);
+  CHECK(!rv.process(st, l.data(), r.data(), wl.data(), wr.data(), 32));
+  CHECK(wl[0] == 0 && wr[31] == 0);
+}
+
 TEST(wa_convolver_is_exact_convolution) {
   // Long enough to use every partition size, with odd lengths.
   dsp::Rng rng(7);
