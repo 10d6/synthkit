@@ -67,7 +67,7 @@ web/wasm/                C API exported to JavaScript
 web/shell/               the page: template, style, js/ (model, audio, host
                          (plugin bridge), controls, panels, modulation, arp
                          (the arp/sequencer piano roll and generator), presets,
-                         keyboard, midi, clock, app; app.js also holds the
+                         controllers (the keyboard's pedals and knobs), keyboard, midi, clock, app; app.js also holds the
                          bridge for a synth's own page), worklet.js
 web/pack.py              inlines everything into one <synth>.html (and joins a
                          synth's ui/page.js modules into one scope)

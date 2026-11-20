@@ -37,6 +37,10 @@ async function main() {
   check(placed.presets && placed.midi && placed.panic && placed.keyboard && !placed.tempo,
     "kit parts mount where the page puts them (and the tempo stays out)", `placed: ${JSON.stringify(placed)}`);
   check(placed.knobs === 6, "a section of kit knobs mounts from a layout-style spec", `${placed.knobs} knobs`);
+  // The kit keyboard's pedals and knobs are left out when the page says so
+  // (a pump organ has treadles, not piano pedals), but the keys stay.
+  const kbControls = await page.evaluate(() => ({ shown: [...document.querySelectorAll(".kb-controls, .kb-controls-btn")].some((e) => e.offsetParent !== null), keys: document.querySelectorAll(".key").length }));
+  check(!kbControls.shown && kbControls.keys > 0, "mount(\"keyboard\", { controllers: false }) leaves out the pedals and knobs", `controls shown: ${JSON.stringify(kbControls)}`);
 
   // 2. A treadle press is a message; pumping raises the pressure the gauge shows.
   await page.mouse.click(5, 5);

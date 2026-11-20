@@ -82,6 +82,7 @@ class VoiceContext {
   float bend() const;                   // -1…1
   float cc(int n) const;                // last value of any CC, 0…1
   float pedal() const;                  // sustain pedal depth 0…1 (half pedal, API.md §4)
+  bool sostenuto() const;               // sostenuto pedal (CC 66) is down (API.md §4)
   Beats noteAge() const;                // beats since the note started
 
   // Modulation (API.md §6). Values are this voice's, for this block.

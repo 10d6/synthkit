@@ -1,0 +1,22 @@
+{
+  "patch": "init",
+  "params": { "env1.release": 0.25, "delay.mix": 0 },
+  "length": 6,
+  "events": [
+    { "t": 0, "on": 60, "vel": 100 },
+    { "t": 0.1, "cc": 66, "value": 127 },
+    { "t": 0.5, "off": 60 },
+    { "t": 1.0, "on": 64, "vel": 100 },
+    { "t": 1.5, "off": 64 },
+    { "t": 3.0, "cc": 66, "value": 0 }
+  ],
+  "expect": {
+    "soundBy": 0.05,
+    "silentAfter": 5.9,
+    "levelAt": [
+      { "t": 0.8, "above": -50 },
+      { "t": 2.5, "above": -50 },
+      { "t": 3.6, "below": -80 }
+    ]
+  }
+}

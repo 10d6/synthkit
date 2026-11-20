@@ -3,7 +3,7 @@
 
 Hand-written scenarios miss the orderings that break voice handling (a release that reaches a
 voice before its strike, a restrike in the same sample as a pedal change, ...). This generates
-random passages of fast repeats, chords, overlapping notes and sustain-pedal changes, renders each
+random passages of fast repeats, chords, overlapping notes and sustain- and sostenuto-pedal changes, renders each
 with the synth's render tool, and reports every passage still sounding some time after all its
 keys and the pedal were released. Every note-on gets its note-off.
 
@@ -16,7 +16,7 @@ keys and the pedal were released. Every note-on gets its note-off.
     --keys LO-HI      MIDI notes to play (default 21-108)
     --tail S          how long after the last release the synth must be quiet (default 3 s)
     --below DB        what counts as quiet: peak dBFS (default -80)
-    --no-pedal        no sustain pedal (CC 64)
+    --no-pedal        no sustain or sostenuto pedal (CC 64, 66)
     --patch NAME      the patch every passage starts from (default init)
     --out DIR         where failing passages are saved (default: the temp directory)
     param=value       settings for every passage, e.g. amp.release=0.5
@@ -43,12 +43,15 @@ def passage(seed, mode, lo, hi, pedal_on):
     rnd = random.Random(seed)
     # keys struck more often than the rest, so repeats and restrikes are common
     fav = [k if lo <= k <= hi else (lo + hi) // 2 for k in (60, 60, 36, 72)]
-    ev, t, down, pedal = [], 0.0, {}, False
+    ev, t, down, pedal, sost = [], 0.0, {}, False, False
     for _ in range(rnd.randint(20, 80)):
         t += rnd.choice([0.0, 0.0, 0.005, 0.01, 0.03, 0.06, 0.12])
         r = rnd.random()
         if r < 0.08:
-            if pedal_on:
+            if pedal_on and rnd.random() < 0.3:
+                sost = not sost
+                ev.append({"t": round(t, 4), "cc": 66, "value": 127 if sost else 0})
+            elif pedal_on:
                 pedal = not pedal
                 ev.append({"t": round(t, 4), "cc": 64, "value": 127 if pedal else 0})
         elif r < 0.55:
@@ -70,6 +73,7 @@ def passage(seed, mode, lo, hi, pedal_on):
         ev += [{"t": round(t, 4), "off": k}] * c
     if pedal_on:
         ev.append({"t": round(t, 4), "cc": 64, "value": 0})
+        ev.append({"t": round(t, 4), "cc": 66, "value": 0})
     return ev, t
 
 

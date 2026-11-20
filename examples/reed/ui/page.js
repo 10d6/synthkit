@@ -9,7 +9,7 @@ export function mount(sk, root) {
   // data-mount; then its keyboard, without the tempo controls (an organ
   // doesn't need a clock).
   for (const el of root.querySelectorAll("[data-mount]:not(.keybed)")) sk.mount(el, el.dataset.mount);
-  sk.mount(root.querySelector(".keybed"), "keyboard", { tempo: false });
+  sk.mount(root.querySelector(".keybed"), "keyboard", { tempo: false, controllers: false });   // its treadles are its pedals
 
   // The kit's knobs, as one panel described like a layout.json section.
   sk.mount(root.querySelector(".voicing"), "section", {

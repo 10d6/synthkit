@@ -64,18 +64,26 @@ class MidiInput {
     this.dot.classList.add("is-flash");
     if (this.app.tapMidi(d)) return;   // a synth's own page took it
     const type = st & 0xf0;
-    if (type === 0xb0) {
-      const cc = d[1], v = d[2];
-      if (this.ccLearn) { const fn = this.ccLearn; this.ccLearn = null; fn(cc); return; }
-      if (this.learning) { this.assign(cc, this.learning); return; }
-      const id = this.map[cc];
-      if (id && this.app.model.param(id)) { this.app.model.setNorm(id, v / 127, "midi"); return; }
-    }
+    if (type === 0xb0 && this.takeCC(d[1], d[2])) return;
     const ch = st & 0x0f;
     if (type === 0x90 && d[2] > 0) this.app.keyboard.midiNote(ch, d[1], true, d[2]);
     else if (type === 0x80 || (type === 0x90 && d[2] === 0)) this.app.keyboard.midiNote(ch, d[1], false);
     else if (type === 0xb0 && (d[1] === 123 || d[1] === 120)) this.app.keyboard.midiAllOff(ch);   // all notes / sound off
-    this.app.sendMidi([d[0], d[1] | 0, d[2] | 0], true);
+    const bytes = [d[0], d[1] | 0, d[2] | 0];
+    this.app.sendMidi(bytes, true);
+    this.app.keyboard.sync(bytes);   // the on-screen wheels, pedals and knobs follow
+  }
+
+  // A controller move, from a MIDI controller or from the page's own wheels,
+  // pedals and knobs: a Learn waiting for a CC takes it, a CC learned to a
+  // control moves that control, and neither reaches the synth. True if it
+  // was taken.
+  takeCC(cc, v) {
+    if (this.ccLearn) { const fn = this.ccLearn; this.ccLearn = null; fn(cc); return true; }
+    if (this.learning) { this.assign(cc, this.learning); return true; }
+    const id = this.map[cc];
+    if (id && this.app.model.param(id)) { this.app.model.setNorm(id, v / 127, "midi"); return true; }
+    return false;
   }
 
   learn(ctl) {
@@ -84,7 +92,7 @@ class MidiInput {
     this.learning = ctl.p.id;
     this.learningCtl = ctl;
     ctl.root.classList.add("is-learning");
-    this.app.toast(`Move a knob or slider on your MIDI controller to control ${ctl.label}. Press Esc to cancel.`);
+    this.app.toast(`Move a knob or slider on your MIDI controller, or a knob or the mod wheel on the keyboard, to control ${ctl.label}. Press Esc to cancel.`);
   }
   // The next CC that arrives goes to fn (the source picker's Learn), not
   // the synth. null stops waiting.

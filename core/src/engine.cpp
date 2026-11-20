@@ -194,6 +194,7 @@ struct Slot {
   float vel = 0;
   uint64_t age = 0, serial = 0;
   bool sustained = false, legato = false, mono = false;
+  bool sos = false;                           // caught by the sostenuto pedal: key-ups are held until it lifts
   double basePitch = 60, glidePitch = 60, glideRate = 0;  // semitones, per sample
   int uniIndex = 0, uniCount = 1;
   std::vector<dsp::Adsr> envs;
@@ -245,6 +246,7 @@ struct Core {
   float modwheel = 0, aftertouch = 0, bend = 0, bendTarget = 0;
   float ccs[128] = {};
   bool sustain = false;   // pedal fully down: key-ups are held
+  bool sostenuto = false; // CC 66 down: the notes it caught are held (Slot::sos)
   float pedal = 0;        // pedal depth 0…1 after the half-pedal mapping
   int held[128] = {};
   int heldCount = 0;
@@ -496,7 +498,7 @@ struct Core {
   void resetSlot(Slot& s) {
     s.state = VoicePool::State::Free;
     s.note = -1;
-    s.sustained = s.mono = s.legato = false;
+    s.sustained = s.mono = s.legato = s.sos = false;
     s.fade = 1;
     s.level = 0;
     s.quietSamples = 0;
@@ -584,6 +586,7 @@ struct Core {
       for (auto& s : slots) resetSlot(s);
       heldCount = 0;
       sustain = false;
+      sostenuto = false;
       pedal = 0;
       for (auto& q : queue) q.used = false;
       arp.reset();
@@ -1003,6 +1006,7 @@ struct Core {
     s.age = ++ageCounter;
     s.serial = serial;
     s.sustained = false;
+    s.sos = false;
     s.legato = false;
     s.mono = mono;
     s.basePitch = tuned;
@@ -1043,7 +1047,7 @@ struct Core {
 
   void releaseSlot(Slot& s, bool ignorePedal = false) {
     if (s.state != VoicePool::State::Held) return;
-    if (sustain && !ignorePedal) { s.sustained = true; return; }
+    if ((sustain || (sostenuto && s.sos)) && !ignorePedal) { s.sustained = true; return; }
     s.state = VoicePool::State::Released;
     s.sustained = false;
     s.pedalDamp = pedal > 0 && !ignorePedal;   // a half-down pedal lets it fade slowly
@@ -1068,6 +1072,8 @@ struct Core {
   void allNotesOff() {
     releaseAll(true);
     sustain = false;
+    sostenuto = false;
+    for (auto& s : slots) s.sos = false;
     pedal = 0;
   }
 
@@ -1080,6 +1086,7 @@ struct Core {
         ccs[std::clamp(e.cc, 0, 127)] = e.value;
         if (e.cc == 1) modwheel = e.value;
         else if (e.cc == 64) setPedal(e.value);
+        else if (e.cc == 66) setSostenuto(e.value >= 0.5f);
         else if (e.cc == 120) { for (auto& s : slots) resetSlot(s); heldCount = 0; }
         else if (e.cc == 123) allNotesOff();
         break;
@@ -1107,6 +1114,24 @@ struct Core {
     }
     for (auto& s : slots)
       if (s.state == VoicePool::State::Held && s.sustained) { s.sustained = false; releaseSlot(s); }
+  }
+
+  // CC 66. Pressing it catches the notes sounding right now (keys down, or
+  // held by the sustain pedal; not the arpeggiator's or sequencer's) and holds
+  // them after their keys come up; notes played later are not held. Lifting
+  // it lets the caught notes go, unless the sustain pedal is down.
+  void setSostenuto(bool down) {
+    if (down == sostenuto) return;
+    sostenuto = down;
+    if (down) {
+      for (auto& s : slots) s.sos = s.state == VoicePool::State::Held && !s.arp;
+      return;
+    }
+    for (auto& s : slots) {
+      if (!s.sos) continue;
+      s.sos = false;
+      if (s.state == VoicePool::State::Held && s.sustained) { s.sustained = false; releaseSlot(s); }
+    }
   }
 
   void pushHeld(int note) {
@@ -1163,6 +1188,7 @@ struct Core {
       s.basePitch = tuned;
       s.serial = serial;
       s.sustained = false;
+      s.sos = false;
       s.legato = legato;
       s.relVel = 0;
       s.pedalDamp = false;
@@ -1252,6 +1278,7 @@ int VoiceContext::key() const { return slot_->note; }
 float VoiceContext::velocity() const { return slot_->vel; }
 float VoiceContext::releaseVelocity() const { return slot_->relVel; }
 float VoiceContext::pedal() const { return core_->pedal; }
+bool VoiceContext::sostenuto() const { return core_->sostenuto; }
 int VoiceContext::channel() const { return slot_->channel; }
 bool VoiceContext::released() const { return slot_->state != VoicePool::State::Held; }
 bool VoiceContext::legato() const { return slot_->legato; }

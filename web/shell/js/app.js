@@ -75,6 +75,8 @@ class App {
         this.layout.keyboard === false ? null : this.keyboard.root,
         this.toasts);
       if (this.layout.keyboard === false) this.keyboard.typing = false;
+      // "keyboard": { "controllers": false } leaves out the pedals and knobs.
+      if (this.layout.keyboard && this.layout.keyboard.controllers === false) this.keyboard.allowControls(false);
     } else {
       this.keyboard.typing = false;   // until the page mounts the keyboard
       rootEl.classList.add("sk-own-page");
@@ -168,6 +170,14 @@ class App {
   sendMidi(bytes) {
     if (!this.audio.node) { this.startAudio().then(() => this.audio.midi(bytes)); return; }
     this.audio.midi(bytes);
+  }
+  // MIDI from the page's own controls (wheels, pedals, knobs). It goes where
+  // a MIDI controller's would: a CC learned to a control moves that control
+  // (or satisfies a Learn waiting for one) instead of reaching the synth.
+  controlMidi(bytes) {
+    if (!this.host && (bytes[0] & 0xf0) === 0xb0 && this.midi.takeCC(bytes[1], bytes[2])) return;
+    this.sendMidi(bytes);
+    this.keyboard.sync(bytes);
   }
   noteOn(n, v) { this.keyboard.light(n, true, v); this.sendMidi([0x90, n, v]); }
   // v: the key-up (release) velocity, 1–127; 64 means "none".
@@ -594,6 +604,7 @@ class App {
       case "keyboard":
         part = this.keyboard.root;
         this.keyboard.typing = opts.typing !== false;
+        if (opts.controllers === false) this.keyboard.allowControls(false);   // no pedals or knobs
         {
           // The keyboard's bar takes the tempo and MIDI controls unless the
           // page placed them elsewhere (or asked for no tempo).

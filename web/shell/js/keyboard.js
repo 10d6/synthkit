@@ -1,6 +1,7 @@
 // On-screen keyboard, pitch/mod wheels, and the computer keyboard:
 //   A W S E D F T G Y H U J K O L P ; '  play notes
 //   Z / X  octave down / up     C / V  velocity down / up
+//   B / N / M  soft / sostenuto / sustain pedal (controllers.js)
 // Clicking a key plays louder the nearer its front edge you press (like
 // striking a real key further out), and where you let go is the key-up
 // (release) velocity.
@@ -43,7 +44,13 @@ class Keyboard {
       const val = Math.round((v + 1) * 8191.5);
       this.app.sendMidi([0xe0, val & 127, (val >> 7) & 127]);
     });
-    this.mod = this.wheel("Mod wheel", false, (v) => this.app.sendMidi([0xb0, 1, Math.round(v * 127)]));
+    // The mod wheel is CC 1, sent like any controller; scrolling while the
+    // pointer is over it moves it, as it does a knob.
+    this.mod = this.wheel("Mod wheel", false, (v) => this.app.controlMidi([0xb0, 1, Math.round(v * 127)]), 127);
+    this.controllers = new KeyboardControls(this.app);
+    this.controlsOpen = skStore.get("synthkit:keyboard:controls", window.innerWidth > 720);
+    this.controlsBtn = h("button", { type: "button", class: "btn btn-quiet kb-controls-btn", "aria-expanded": "false", onclick: () => this.showControls(!this.controlsOpen) }, "Controls");
+    this.showControls(this.controlsOpen, false);
     this.root = h("div", { class: "keyboard" },
       h("div", { class: "kb-wheels" }, this.bend.root, this.mod.root),
       h("div", { class: "kb-main" },
@@ -52,10 +59,12 @@ class Keyboard {
             h("button", { type: "button", class: "btn btn-icon", title: "Octave down", "aria-label": "Octave down", onclick: () => shift(-12) }, "‹"),
             this.range,
             h("button", { type: "button", class: "btn btn-icon", title: "Octave up", "aria-label": "Octave up", onclick: () => shift(12) }, "›")),
+          this.controlsBtn,
           this.slot = h("div", { class: "kb-slot" }),
           h("span", { class: "kb-spacer" }),
-          h("span", { class: "kb-hint", title: "Click a key near its front edge to play louder, near the back for softer; where you let go sets the key-up (release) velocity. Typing: Z / X shift the octave, C / V change velocity." }, "Click lower on a key for louder · play with A–K"),
+          h("span", { class: "kb-hint", title: "Click a key near its front edge to play louder, near the back for softer; where you let go sets the key-up (release) velocity. Typing: Z / X shift the octave, C / V change velocity, B / N / M are the soft, sostenuto and sustain pedals." }, "Click lower on a key for louder · play with A–K"),
           this.velLabel),
+        this.controllers.root,
         this.keysEl));
     this.keysEl.addEventListener("pointerdown", (e) => this.press(e));
     this.keysEl.addEventListener("pointermove", (e) => this.slide(e));
@@ -65,20 +74,42 @@ class Keyboard {
 
   addToBar(...els) { if (this.slot.parentNode) this.slot.replaceWith(...els); }
 
-  wheel(label, spring, send) {
+  // steps: how many values the wheel sends (a CC's 127); it only sends when
+  // the value changes by one of them. 0 sends every move.
+  wheel(label, spring, send, steps = 0) {
     const thumb = h("div", { class: "wheel-thumb" });
     const el = h("div", { class: "wheel" + (spring ? " is-bend" : ""), role: "slider", tabindex: 0, "aria-label": label, "aria-valuemin": spring ? -1 : 0, "aria-valuemax": 1 }, thumb);
     const w = { value: spring ? 0 : 0, root: h("div", { class: "wheel-wrap" }, el, h("div", { class: "wheel-label", text: spring ? "Bend" : "Mod" })) };
-    const setv = (v) => {
+    const quant = (v) => (steps ? Math.round(v * steps) : v);
+    w.sent = 0;
+    // silent: the synth already has this value (MIDI came in), only show it.
+    const setv = (v, silent = false) => {
       v = Math.max(spring ? -1 : 0, Math.min(1, v));
       if (v === w.value) return;
       w.value = v;
       const n = spring ? (v + 1) / 2 : v;
       thumb.style.bottom = `calc(${(n * 100).toFixed(1)}% - ${(n * 14).toFixed(1)}px)`;
       el.setAttribute("aria-valuenow", v.toFixed(2));
-      if (w.ready) send(v);
+      if (silent) w.sent = quant(v);
+      else if (w.ready && quant(v) !== w.sent) { w.sent = quant(v); send(v); }
     };
     w.set = setv;
+    // Follow MIDI that came from elsewhere, unless this wheel is being held,
+    // and without moving it for a change smaller than one step.
+    w.sync = (v) => {
+      if (w.drag || (steps && quant(v) === quant(w.value))) return;
+      setv(v, true);
+    };
+    if (!spring) {
+      el.title = "Drag, or scroll while the pointer is over it (Shift for fine steps)";
+      w.root.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        // About twenty mouse-wheel notches end to end; trackpads move by how far they scroll.
+        const d = e.deltaY || e.deltaX;
+        const px = e.deltaMode === 1 ? d * 33 : e.deltaMode === 2 ? d * 400 : d;
+        setv(w.value - (px / 100) * (e.shiftKey ? 0.01 : 0.05));
+      }, { passive: false });
+    }
     w.value = NaN;  // force the first draw
     setv(0);
     w.ready = true;
@@ -94,6 +125,30 @@ class Keyboard {
     });
     if (spring) el.addEventListener("keyup", (e) => { if (e.key.startsWith("Arrow")) setv(0); });
     return w;
+  }
+
+  showControls(open, save = true) {
+    this.controlsOpen = open;
+    this.controllers.root.hidden = !open;
+    this.controlsBtn.setAttribute("aria-expanded", String(open));
+    this.controlsBtn.classList.toggle("is-open", open);
+    if (save) skStore.set("synthkit:keyboard:controls", open);   // only a choice is kept, not the starting default
+  }
+  // A page can leave the pedals and knobs out (API.md §9a).
+  allowControls(on) {
+    this.controlsBtn.hidden = !on;
+    this.controllers.root.hidden = !on || !this.controlsOpen;
+  }
+
+  // MIDI the synth has just been given, from a MIDI controller or from one of
+  // the page's own controls: the wheels, pedals and knobs show it.
+  sync(d) {
+    const type = d[0] & 0xf0;
+    if (type === 0xb0) {
+      if (d[1] === 1) this.mod.sync(d[2] / 127);
+      this.controllers.syncCC(d[1], d[2]);
+    } else if (type === 0xe0) this.bend.sync(Math.max(-1, Math.min(1, (((d[2] << 7) | d[1]) / 8191.5) - 1)));
+    else if (type === 0xd0) this.controllers.syncPressure(d[1]);
   }
 
   layout() {
@@ -186,16 +241,19 @@ class Keyboard {
       this.typed.delete(e.code);
       return;
     }
+    if (!down && this.controllers.keyUp(e.code)) return;   // same for a pedal key
     if (!this.typing) return;
     const t = e.target;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+    // Text fields and lists keep their keys; a focused checkbox or slider doesn't need any.
+    if (t && ((t.tagName === "INPUT" && !/^(checkbox|radio|button|range)$/.test(t.type)) || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
     if (down && !e.repeat) {
       if (e.code === "KeyZ") { this.typingOctave = Math.max(0, this.typingOctave - 12); this.app.toast(`Typing keys start at ${skNoteName(this.typingOctave)}`); skStore.set("synthkit:keyboard:typing", this.typingOctave); return; }
       if (e.code === "KeyX") { this.typingOctave = Math.min(108, this.typingOctave + 12); this.app.toast(`Typing keys start at ${skNoteName(this.typingOctave)}`); skStore.set("synthkit:keyboard:typing", this.typingOctave); return; }
       if (e.code === "KeyC") { this.velocity = Math.max(10, this.velocity - 15); this.showVelocity(); return; }
       if (e.code === "KeyV") { this.velocity = Math.min(127, this.velocity + 15); this.showVelocity(); return; }
     }
+    if (this.controllers.byKey.has(e.code)) { e.preventDefault(); if (down) this.controllers.key(e); return; }
     if (!(e.code in SK_KEYMAP)) return;
     // Arrow-key style focus on a control shouldn't swallow notes; but a focused
     // slider uses arrows, not letters, so letters always play.
@@ -216,6 +274,7 @@ class Keyboard {
     this.typed.clear();
     for (const n of this.pointers.values()) this.app.noteOff(n);
     this.pointers.clear();
+    this.controllers.releaseHeld();
   }
   showVelocity() {
     this.velLabel.textContent = `Velocity ${this.velocity}`;
@@ -263,5 +322,6 @@ class Keyboard {
     this.lit.clear();
     this.midiLit.clear();
     for (const k of this.keys.values()) k.classList.remove("is-down");
+    this.controllers.reset();
   }
 }
