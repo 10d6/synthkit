@@ -103,7 +103,7 @@ button, input, select { font: inherit; color: inherit; }
 
 .presets { display: flex; align-items: center; gap: 6px; }
 .preset-field { position: relative; display: flex; align-items: center; }
-.preset-select, .preset-name, .sig-select, .midi-select, .menu-select, .bpm-input {
+.preset-select, .preset-name, .sig-select, .midi-select, .menu-select, .bpm-input, .kb-assign {
   background: var(--field); border: 1px solid var(--edge); border-radius: 7px; padding: 5px 8px;
 }
 .preset-select, .preset-name { width: 13.5rem; font-weight: 600; }
@@ -327,7 +327,7 @@ button, input, select { font: inherit; color: inherit; }
 .kb-octave { display: flex; align-items: center; gap: 6px; }
 .kb-spacer { flex: 1; }
 .kb-range { font-variant-numeric: tabular-nums; min-width: 5.5em; text-align: center; font-weight: 600; }
-.kb-hint { color: var(--ink-soft); font-size: 12px; flex: 1; }
+.kb-hint { color: var(--ink-soft); font-size: 12px; flex: 1 1 14rem; }
 .kb-vel { color: var(--ink-soft); font-size: 12px; font-variant-numeric: tabular-nums; }
 .keys { --black-w: min(2.2%, 20px); position: relative; height: 112px; touch-action: none; user-select: none; }
 .key { position: absolute; top: 0; cursor: pointer; }
@@ -345,6 +345,26 @@ button, input, select { font: inherit; color: inherit; }
 .key-white.is-down { background: color-mix(in srgb, var(--accent) calc(12% + var(--kv, 0.8) * 30%), var(--key)); }
 .key-black.is-down { background: color-mix(in srgb, var(--accent) calc(45% + var(--kv, 0.8) * 55%), var(--key-black)); }
 .kb-vel.is-live { color: var(--ink); }
+
+/* ---- pedals and knobs (controllers.js) ------------------------------- */
+.kb-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 22px; margin-bottom: 10px; }
+.kb-controls[hidden], .kb-controls-btn[hidden] { display: none; }
+.kb-controls-btn.is-open { color: var(--ink); }
+.kb-pedals { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pedal { display: inline-flex; flex-direction: column; align-items: center; gap: 1px; min-width: 78px; padding: 5px 10px 4px; touch-action: none; user-select: none; }
+.pedal-name { font-size: 12px; }
+.pedal-key { font: inherit; font-size: 10px; color: var(--ink-soft); }
+.pedal.is-down { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pedal.is-down .pedal-key { color: inherit; opacity: 0.85; }
+:root[data-theme="dark"] .pedal.is-down { color: #0f1316; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pedal.is-down { color: #0f1316; } }
+.kb-latch { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; font-size: 12px; color: var(--ink-soft); cursor: pointer; }
+.kb-knobs { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.kb-knob { display: flex; align-items: center; gap: 8px; }
+.kb-knob .knob-dial { width: 40px; height: 40px; }
+.kb-knob-side { display: flex; flex-direction: column; gap: 3px; }
+.kb-assign { max-width: 11rem; font-size: 12px; }
+.kb-knob-value { font-size: 11px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .key-name { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; font-size: 10px; color: #6b736f; pointer-events: none; }
 
 /* ---- menus, toasts, errors ------------------------------------------- */
@@ -378,6 +398,8 @@ button, input, select { font: inherit; color: inherit; }
   .kb-spacer { display: none; }
   .wheel { height: 96px; width: 22px; }
   .keys { height: 96px; }
+  .pedal { min-width: 64px; padding: 5px 6px 4px; }
+  .kb-latch { margin-left: 2px; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }

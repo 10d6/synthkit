@@ -328,6 +328,7 @@ void MyVoice::render(VoiceContext& ctx, Buffer& out) {
 | `key()`, `velocity()`, `channel()` | the note that started the voice |
 | `releaseVelocity()` | the key-up velocity, 0…1, once the key is up (0 while it's down) |
 | `pedal()` | the sustain pedal's depth, 0…1, after the half-pedal mapping below |
+| `sostenuto()` | the sostenuto pedal (CC 66) is down |
 | `released()`, `legato()` | key is up; last start was legato |
 | `arpNote()`, `arpEnv()` | the arpeggiator played this note; its note envelope (block start, 0 for other notes) (§4b) |
 | `env(n)`, `envSamples(n)` | standard envelope n (1-based): block-start value / per-sample array |
@@ -376,7 +377,16 @@ size (the kit checks this, §10).
   With `sk.halfPedal` off, the pedal is down from half way. A synth without
   the amp envelope reads `ctx.pedal()` and `ctx.released()` to do the same
   in its own release.
-- **MIDI.** Velocity 0 counts as note-off. CC64 is sustain (above). CC120 cuts all
+- **Sostenuto pedal.** CC66, down from half way (it has no depth). Pressing it
+  catches the notes sounding at that moment (keys down, or already held by
+  the sustain pedal) and holds them when their keys come up; notes played
+  after it goes down are not held. Lifting it lets the caught notes go, or
+  hands them to the sustain pedal if that is down. It works alongside the
+  sustain pedal, in Poly, Mono and Legato, and the arpeggiator's and
+  sequencer's own notes ignore it. Held notes stay `released() == false`, as
+  with sustain. *All notes off* (CC123) and *Stop all sound* lift it; a
+  synth reads `ctx.sostenuto()`, or CC 66 as the matrix source `cc.66`.
+- **MIDI.** Velocity 0 counts as note-off. CC64 is sustain and CC66 sostenuto (above). CC120 cuts all
   voices. CC123 releases all notes. The kit's own *Stop all sound* and all
   notes off reach `processEvents` as CC120 and CC123 too, so a synth keeping
   its own note state (a coupler, a held phrase) can let go. Pitch bend is smoothed over ~4 ms. Every
@@ -749,8 +759,9 @@ Both are also mod sources (`arp.env`, `arp.phrase`, §6), along with
 
 - **Sustain pedal.** Keys let go of while the pedal is down stay in the
   chord (or keep their sequencer lane going) until it comes up. The
-  arpeggiator's and sequencer's own notes ignore the pedal (they'd pile up
-  otherwise); in the sequencer the keys themselves are sustained as usual.
+  arpeggiator's and sequencer's own notes ignore the pedal, and the sostenuto
+  pedal (they'd pile up otherwise); in the sequencer the keys themselves are
+  sustained as usual.
 - **Turning it off** (or switching type): the arpeggiator hands keys still
   down back as ordinary notes until they're let go of; the sequencer's lanes
   stop stepping and their notes fade with the phrase envelope, while the keys
@@ -897,7 +908,7 @@ Turned on by `features`: `modSlots` (matrix routes), `standardLfos` and
 | `aftertouch` | the larger of channel and poly pressure | ✓ |
 | `release.vel` | key-up velocity, from the moment the key goes up (0 while it's down) | ✓ |
 | `modwheel`, `bend` | CC 1; pitch bend (bipolar) | |
-| `cc.0` … `cc.119` | any MIDI controller's last value (CC 1 is `modwheel`): `cc.2` breath, `cc.4` foot, `cc.11` expression, `cc.64` sustain pedal, …; a controller MIDI-learned on the page (§9) moves its control instead | |
+| `cc.0` … `cc.119` | any MIDI controller's last value (CC 1 is `modwheel`): `cc.2` breath, `cc.4` foot, `cc.11` expression, `cc.64` sustain pedal, `cc.66` sostenuto, …; a controller MIDI-learned on the page (§9) moves its control instead | |
 | `const` | always 1, so a route adds a fixed offset (useful with `via`) | |
 | `beat.phase` | 0→1 ramp over each quarter note | |
 | `bar.phase` | 0→1 ramp over each bar (follows the time signature) | |
@@ -1249,7 +1260,7 @@ and output panels.
 |---|---|
 | `sections` | the panels, in order (below) |
 | `theme` | `{ "accent": "#rrggbb" }`: the controls' colour (dark mode derives a lighter shade) |
-| `keyboard` | `false` leaves out the on-screen keyboard and computer-key playing (default `true`). A click plays louder the nearer the key's front edge (velocity 20–127), and where you let go sets the key-up velocity; lit keys show how hard each note was played. |
+| `keyboard` | `false` leaves out the on-screen keyboard and computer-key playing (default `true`). A click plays louder the nearer the key's front edge (velocity 20–127), and where you let go sets the key-up velocity; lit keys show how hard each note was played. `{ "controllers": false }` keeps the keyboard but leaves out its pedals and knobs (below). |
 | `paramInfo` | info text per parameter ID (below) |
 | `enabledWhen` | when each parameter's controls are greyed out, per parameter ID (below) |
 
@@ -1294,6 +1305,33 @@ can hold:
   is known by its `title` (or `kit`), a tab group by its tab titles; give
   either an `id` to keep that memory across a rename.
 - **Modulate…** opens whatever tab or folded panel hides the matrix.
+
+**The keyboard's wheels, pedals and knobs.** The on-screen keyboard has
+pitch bend and mod wheel (drag them, or scroll while the pointer is over the
+mod wheel, as over a knob; Shift for fine steps) and a **Controls** row for
+playing without a MIDI controller:
+
+- **Pedals:** *Soft* (CC 67, key `B`), *Sostenuto* (CC 66, key `N`) and
+  *Sustain* (CC 64, key `M`). A pedal is down while its button or key is
+  held. With **Latch** on, a press toggles it instead: the way to hold a pedal
+  with a mouse that is also playing the keys (touch screens can hold a pedal
+  with one finger and play with another). Turning Latch off lets go of the
+  pedals it held, and *Stop all sound* lifts every pedal. Soft has no effect
+  of its own: a synth or the matrix reads it as CC 67.
+- **Two knobs** that each send channel pressure (aftertouch, the default of
+  the first) or any controller 0–119 (the second starts on CC 11 expression),
+  chosen in the list beside it. Drag, scroll, arrow keys (Shift or PageUp/Down
+  for other step sizes) or double-click to zero; changing what a knob sends
+  zeroes the old target first. The choice is kept per synth in this
+  browser or plugin, not in patches.
+
+All of it is MIDI the page sends itself and goes where a MIDI controller's
+would: a controller mapped with `cc()` (§3) moves its parameter, `aftertouch`
+and `cc.N` are matrix sources (§6), and **MIDI learn** (and the matrix's
+*Learn*) take a move of an on-screen knob or wheel, so a CC can be mapped to
+a control without any hardware. The wheels, pedals and aftertouch knob also
+follow MIDI that comes in from a controller. The plugin shows the same
+controls; they play through the plugin, but aren't recorded by the DAW.
 
 **Info for any parameter** (`paramInfo`): a top-level map from parameter ID
 to text, shown wherever that parameter's control appears, including in kit
@@ -1437,7 +1475,7 @@ export function mount(sk, root) {
   | Name | Part |
   |---|---|
   | `presets` | the preset bar (pick, step, save, rename, delete, import, export) |
-  | `keyboard` | the on-screen keyboard and wheels; computer keys play while it's on the page (`typing: false` to stop that). Its bar also takes the tempo and MIDI controls unless the page placed them (`tempo: false`, `midi: false`). |
+  | `keyboard` | the on-screen keyboard, wheels, pedals and knobs; computer keys play while it's on the page (`typing: false` to stop that). Its bar also takes the tempo and MIDI controls unless the page placed them (`tempo: false`, `midi: false`). `controllers: false` leaves out the pedals and knobs, for a page with controls of its own (the reed example has treadles). |
   | `midi`, `tempo`, `output`, `panic`, `theme` | the Connect MIDI control, tempo controls (a readout in the plugin; `space: false` if the page uses Space itself), scope and level, Stop all sound, light/dark switch |
   | `undo` | the undo and redo buttons (§9). Ctrl/⌘+Z works on every page, mounted or not |
   | `hostbar` | the host bar (below), here instead of at the top of the page |
@@ -1659,7 +1697,8 @@ as files), a keyboard you can play with the mouse, touch or computer keys
 (keys light while they're held, from there or from a MIDI controller, and
 letting go always ends the note, even with a modifier down or the focus moved
 into a text field),
-pitch and mod wheels, Web MIDI input with MIDI learn, a tempo clock (play, BPM,
+pitch and mod wheels, soft/sostenuto/sustain pedals and two knobs for aftertouch
+or any controller, Web MIDI input with MIDI learn, a tempo clock (play, BPM,
 time signature), a scope, a level meter and a voice count; a synth's own page
 has whichever of these it mounts. The current sound is restored when you come
 back.

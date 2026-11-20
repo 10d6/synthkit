@@ -447,6 +447,158 @@ async function main() {
         else pass("keyboard: no key stays lit (modifier, text field, repeated note-on, all notes off)");
       }
 
+      // Pedals, mod wheel and knobs on the on-screen keyboard (API.md §9): the
+      // pedal keys and buttons (with and without Latch), the wheel following
+      // the scroll wheel, aftertouch and controller knobs, and all of them
+      // following MIDI that comes in or being learned like a MIDI controller.
+      {
+        await page.evaluate(() => {
+          const app = window.synthkit.app;
+          if (!app.sentMidi) { app.sentMidi = []; const send = app.sendMidi.bind(app); app.sendMidi = (b, ...r) => { app.sentMidi.push([...b]); return send(b, ...r); }; }
+          const e = document.querySelector(".kb-controls"); e.scrollIntoView({ block: "center" });
+        });
+        const sentCC = (cc) => page.evaluate((n) => window.synthkit.app.sentMidi.filter((b) => b[0] === 0xb0 && b[1] === n).map((b) => b[2]), cc);
+        const clear = () => page.evaluate(() => { window.synthkit.app.sentMidi.length = 0; });
+        const down = (name) => page.evaluate((n) => [...document.querySelectorAll(".pedal")].find((b) => b.textContent.startsWith(n)).getAttribute("aria-pressed") === "true", name);
+        const midiIn = (...d) => page.evaluate((b) => window.synthkit.app.midi.message(new Uint8Array(b), performance.now()), d);
+        const problems = [];
+
+        // Held keys: down while held, up when let go.
+        await clear();
+        for (const [key, cc] of [["KeyM", 64], ["KeyN", 66], ["KeyB", 67]]) {
+          await page.keyboard.down(key);
+          const during = (await sentCC(cc)).slice(), lit = await down(cc === 64 ? "Sustain" : cc === 66 ? "Sostenuto" : "Soft");
+          await page.keyboard.press("KeyA");   // a note meanwhile is unaffected
+          await page.keyboard.up(key);
+          const after = await sentCC(cc);
+          if (during.join() !== "127" || !lit || after.join() !== "127,0") problems.push(`${key}: sent ${after}, lit ${lit}`);
+        }
+        // A key held through a blur lets go.
+        await page.keyboard.down("KeyM"); await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+        if (await down("Sustain")) problems.push("a pedal key held through a window blur stays down");
+        await page.keyboard.up("KeyM");
+        // With a modifier it isn't a pedal.
+        await clear(); await page.keyboard.down("Control"); await page.keyboard.press("KeyM"); await page.keyboard.up("Control");
+        if ((await sentCC(64)).length) problems.push("Ctrl+M pressed the sustain pedal");
+        if (problems.length) fail(`pedal keys: ${problems.join("; ")}`); else pass("pedal keys B, N, M hold the soft, sostenuto and sustain pedals");
+        problems.length = 0;
+
+        // The buttons, held with the mouse (momentary) and then latched.
+        const sus = page.locator(".pedal", { hasText: "Sustain" });
+        const box = await sus.boundingBox();
+        await clear();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+        if (!(await down("Sustain"))) problems.push("button: not down while held");
+        await page.mouse.up();
+        if (await down("Sustain") || (await sentCC(64)).join() !== "127,0") problems.push(`button: held, then ${await sentCC(64)}`);
+        await page.locator(".kb-latch").click();
+        await clear();
+        await sus.click();
+        const latchedDown = await down("Sustain");
+        await page.keyboard.down("KeyM"); await page.keyboard.up("KeyM");   // the key toggles it back up
+        const keyToggled = !(await down("Sustain"));
+        await page.keyboard.down("KeyN"); await page.keyboard.up("KeyN");   // key down, key up: still down
+        const keyLatched = await down("Sostenuto");
+        await sus.click();                                                   // button down again
+        if (!latchedDown || !keyToggled || !keyLatched || !(await down("Sustain"))) problems.push(`latch: button ${latchedDown}, key toggles ${keyToggled}, key latches ${keyLatched}`);
+        if ((await sentCC(64)).join() !== "127,0,127") problems.push(`latch: sustain sent ${await sentCC(64)}`);
+        await clear();
+        await page.locator(".kb-latch").click();   // Latch off lets go of what it held
+        if ((await down("Sustain")) || (await down("Sostenuto")) || (await sentCC(64)).join() !== "0" || (await sentCC(66)).join() !== "0") problems.push(`turning Latch off left a pedal down (sent ${await sentCC(64)}/${await sentCC(66)})`);
+        if (problems.length) fail(`pedal buttons: ${problems.join("; ")}`); else pass("pedal buttons hold while pressed; Latch toggles them, and turning it off lets go");
+        problems.length = 0;
+
+        // Stop all sound lifts the pedals.
+        await page.keyboard.down("KeyM"); await page.keyboard.down("KeyB");
+        await clear(); await page.evaluate(() => window.synthkit.app.panic());
+        if ((await down("Sustain")) || (await down("Soft")) || (await sentCC(64)).join() !== "0") problems.push("Stop all sound left a pedal down");
+        await page.keyboard.up("KeyM"); await page.keyboard.up("KeyB");
+        if (problems.length) fail(`pedals: ${problems.join("; ")}`); else pass("Stop all sound lifts the pedals");
+        problems.length = 0;
+
+        // The wheels, pedals and knobs follow MIDI coming in.
+        const wheelNow = (label) => page.evaluate((l) => Number(document.querySelector(`[aria-label="${l}"]`).getAttribute("aria-valuenow")), label);
+        await midiIn(0xb0, 64, 127); await midiIn(0xb0, 66, 127);
+        if (!(await down("Sustain")) || !(await down("Sostenuto")) || (await down("Soft"))) problems.push("MIDI pedals don't light the buttons");
+        await midiIn(0xb0, 123, 0);
+        if ((await down("Sustain")) || (await down("Sostenuto"))) problems.push("all notes off leaves sustain/sostenuto lit");
+        await midiIn(0xb0, 1, 127);
+        if (Math.abs((await wheelNow("Mod wheel")) - 1) > 0.01) problems.push("MIDI mod wheel doesn't move the on-screen one");
+        await midiIn(0xb0, 1, 0);
+        await midiIn(0xe0, 127, 127);   // bend up fully
+        if ((await wheelNow("Pitch bend")) < 0.99) problems.push("MIDI pitch bend doesn't move the on-screen wheel");
+        await midiIn(0xe0, 0, 64);   // and back to the middle
+        await midiIn(0xd0, 100, 0);
+        if (await page.evaluate(() => document.querySelector(".kb-knob .kb-knob-value").textContent) !== "100") problems.push("MIDI aftertouch doesn't move the aftertouch knob");
+        await midiIn(0xd0, 0, 0);
+        if (problems.length) fail(`following MIDI: ${problems.join("; ")}`); else pass("wheels, pedals and the aftertouch knob follow MIDI coming in");
+        problems.length = 0;
+
+        // Scrolling over the mod wheel moves it (and not the page).
+        const mw = await page.locator(".wheel-wrap", { hasText: "Mod" }).boundingBox();
+        await clear();
+        const y0 = await page.evaluate(() => window.scrollY);
+        await page.mouse.move(mw.x + mw.width / 2, mw.y + mw.height / 2);
+        await page.mouse.wheel(0, -300);
+        const up = await wheelNow("Mod wheel");
+        await page.mouse.wheel(0, 100);
+        const back = await wheelNow("Mod wheel");
+        const ccs = await sentCC(1);
+        if (!(up > 0.1 && back < up && back > 0)) problems.push(`wheel values ${up}, ${back}`);
+        if (!ccs.length || ccs.some((v, i) => i && v === ccs[i - 1])) problems.push(`CC 1 sent ${ccs}`);
+        if ((await page.evaluate(() => window.scrollY)) !== y0) problems.push("the page scrolled");
+        await page.mouse.wheel(0, 3000);
+        if ((await wheelNow("Mod wheel")) !== 0) problems.push("scrolling down past the end doesn't stop at 0");
+        if (problems.length) fail(`mod wheel scroll: ${problems.join("; ")}`); else pass(`scrolling over the mod wheel moves it (${up.toFixed(2)} up, ${back.toFixed(2)} after one notch down)`);
+        problems.length = 0;
+
+        // The knobs: aftertouch by default, then a controller, which the synth
+        // maps like any other (CC 74 is the example synth's cutoff).
+        await clear();
+        const at = page.locator(".kb-knob").nth(0), cc = page.locator(".kb-knob").nth(1);
+        await at.locator(".knob-dial").focus();
+        for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowUp");
+        const pressure = await page.evaluate(() => window.synthkit.app.sentMidi.filter((b) => b[0] === 0xd0).map((b) => b[1]));
+        if (pressure.length !== 5 || pressure[4] !== 20) problems.push(`aftertouch knob sent ${pressure}`);
+        await at.locator(".knob-dial").dblclick();   // double-click zeroes it
+        if ((await page.evaluate(() => window.synthkit.app.sentMidi.filter((b) => b[0] === 0xd0).pop()[1])) !== 0) problems.push("double-click didn't zero the aftertouch knob");
+        // Reassigning zeroes the old target first.
+        await cc.locator(".knob-dial").focus(); await page.keyboard.press("ArrowUp");
+        await clear();
+        await cc.locator("select").selectOption("74");
+        if ((await sentCC(11)).join() !== "0") problems.push(`reassigning left CC 11 at ${await sentCC(11)}`);
+        const cutBefore = await page.evaluate(() => window.synthkit.model.get("filter.cutoff"));
+        await cc.locator(".knob-dial").focus();
+        for (let i = 0; i < 8; i++) await page.keyboard.press("PageUp");
+        try { await page.waitForFunction((b) => Math.abs(window.synthkit.model.get("filter.cutoff") - b) > 1, cutBefore, { timeout: 3000 }); }
+        catch { problems.push("a knob sending CC 74 didn't move the filter cutoff"); }
+        if (await page.evaluate(() => JSON.parse(localStorage.getItem(`synthkit:${window.synthkit.model.info.synth.id}:keyboardKnobs`))[1]) !== 74) problems.push("the assignment isn't saved");
+        if (problems.length) fail(`knobs: ${problems.join("; ")}`); else pass("knobs send aftertouch or any CC, zero on double-click and reassign, and drive the synth's mapped controllers");
+        problems.length = 0;
+
+        // MIDI learn without a controller: moving the on-screen knob is enough,
+        // and the learned CC no longer reaches the synth.
+        await page.evaluate(() => { const a = window.synthkit.app; a.midi.learn(a.controls.find((c) => c.p.id === "master" || c.p.id === "reverb.mix" || true)); });
+        const learnId = await page.evaluate(() => window.synthkit.app.midi.learning);
+        await clear();
+        await cc.locator(".knob-dial").focus(); await page.keyboard.press("Home"); await page.keyboard.press("PageUp");
+        const learned = await page.evaluate((id) => window.synthkit.app.midi.ccFor(id), learnId);
+        if (learned !== 74) problems.push(`learn took CC ${learned}, wanted 74`);
+        if ((await sentCC(74)).length) problems.push("the learned CC still reached the synth");
+        const a = await page.evaluate((id) => window.synthkit.model.norm(id), learnId);
+        for (let i = 0; i < 6; i++) await page.keyboard.press("PageUp");
+        const b = await page.evaluate((id) => window.synthkit.model.norm(id), learnId);
+        if (!(b > a)) problems.push(`the learned control didn't follow the knob (${a} -> ${b})`);
+        await page.evaluate((id) => window.synthkit.app.midi.forget(id), learnId);
+        if (problems.length) fail(`learning from a knob: ${problems.join("; ")}`); else pass("MIDI learn takes a move of an on-screen knob, and the control then follows it");
+        problems.length = 0;
+        // Back to the defaults for the tests that follow.
+        await cc.locator("select").selectOption("11");
+        await cc.locator(".knob-dial").dblclick();
+        await page.evaluate(() => { localStorage.removeItem(`synthkit:${window.synthkit.model.info.synth.id}:keyboardKnobs`); });
+      }
+
       // The arpeggiator's piano roll (API.md §4b): draw, move, lengthen,
       // set velocity and remove notes in pattern 2.
       if (await page.$(".arp-area")) {

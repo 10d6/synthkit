@@ -369,6 +369,77 @@ TEST(sustain_pedal_holds_notes) {
   CHECK(h.eng->takeStats().activeVoices == 0);
 }
 
+// Active voices once everything scheduled so far has played out.
+static int activeNow(Harness& h, long settle = 9600) {
+  h.run(settle);
+  return h.eng->takeStats().activeVoices;
+}
+
+TEST(sostenuto_holds_only_the_notes_it_caught) {
+  Harness h;
+  h.eng->params().set(h.param("env1.release"), 0.01);
+  MidiEvent sos = CC{66, 1.f}, up = CC{66, 0.f};
+  h.run(4800, {{0, on(60)}, {100, sos}});       // 60 is down when the pedal goes down
+  h.run(4800, {{h.pos + 10, on(64)}});          // 64 comes after it
+  h.run(4800, {{h.pos + 10, off(60)}, {h.pos + 20, off(64)}});
+  CHECK(activeNow(h) == 1);                     // 60 is held, 64 let go
+  h.run(100, {{h.pos + 10, up}});
+  CHECK(activeNow(h) == 0);                     // lifting the pedal lets 60 go
+  // A pedal pressed with nothing sounding catches nothing.
+  h.run(100, {{h.pos + 10, sos}});
+  h.run(4800, {{h.pos + 10, on(67)}, {h.pos + 2400, off(67)}});
+  CHECK(activeNow(h) == 0);
+}
+
+TEST(sostenuto_and_sustain_pedals_work_together) {
+  Harness h;
+  h.eng->params().set(h.param("env1.release"), 0.01);
+  MidiEvent sos = CC{66, 1.f}, sosUp = CC{66, 0.f}, sus = CC{64, 1.f}, susUp = CC{64, 0.f};
+  h.run(4800, {{0, on(60)}, {100, sos}, {200, off(60)}});
+  CHECK(activeNow(h) == 1);
+  // The sustain pedal coming down and up again leaves the caught note alone.
+  h.run(100, {{h.pos + 10, sus}});
+  h.run(100, {{h.pos + 10, susUp}});
+  CHECK(activeNow(h) == 1);
+  // Lifting sostenuto under a held sustain pedal hands the note to it.
+  h.run(100, {{h.pos + 10, sus}});
+  h.run(100, {{h.pos + 10, sosUp}});
+  CHECK(activeNow(h) == 1);
+  h.run(100, {{h.pos + 10, susUp}});
+  CHECK(activeNow(h) == 0);
+  // Under sostenuto, a sustained note joins the caught ones too.
+  h.run(4800, {{h.pos + 10, sus}, {h.pos + 20, on(62)}, {h.pos + 100, off(62)}});
+  h.run(100, {{h.pos + 10, sos}});
+  h.run(100, {{h.pos + 10, susUp}});
+  CHECK(activeNow(h) == 1);
+  h.run(100, {{h.pos + 10, sosUp}});
+  CHECK(activeNow(h) == 0);
+}
+
+TEST(sostenuto_note_played_again_is_not_stuck) {
+  Harness h;
+  h.eng->params().set(h.param("env1.release"), 0.01);
+  MidiEvent sos = CC{66, 1.f}, up = CC{66, 0.f};
+  h.run(4800, {{0, on(60)}, {100, sos}, {200, off(60)}});
+  h.run(4800, {{h.pos + 10, on(60)}, {h.pos + 2400, off(60)}});   // the same key again
+  CHECK(activeNow(h) == 1);                                       // only the caught one remains
+  h.run(100, {{h.pos + 10, up}});
+  CHECK(activeNow(h) == 0);
+}
+
+TEST(sostenuto_is_cleared_by_all_notes_off) {
+  Harness h;
+  h.eng->params().set(h.param("env1.release"), 0.01);
+  MidiEvent sos = CC{66, 1.f}, allOff = CC{123, 0.f};
+  h.run(4800, {{0, on(60)}, {100, sos}, {200, off(60)}});
+  CHECK(activeNow(h) == 1);
+  h.run(100, {{h.pos + 10, allOff}});
+  CHECK(activeNow(h) == 0);
+  // The pedal is up now, so a new note is not held by it.
+  h.run(4800, {{h.pos + 10, on(62)}, {h.pos + 2400, off(62)}});
+  CHECK(activeNow(h) == 0);
+}
+
 // Samples until the output stays below -80 dB (the end of a release).
 static long tailLength(const std::vector<float>& out, long from) {
   long last = from;
