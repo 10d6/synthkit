@@ -69,11 +69,13 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
     // Changes after this point reach the page through the timer. (The page is
     // served a moment later with the state as it is then; a change in between
     // is sent twice, which is harmless.)
-    for (auto* prm : proc_.params()) lastValues_.push_back(proc_.engine().params().get(prm->index()));
-    lastGeneration_ = proc_.engine().params().generation();
+    for (auto* prm : proc_.params()) lastValues_.push_back(proc_.engine(prm->part()).params().get(prm->index()));
+    for (int part = 0; part < proc_.partCount(); ++part) lastGenerations_.push_back(proc_.engine(part).params().generation());
     lastSerial_ = proc_.stateSerial();
+    lastLayoutSerial_ = proc_.layoutSerial();
     // Messages posted while no window was open are stale.
-    for (sk::Message stale; proc_.engine().takeMessage(stale);) {}
+    for (int part = 0; part < proc_.partCount(); ++part)
+      for (sk::Message stale; proc_.engine(part).takeMessage(stale);) {}
     settingsToken_ = settings_->addListener(
         [this](const juce::String& key, const juce::var& value) { send(obj({{"t", "store"}, {"key", key}, {"value", value}})); },
         this);
@@ -94,7 +96,8 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
 
   ~WebEditor() override {
     settings_->removeListener(settingsToken_);
-    for (std::size_t i = 0; i < proc_.params().size(); ++i) proc_.gesture(static_cast<int>(i), false);
+    for (int part = 0; part < proc_.partCount(); ++part)
+      for (int i = 0; i < proc_.paramsPerPart(); ++i) proc_.gesture(part, i, false);
   }
 
   void resized() override {
@@ -133,14 +136,9 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
     const char* page = findPage(size);
     if (page == nullptr) return std::nullopt;
 
-    sk::Json patch;
-    {
-      std::lock_guard<std::mutex> g(proc_.engineLock());
-      patch = proc_.engine().savePatch();
-    }
     auto host = obj({{"format", wrapperName(proc_.wrapperType)},
                      {"host", juce::PluginHostType().getHostDescription()},
-                     {"state", obj({{"patch", toJuce(patch)}, {"ui", proc_.uiState()}})},
+                     {"state", stateMessage("")},
                      {"store", settings_->all()}});
     // ASCII only, like the rest of the page (see web/pack.py).
     auto json = juce::JSON::toString(host, juce::JSON::FormatOptions{}
@@ -163,10 +161,28 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
 
   void send(const juce::var& msg) { web_.emitEventIfBrowserIsVisible(kEvent, msg); }
 
+  // The sound as the page loads it: the patch, or for a multi the whole multi.
+  // `t` names the message ("state"), or is empty for the page's initial state.
+  juce::var stateMessage(const char* t) {
+    juce::var m = obj({{"ui", proc_.uiState()}});
+    auto* o = m.getDynamicObject();
+    if (*t) o->setProperty("t", t);
+    if (proc_.isMulti()) {
+      o->setProperty("multi", toJuce(proc_.multiJson()));
+    } else {
+      std::lock_guard<std::mutex> g(proc_.engineLock());
+      o->setProperty("patch", toJuce(proc_.engine().savePatch()));
+    }
+    return m;
+  }
+
+  int partOf(const juce::var& m) const { return juce::jlimit(0, proc_.partCount() - 1, m.hasProperty("p") ? static_cast<int>(m["p"]) : 0); }
+
   // From the page ---------------------------------------------------------------
   void receive(const juce::var& m) {
     const auto t = m["t"].toString();
-    auto& engine = proc_.engine();
+    const int part = partOf(m);
+    auto& engine = proc_.engine(part);
     if (t == "midi") {
       const auto& d = m["d"];
       if (d.isArray() && d.size() >= 1)
@@ -174,12 +190,20 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
                           static_cast<uint8_t>(d.size() > 2 ? static_cast<int>(d[2]) : 0));
     } else if (t == "param") {
       const int i = m["i"];
-      proc_.setParamFromUi(i, static_cast<double>(m["v"]));
-      if (i >= 0 && i < static_cast<int>(lastValues_.size())) lastValues_[static_cast<std::size_t>(i)] = engine.params().get(i);
+      proc_.setParamFromUi(part, i, static_cast<double>(m["v"]));
+      if (i >= 0 && i < proc_.paramsPerPart()) lastValues_[proc_.slot(part, i)] = engine.params().get(i);
     } else if (t == "gesture") {
-      proc_.gesture(m["i"], static_cast<bool>(m["on"]));
+      proc_.gesture(part, m["i"], static_cast<bool>(m["on"]));
+    } else if (t == "select") {
+      selected_ = part;
     } else if (t == "patch") {
-      auto r = proc_.loadPatchFromUi(toSk(m["json"].toString()));
+      auto r = proc_.loadPatchFromUi(part, toSk(m["json"].toString()));
+      if (!r.ok) send(obj({{"t", "log"}, {"msg", juce::String::fromUTF8(r.error.c_str())}}));
+      resyncBaseline();
+    } else if (t == "layout") {
+      proc_.setLayoutFromUi(toSk(m["json"].toString()));
+    } else if (t == "multi") {
+      auto r = proc_.loadMultiFromUi(toSk(m["json"].toString()));
       if (!r.ok) send(obj({{"t", "log"}, {"msg", juce::String::fromUTF8(r.error.c_str())}}));
       resyncBaseline();
     } else if (t == "custom") {
@@ -200,29 +224,34 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
         for (const auto& x : *arr) if (n < sk::Message::kMaxValues) v[n++] = static_cast<float>(static_cast<double>(x));
       engine.sendMessage(i, v, n);
     } else if (t == "panic") {
-      engine.panic();
+      if (proc_.isMulti()) proc_.multi()->panic();
+      else engine.panic();
     } else if (t == "allOff") {
-      engine.allNotesOff();
+      if (proc_.isMulti()) proc_.multi()->allNotesOff();
+      else engine.allNotesOff();
     } else if (t == "store") {
       settings_->set(m["key"].toString(), m["value"], this);
     } else if (t == "meta") {
       proc_.setUiState(m["ui"]);
     } else if (t == "export") {
-      exportPreset(m["name"].toString(), m["json"].toString());
+      exportPreset(m["name"].toString(), m["json"].toString(), m["kind"].toString());
     } else if (t == "import") {
-      importPreset();
+      importPreset(m["kind"].toString());
     }
   }
 
   void resyncBaseline() {
-    for (std::size_t i = 0; i < lastValues_.size(); ++i) lastValues_[i] = proc_.engine().params().get(static_cast<int>(i));
-    lastGeneration_ = proc_.engine().params().generation();
+    for (auto* prm : proc_.params()) lastValues_[proc_.slot(prm->part(), prm->index())] = proc_.engine(prm->part()).params().get(prm->index());
+    for (int part = 0; part < proc_.partCount(); ++part) lastGenerations_[static_cast<std::size_t>(part)] = proc_.engine(part).params().generation();
   }
 
   // Files ------------------------------------------------------------------------
-  void exportPreset(const juce::String& name, const juce::String& json) {
-    auto safe = juce::File::createLegalFileName(name.isEmpty() ? juce::String("patch") : name);
-    chooser_ = std::make_unique<juce::FileChooser>("Export preset", lastDir().getChildFile(safe + ".json"), "*.json");
+  // kind: "multi" for a whole multi, else a patch.
+  void exportPreset(const juce::String& name, const juce::String& json, const juce::String& kind) {
+    const bool isMultiFile = kind == "multi";
+    auto safe = juce::File::createLegalFileName(name.isEmpty() ? juce::String(isMultiFile ? "multi" : "patch") : name);
+    chooser_ = std::make_unique<juce::FileChooser>(isMultiFile ? "Export multi" : "Export preset",
+                                                   lastDir().getChildFile(safe + (isMultiFile ? ".multi.json" : ".json")), "*.json");
     chooser_->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
                               juce::FileBrowserComponent::warnAboutOverwriting,
                           [this, json](const juce::FileChooser& fc) {
@@ -236,14 +265,14 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
                           });
   }
 
-  void importPreset() {
-    chooser_ = std::make_unique<juce::FileChooser>("Import preset", lastDir(), "*.json");
+  void importPreset(const juce::String& kind) {
+    chooser_ = std::make_unique<juce::FileChooser>(kind == "multi" ? "Import multi" : "Import preset", lastDir(), "*.json");
     chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                          [this](const juce::FileChooser& fc) {
+                          [this, kind](const juce::FileChooser& fc) {
                             auto f = fc.getResult();
                             if (!f.existsAsFile()) return;
                             settings_->set("synthkit:plugin:lastDir", f.getParentDirectory().getFullPathName(), nullptr);
-                            send(obj({{"t", "imported"}, {"file", f.getFileName()}, {"text", f.loadFileAsString()}}));
+                            send(obj({{"t", "imported"}, {"kind", kind}, {"file", f.getFileName()}, {"text", f.loadFileAsString()}}));
                           });
   }
 
@@ -254,31 +283,35 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
 
   // To the page, 30 times a second ---------------------------------------------------
   void timerCallback() override {
-    auto& engine = proc_.engine();
     // The host loaded a project or preset: reload the page's copy.
     if (proc_.stateSerial() != lastSerial_) {
       lastSerial_ = proc_.stateSerial();
-      sk::Json patch;
-      {
-        std::lock_guard<std::mutex> g(proc_.engineLock());
-        patch = engine.savePatch();
-      }
-      send(obj({{"t", "state"}, {"patch", toJuce(patch)}, {"ui", proc_.uiState()}}));
+      lastLayoutSerial_ = proc_.layoutSerial();
+      send(stateMessage("state"));
       resyncBaseline();
     }
+    // The host moved a part's level, pan, mute or solo.
+    if (proc_.layoutSerial() != lastLayoutSerial_) {
+      lastLayoutSerial_ = proc_.layoutSerial();
+      send(obj({{"t", "layout"}, {"json", toJuce(proc_.layoutJson())}}));
+    }
     // Automation and host edits.
-    if (engine.params().generation() != lastGeneration_) {
-      lastGeneration_ = engine.params().generation();
-      juce::Array<juce::var> changes;
-      for (std::size_t i = 0; i < lastValues_.size(); ++i) {
-        const float v = engine.params().get(static_cast<int>(i));
-        if (v != lastValues_[i]) {
-          lastValues_[i] = v;
-          changes.add(juce::Array<juce::var>{static_cast<int>(i), v});
+    juce::Array<juce::var> changes;
+    for (int part = 0; part < proc_.partCount(); ++part) {
+      auto& engine = proc_.engine(part);
+      auto& gen = lastGenerations_[static_cast<std::size_t>(part)];
+      if (engine.params().generation() == gen) continue;
+      gen = engine.params().generation();
+      for (int i = 0; i < proc_.paramsPerPart(); ++i) {
+        const auto k = proc_.slot(part, i);
+        const float v = engine.params().get(i);
+        if (v != lastValues_[k]) {
+          lastValues_[k] = v;
+          changes.add(juce::Array<juce::var>{i, v, part});
         }
       }
-      if (!changes.isEmpty()) send(obj({{"t", "params"}, {"changes", changes}}));
     }
+    if (!changes.isEmpty()) send(obj({{"t", "params"}, {"changes", changes}}));
     sendMeters();
     sendMessages();
 
@@ -293,16 +326,20 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
   void sendMessages() {
     juce::Array<juce::var> list;
     sk::Message msg;
-    while (proc_.engine().takeMessage(msg)) {
-      juce::Array<juce::var> v;
-      for (int i = 0; i < msg.count; ++i) v.add(msg.values[static_cast<std::size_t>(i)]);
-      list.add(juce::Array<juce::var>{msg.id.index, v});
-    }
+    // Every part's queue is emptied; the page hears the selected part's, as
+    // its own audio worklet would (it runs the selected part's page state).
+    for (int part = 0; part < proc_.partCount(); ++part)
+      while (proc_.engine(part).takeMessage(msg)) {
+        if (part != selected_) continue;
+        juce::Array<juce::var> v;
+        for (int i = 0; i < msg.count; ++i) v.add(msg.values[static_cast<std::size_t>(i)]);
+        list.add(juce::Array<juce::var>{msg.id.index, v});
+      }
     if (!list.isEmpty()) send(obj({{"t", "msgs"}, {"list", list}}));
   }
 
   void sendMeters() {
-    auto& engine = proc_.engine();
+    auto& engine = proc_.engine(selected_);
     const auto mtr = proc_.meters();
     float scope[Processor::kScopeSize];
     proc_.readScope(scope, Processor::kScopeSize);
@@ -339,7 +376,9 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
   int settingsToken_ = 0;
   std::vector<float> lastValues_;
   std::vector<float> modBuf_;
-  uint32_t lastGeneration_ = 0, lastSerial_ = 0;
+  std::vector<uint32_t> lastGenerations_;
+  uint32_t lastSerial_ = 0, lastLayoutSerial_ = 0;
+  int selected_ = 0;   // the part the page is editing
   juce::uint32 sizeChangedAt_ = 0;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WebEditor)

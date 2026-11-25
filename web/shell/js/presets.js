@@ -235,7 +235,16 @@ class PresetBar {
   saveSession() {
     // In the plugin the DAW project keeps the sound; the plugin just notes
     // which preset is showing.
-    if (skHost) { this.app.audio.send({ t: "meta", ui: { current: this.current, dirty: this.model.dirty } }); return; }
+    if (skHost) {
+      const ui = { current: this.current, dirty: this.model.dirty };
+      if (this.model.multi) {
+        ui.part = this.model.part;
+        ui.currents = { ...this.currents, [this.shownPart]: this.current };
+        ui.dirtyParts = this.model.dirtyParts.map(Boolean);
+      }
+      this.app.audio.send({ t: "meta", ui });
+      return;
+    }
     const s = { patch: this.model.savePatch(), current: this.current, dirty: this.model.dirty };
     if (this.model.multi) {
       s.multi = this.model.multiSave();
@@ -247,7 +256,8 @@ class PresetBar {
   }
 
   // The plugin's sound (on opening the window, or when the DAW loads a project).
-  applyHostState(patch, ui) {
+  applyHostState(patch, ui, multi) {
+    if (multi && this.model.multi) return this.applyHostMulti(multi, ui || {});
     const res = this.model.loadPatch(patch, { fromHost: true });
     if (!res.ok) { this.app.toast(`Couldn't show the plugin's sound: ${res.error}`, "error"); return false; }
     ui = ui || {};
@@ -261,8 +271,23 @@ class PresetBar {
     return true;
   }
 
+  // A whole multi from the DAW: every part's patch, the zones, and what the
+  // window had selected.
+  applyHostMulti(multi, ui) {
+    const res = this.model.loadMulti(multi, { fromHost: true });
+    if (!res.ok) { this.app.toast(`Couldn't show the plugin's sound: ${res.error}`, "error"); return false; }
+    this.model.selectPart(Math.min(ui.part || 0, this.model.layout().parts.length - 1));
+    this.currents = ui.currents || {};
+    this.shownPart = this.model.part;
+    this.current = this.currents[this.shownPart] || ui.current || this.currentFor(this.model.savePatch());
+    this.model.dirtyParts = ui.dirtyParts || [];
+    if (this.model.history) this.model.history.clear();
+    this.refresh();
+    return true;
+  }
+
   restoreSession() {
-    if (skHost) return this.applyHostState(skHost.state.patch, skHost.state.ui);
+    if (skHost) return this.applyHostState(skHost.state.patch, skHost.state.ui, skHost.state.multi);
     const s = skStore.get(this.key("session"), null);
     if (s && s.multi && this.model.multi && this.model.loadMulti(s.multi).ok) {
       this.model.selectPart(s.part || 0);

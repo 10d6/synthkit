@@ -1062,10 +1062,21 @@ exports one; *One part* goes back to a single part keeping the sound being
 edited. The session restores the multi, its selected part and each part's
 preset. A synth's own page (§9a) mounts the bar with
 `sk.mount(el, "multi")`, and `sk.part` / `sk.onPart(fn)` / `sk.selectPart(i)`
-say which part its own controls are editing. Plugins don't show it yet.
+say which part its own controls are editing.
 
-**Not here yet.** The plugin (host parameters for each part, saved state) and
-program change, round-robin, keyswitches, per-part outputs and a shared
+**In the plugin** the window shows the same bar, and a synth with
+`"multi": true` becomes a multi there with nothing to change in it. The host
+sees every part's parameters: part 1 keeps the synth's own IDs and names
+(so a project made before the multi still finds its automation), part *n* is
+`p<n>.` + the ID, named `P<n> ` + the name, listed after part 1's. Each part
+also has host parameters `mix.p<n>.level` (−60…+12 dB), `.pan`, `.mute` and
+`.solo` ("P<n> Level" …), kept in step with the layout: the host moving one
+changes the layout (the page follows), and the window changing it moves the
+parameter. Zones, fades and channels are not host parameters; they are saved
+with the project. The project stores a whole multi (see Plugins, below), and
+a project saved before the multi loads into part 1 alone.
+
+**Not here yet.** Program change, round-robin, keyswitches, per-part outputs and a shared
 effects bus.
 
 ## 6. Modulation
@@ -1940,6 +1951,11 @@ Nothing in the synth changes for the plugin:
 - **The DAW project stores the patch** (§5), wrapped as
   `{"format": "synthkit-plugin-state", "version": 1, "patch": {…}, "ui": {…}}`
   (`ui` notes which preset the window shows). A bare patch JSON also loads.
+  A synth with a multi (§5b) stores the whole multi instead, as
+  `{"format": "synthkit-plugin-state", "version": 2, "multi": {…}, "ui": {…}}`
+  (`ui` also notes the selected part, each part's preset and which parts
+  changed); version 1 states and bare patches load into part 1 alone, and a
+  bare multi file loads too.
 - **Tempo, play position and time signature** come from the host (§7). When
   the host has no position (some hosts while stopped), the kit's own clock runs
   at the host's tempo.

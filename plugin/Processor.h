@@ -4,6 +4,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <synthkit/engine.h>
+#include <synthkit/multi.h>
 
 #include <array>
 #include <atomic>
@@ -16,9 +17,12 @@ class Processor;
 
 // A host-visible parameter. The value lives in the engine's ParamStore (so
 // the audio thread reads it lock-free); this only translates for the host.
+//
+// In a multi (API.md §5b) every part has the synth's parameters: part 1 keeps
+// the plain IDs, part n > 1 is "p<n>." + the ID, named "P<n> " + the name.
 class Parameter : public juce::AudioProcessorParameterWithID {
  public:
-  Parameter(sk::ParamStore& store, int index);
+  Parameter(sk::ParamStore& store, int index, int part = 0);
 
   float getValue() const override;
   void setValue(float norm) override;
@@ -31,11 +35,42 @@ class Parameter : public juce::AudioProcessorParameterWithID {
   juce::StringArray getAllValueStrings() const override;
 
   int index() const { return index_; }
+  int part() const { return part_; }
   const sk::ParamSpec& spec() const { return store_.spec(index_); }
 
  private:
   sk::ParamStore& store_;
   int index_;
+  int part_;
+};
+
+// A part's level, balance, mute or solo (part of the multi's layout, not of
+// any engine). The host sets the value here; the message thread applies it to
+// the layout, and a change made in the window shows up here (Processor::syncMix).
+class MixParameter : public juce::AudioProcessorParameterWithID {
+ public:
+  enum Kind { Level, Pan, Mute, Solo, kinds };
+  static constexpr float kMinDb = -60, kMaxDb = 12;
+  MixParameter(int part, Kind kind);
+
+  float getValue() const override { return norm_.load(std::memory_order_relaxed); }
+  void setValue(float norm) override { norm_.store(juce::jlimit(0.f, 1.f, norm), std::memory_order_relaxed); }
+  float getDefaultValue() const override;
+  juce::String getText(float norm, int maxLen) const override;
+  float getValueForText(const juce::String& text) const override;
+  int getNumSteps() const override { return kind_ >= Mute ? 2 : AudioProcessorParameter::getNumSteps(); }
+  bool isDiscrete() const override { return kind_ >= Mute; }
+  bool isBoolean() const override { return kind_ >= Mute; }
+
+  int part() const { return part_; }
+  Kind kind() const { return kind_; }
+  float fromLayout(const sk::PartSettings& s) const;                  // normalised
+  void toLayout(float norm, sk::PartSettings& s) const;
+
+ private:
+  std::atomic<float> norm_{0};
+  int part_;
+  Kind kind_;
 };
 
 // What the editor shows in its meters. Written on the audio thread.
@@ -77,15 +112,31 @@ class Processor : public juce::AudioProcessor, private juce::Timer {
   void setStateInformation(const void* data, int size) override;
 
   // For the editor (message thread) --------------------------------------------
-  sk::Engine& engine() { return *engine_; }
+  // The synth as a Multi (API.md §5b) when it has features.multi: part(i) is an
+  // engine of it, and a plain synth has the one engine as part 0.
+  bool isMulti() const { return multi_ != nullptr; }
+  int partCount() const { return multi_ ? multi_->maxParts() : 1; }
+  sk::Engine& engine(int part = 0) { return multi_ ? multi_->part(part) : *owned_; }
+  sk::Multi* multi() { return multi_.get(); }
   std::mutex& engineLock() { return engineMutex_; }
+  // Part-major: part * paramsPerPart() + the engine's parameter index.
   const std::vector<Parameter*>& params() const { return params_; }
+  int paramsPerPart() const { return perPart_; }
+  std::size_t slot(int part, int index) const { return static_cast<std::size_t>(part * perPart_ + index); }
 
   // A change made in the plugin window: applied and reported to the host.
-  void setParamFromUi(int index, double value);
-  void gesture(int index, bool starting);
+  void setParamFromUi(int part, int index, double value);
+  void gesture(int part, int index, bool starting);
   // Patch JSON from the window (preset load). Returns the engine's result.
-  sk::LoadResult loadPatchFromUi(const sk::Json& patch);
+  sk::LoadResult loadPatchFromUi(int part, const sk::Json& patch);
+  // The window's zone editor, and loading a whole multi into it.
+  void setLayoutFromUi(const sk::Json& layout);
+  sk::LoadResult loadMultiFromUi(const sk::Json& multi);
+  // The multi as the window needs it (patches and layout), and bumped when
+  // the host changed the layout (a part's level, mute… automated).
+  sk::Json multiJson();
+  uint32_t layoutSerial() const { return layoutSerial_.load(); }
+  sk::Json layoutJson();
   // Tell the host every parameter may have changed (after a patch load).
   void notifyAllParams();
 
@@ -111,8 +162,16 @@ class Processor : public juce::AudioProcessor, private juce::Timer {
   // told to the host on the message thread, so it records and shows them.
   void timerCallback() override;
 
-  std::unique_ptr<sk::Engine> engine_;
+  void syncMix();
+  void seedMix();   // the mix parameters from the layout, after a load
+
+  std::unique_ptr<sk::Engine> owned_;    // a synth without features.multi
+  std::unique_ptr<sk::Multi> multi_;
   std::vector<Parameter*> params_;
+  int perPart_ = 0;
+  std::vector<MixParameter*> mix_;       // part * kinds + kind
+  std::vector<float> mixAgreed_;         // what the host's parameter and the layout last agreed on
+  std::atomic<uint32_t> layoutSerial_{0};
   std::vector<std::atomic<bool>> inGesture_;
   mutable std::mutex engineMutex_;   // non-audio engine calls (patches, mod, custom)
   mutable std::mutex uiStateMutex_;
