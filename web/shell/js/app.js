@@ -53,9 +53,11 @@ class App {
     this.undoEl = skUndoButtons(this);
     this.midi = new MidiInput(this);
     this.keyboard = new Keyboard(this);
-    // A synth with features.multi gets the multi bar: parts, zones, saved
-    // multis (API.md §5b). The plugin doesn't show it yet.
+    // A synth with features.multi (API.md §5b) picks whole sounds in the
+    // sound bar at the top, and edits parts and zones in the multi bar under it.
     this.multiBar = m.multi ? new MultiBar(this) : null;
+    this.sound = m.multi ? new SoundBar(this) : null;
+    if (this.sound) this.multiBar.openListeners.add(() => this.sound.refresh());
     this.buildParts();
 
     this.toasts = h("div", { class: "toasts", role: "status", "aria-live": "polite" });
@@ -169,7 +171,7 @@ class App {
     else if (m.t === "state") this.presets.applyHostState(m.patch, m.ui, m.multi);
     else if (m.t === "layout") { this.model.setLayout(typeof m.json === "string" ? JSON.parse(m.json) : m.json, { fromHost: true }); }
     else if (m.t === "store") skStore.external(m.key, m.value);
-    else if (m.t === "imported") { if (m.kind === "multi" && this.multiBar) this.multiBar.importText(m.text, m.file); else this.presets.importText(m.text, m.file); }
+    else if (m.t === "imported") { if ((m.kind === "multi" || m.kind === "sound") && this.sound) this.sound.importText(m.text, m.file); else this.presets.importText(m.text, m.file); }
   }
 
   sendMidi(bytes) {
@@ -281,7 +283,7 @@ class App {
       h("div", { class: "brand" },
         h("h1", { class: "synth-name", text: info.name }),
         h("span", { class: "synth-meta", text: [info.vendor, info.version && "v" + info.version].filter(Boolean).join(" ") })),
-      this.presets.root,
+      (this.sound || this.presets).root,
       this.undoEl,
       this.outputEl,
       h("div", { class: "top-actions" }, this.panicBtn, this.themeBtn));
@@ -615,7 +617,7 @@ class App {
   mountPart(el, name, opts) {
     let part = null;
     switch (name) {
-      case "presets": part = this.presets.root; break;
+      case "presets": part = (this.sound || this.presets).root; break;   // a multi synth: the sound bar
       case "keyboard":
         part = this.keyboard.root;
         this.keyboard.typing = opts.typing !== false;

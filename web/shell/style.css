@@ -536,8 +536,6 @@ button, input, select { font: inherit; color: inherit; }
 /* ---- multi: parts, mix, zones (API.md §5b) ---------------------------------------- */
 .multi { margin: 0 auto; max-width: 1180px; padding: 8px 16px 0; }
 .multi-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.multi-lib { display: flex; gap: 6px; align-items: center; }
-.multi-name { width: 12em; padding: 6px 8px; border: 1px solid var(--edge); border-radius: 7px; background: var(--field); color: var(--ink); font: inherit; font-size: 0.875rem; }
 .parts { display: flex; gap: 6px; flex-wrap: wrap; flex: 1 1 auto; }
 .part { display: flex; align-items: stretch; border: 1px solid var(--edge); border-radius: 8px; background: var(--panel); overflow: hidden; box-shadow: var(--shadow); }
 .part.is-selected { border-color: var(--part); box-shadow: 0 0 0 1px var(--part); }
@@ -547,7 +545,13 @@ button, input, select { font: inherit; color: inherit; }
 .part-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .part-flag { border: 0; border-left: 1px solid var(--edge); background: transparent; color: var(--ink-soft); font: inherit; font-size: 0.6875rem; font-weight: 600; width: 1.9em; cursor: pointer; }
 .part-flag.is-on { background: var(--part); color: #fff; }
-.zones-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.sound-multi.is-on { border-color: var(--accent); color: var(--accent); }
+.sound-tag { font-size: 0.6875rem; padding: 2px 6px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.multi.is-open { padding-bottom: 8px; border-bottom: 1px solid var(--edge); }
+.mix-patch { display: flex; align-items: center; }
+.mix-patch .presets { margin: 0; }
+.mix-scale, .mix-key { padding: 4px 6px; border: 1px solid var(--edge); border-radius: 7px; background: var(--field); color: var(--ink); font: inherit; font-size: 0.8125rem; }
+.mix-key { margin-left: 4px; }
 .multi-mix { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; padding: 6px 2px 0; font-size: 0.8125rem; color: var(--ink-soft); }
 .mix-part { font-weight: 600; color: var(--ink); border-left: 4px solid var(--part); padding-left: 8px; }
 .mix-field { display: flex; gap: 8px; align-items: center; }
@@ -580,4 +584,4 @@ button, input, select { font: inherit; color: inherit; }
 .zf { display: flex; flex-direction: column; gap: 2px; font-size: 0.75rem; color: var(--ink-soft); }
 .zf-num, .zf-sel { padding: 4px 6px; border: 1px solid var(--edge); border-radius: 6px; background: var(--field); color: var(--ink); font: inherit; font-size: 0.875rem; }
 .zf-note { font-size: 0.6875rem; min-height: 1em; }
-@media (max-width: 640px) { .multi-name { width: 9em; } .zmap { height: 160px; } .zones-hint { display: none; } }
+@media (max-width: 640px) { .zmap { height: 160px; } .zones-hint { display: none; } }

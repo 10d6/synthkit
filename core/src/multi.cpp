@@ -13,6 +13,10 @@
 #include "synthkit/dsp/util.h"
 #include "synthkit/dsp/misc.h"
 #include "synthkit/error.h"
+#include "arp.h"
+using sk::detail::ArpScale;
+using sk::detail::arpScale;
+using sk::detail::arpScaleCount;
 
 namespace sk {
 
@@ -35,6 +39,9 @@ struct Rt {
   std::array<Z, kMaxZones> zones{};
   std::array<float, kMaxParts> gainL{}, gainR{};
   std::array<uint32_t, kMaxParts> listens{};   // input channels (bit n) whose CCs, bend and pressure reach the part
+  std::array<bool, kMaxParts> snaps{};          // the part is kept in a scale
+  std::array<std::array<int8_t, 12>, kMaxParts> snap{};   // semitones to move a note, by its degree above the key
+  std::array<uint8_t, kMaxParts> scaleKey{};
 };
 
 Rt makeRt(const MultiLayout& l) {
@@ -54,6 +61,11 @@ Rt makeRt(const MultiLayout& l) {
     const float pan = std::clamp(s.pan, -1.f, 1.f);
     rt.gainL[static_cast<std::size_t>(p)] = g * (pan > 0 ? std::cos(pan * kPi * 0.5f) : 1.f);
     rt.gainR[static_cast<std::size_t>(p)] = g * (pan < 0 ? std::cos(-pan * kPi * 0.5f) : 1.f);
+    if (s.scale > 0) {
+      rt.snaps[static_cast<std::size_t>(p)] = true;
+      rt.scaleKey[static_cast<std::size_t>(p)] = static_cast<uint8_t>(((s.scaleKey % 12) + 12) % 12);
+      for (int d = 0; d < 12; ++d) rt.snap[static_cast<std::size_t>(p)][static_cast<std::size_t>(d)] = static_cast<int8_t>(multiScaleSnap(60 + d, s.scale, 0) - (60 + d));
+    }
     uint32_t mask = 0;
     for (const Zone& z : l.zones)
       if (z.part == p) mask |= z.channel < 0 ? 0xFFFFu : 1u << z.channel;
@@ -63,6 +75,28 @@ Rt makeRt(const MultiLayout& l) {
 }
 
 }  // namespace
+
+int multiScaleCount() { return arpScaleCount(); }
+const char* multiScaleName(int index) { return arpScale(index).name; }
+int multiScaleIndex(const std::string& name) {
+  for (int i = 0; i < arpScaleCount(); ++i)
+    if (name == arpScale(i).name) return i;
+  return -1;
+}
+int multiScaleSnap(int note, int scale, int scaleKey) {
+  if (scale <= 0 || scale >= arpScaleCount()) return note;
+  const ArpScale& sc = arpScale(scale);
+  const int key = ((scaleKey % 12) + 12) % 12;
+  const int d = (((note - key) % 12) + 12) % 12;
+  int best = 0, bestDist = 99;
+  // The degrees, and the key an octave up (so a note just below it can go up).
+  for (int i = 0; i <= sc.n; ++i) {
+    const int s = i < sc.n ? sc.steps[i] : 12;
+    const int dist = std::abs(s - d);
+    if (dist < bestDist) { best = s; bestDist = dist; }   // ascending, so a tie keeps the lower
+  }
+  return std::clamp(note - d + best, 0, 127);
+}
 
 float zoneFade(int pos, int lo, int hi, int in, int out, bool linear) {
   if (pos < lo || pos > hi) return 0.f;
@@ -95,6 +129,11 @@ struct Multi::Impl {
 
   // Audio thread state.
   std::vector<Key> keys = std::vector<Key>(16 * 128);
+  // Notes held on each part's engine, by channel and pitch. When a scale
+  // sends two keys to one note, the second retriggers it and the note stops
+  // with the last key released, so the engine sees one note.
+  std::vector<uint8_t> held = std::vector<uint8_t>(kMaxParts * 16 * 128);
+  uint8_t& heldOf(int part, int channel, int note) { return held[static_cast<std::size_t>((part * 16 + (channel & 15)) * 128 + (note & 127))]; }
   uint32_t serial = 0;
   std::array<std::vector<MidiEvent>, kMaxParts> events;
   std::array<int, kMaxParts> drain{};
@@ -179,7 +218,19 @@ struct Multi::Impl {
       if (g < 1e-4f || k.count >= kMaxRoutes) continue;
       MidiEvent o = e;
       o.note = std::clamp(e.note + z.transpose, 0, 127);
+      const auto ps = static_cast<std::size_t>(z.part);
+      if (rt->snaps[ps]) {
+        const int d = (o.note - rt->scaleKey[ps] + 120) % 12;
+        o.note = std::clamp(o.note + rt->snap[ps][static_cast<std::size_t>(d)], 0, 127);
+      }
       o.gain = e.gain * g;
+      uint8_t& h = heldOf(z.part, e.channel, o.note);
+      if (h > 0) {   // already sounding: retrigger
+        MidiEvent off = o;
+        off.type = MidiEvent::Type::NoteOff;
+        push(z.part, off, sample);
+      }
+      if (h < 255) ++h;
       push(z.part, o, sample);
       k.r[k.count++] = Route{static_cast<uint8_t>(z.part), static_cast<uint8_t>(o.note), serial};
     }
@@ -196,6 +247,9 @@ struct Multi::Impl {
     for (int i = 0; i < k.count; ++i) {
       const Route r = k.r[static_cast<std::size_t>(i)];
       if (r.serial == oldest) {
+        uint8_t& h = heldOf(r.part, e.channel, r.note);
+        if (h > 0) --h;
+        if (h > 0) continue;   // another key still holds this note (dropped from the table all the same)
         MidiEvent o = e;
         o.type = MidiEvent::Type::NoteOff;
         o.note = r.note;
@@ -209,6 +263,7 @@ struct Multi::Impl {
 
   void clearRoutes() {
     for (Key& k : keys) k.count = 0;
+    std::fill(held.begin(), held.end(), uint8_t{0});
   }
 };
 
@@ -365,6 +420,8 @@ std::vector<std::string> Multi::setLayout(const MultiLayout& in) {
     PartSettings s = in.part[static_cast<std::size_t>(p)];
     s.levelDb = std::clamp(std::isfinite(s.levelDb) ? s.levelDb : 0.f, -120.f, 12.f);
     s.pan = std::clamp(std::isfinite(s.pan) ? s.pan : 0.f, -1.f, 1.f);
+    if (s.scale < 0 || s.scale >= multiScaleCount()) s.scale = 0;
+    s.scaleKey = ((s.scaleKey % 12) + 12) % 12;
     l.part[static_cast<std::size_t>(p)] = s;
   }
   int index = 0;
@@ -459,6 +516,7 @@ Json Multi::layoutJson() const {
     o["pan"] = s.pan;
     if (s.mute) o["mute"] = true;
     if (s.solo) o["solo"] = true;
+    if (s.scale > 0) { o["scale"] = multiScaleName(s.scale); o["scaleKey"] = s.scaleKey; }
     parts.push(o);
   }
   j["parts"] = parts;
@@ -470,6 +528,7 @@ Json Multi::layoutJson() const {
 
 std::vector<std::string> Multi::setLayoutJson(const Json& in) {
   MultiLayout l;
+  std::vector<std::string> bad;
   l.parts = in["parts"].isArray() ? static_cast<int>(in["parts"].size()) : 1;
   for (int p = 0; p < std::min(l.parts, kMaxParts); ++p) {
     const Json& jp = in["parts"][p];
@@ -478,13 +537,21 @@ std::vector<std::string> Multi::setLayoutJson(const Json& in) {
     s.pan = static_cast<float>(jp["pan"].number(0));
     s.mute = jp["mute"].boolean(false);
     s.solo = jp["solo"].boolean(false);
+    if (jp["scale"].isString()) {
+      const int i = multiScaleIndex(jp["scale"].string());
+      if (i < 0) bad.push_back("part " + std::to_string(p + 1) + ": no scale \"" + jp["scale"].string() + "\"; playing every note");
+      s.scale = std::max(0, i);
+      s.scaleKey = ((static_cast<int>(jp["scaleKey"].number(0)) % 12) + 12) % 12;
+    }
   }
   if (in["zones"].isArray()) {
     for (auto& jz : in["zones"].items()) l.zones.push_back(zoneFromJson(jz));
   } else {
     for (int p = 0; p < std::clamp(l.parts, 1, kMaxParts); ++p) { Zone z; z.part = p; l.zones.push_back(z); }   // no zones: every part plays every key
   }
-  return setLayout(l);
+  auto w = setLayout(l);
+  bad.insert(bad.end(), w.begin(), w.end());
+  return bad;
 }
 
 Json Multi::save(const std::string& name) const {

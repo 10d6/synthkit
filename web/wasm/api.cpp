@@ -148,6 +148,10 @@ SK_EXPORT(sk_info) const char* sk_info() {
     multis.push(entry);
   }
   j["multis"] = multis;
+  // The scales a part can be kept in (API.md §5b), Chromatic first.
+  sk::Json scales = sk::Json::array();
+  for (int i = 0; i < sk::multiScaleCount(); ++i) scales.push(sk::multiScaleName(i));
+  j["scales"] = scales;
   j["custom"] = sk::Json(gEngine->customIds());
   j["messages"] = sk::Json(gEngine->messageIds());
   sk::Json mod = sk::Json::object();

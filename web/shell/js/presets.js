@@ -61,8 +61,15 @@ class PresetBar {
     // whether the sound had changed since.
     const hist = this.model.history;
     if (hist) {
-      hist.uiState = () => ({ current: { ...this.current }, dirty: !!this.model.dirty });
+      hist.uiState = () => ({ current: { ...this.current }, dirty: !!this.model.dirty,
+        ...(this.model.multi ? { currents: { ...this.currents, [this.shownPart]: { ...this.current } }, dirtyParts: this.model.dirtyParts.map(Boolean) } : {}) });
       hist.onRestore = (ui) => {
+        if (ui && ui.currents) {   // a multi: every part's preset
+          this.currents = { ...ui.currents };
+          this.model.dirtyParts = (ui.dirtyParts || []).slice();
+          this.shownPart = this.model.part;
+          ui = { ...ui, current: this.currents[this.shownPart] || ui.current };
+        }
         if (ui && ui.current) {
           const c = ui.current;
           const gone = (c.kind === "user" || c.kind === "factory") && !this.find(c);
@@ -119,7 +126,8 @@ class PresetBar {
     this.nameInput.addEventListener("blur", () => { if (!this.nameInput.hidden) this.finishNaming(true); });
     this.fileInput = h("input", { type: "file", accept: ".json,application/json", hidden: true, onchange: () => this.importFile() });
     const btn = (label, title, fn, cls = "") => h("button", { type: "button", class: "btn " + cls, title, "aria-label": title, onclick: fn }, label);
-    this.saveBtn = btn("Save", "Save preset", () => this.save());
+    // In a multi synth this bar sits in the multi bar and picks the selected part's patch.
+    this.saveBtn = btn("Save", this.model.multi ? "Save this part's patch as a preset" : "Save preset", () => this.save());
     this.moreBtn = btn("More", "More preset actions", (e) => this.moreMenu(e), "btn-quiet");
     this.root = h("div", { class: "presets" },
       this.catSelect,
@@ -241,6 +249,7 @@ class PresetBar {
         ui.part = this.model.part;
         ui.currents = { ...this.currents, [this.shownPart]: this.current };
         ui.dirtyParts = this.model.dirtyParts.map(Boolean);
+        if (this.app.sound) ui.sound = this.app.sound.state();
       }
       this.app.audio.send({ t: "meta", ui });
       return;
@@ -251,6 +260,7 @@ class PresetBar {
       s.part = this.model.part;
       s.currents = { ...this.currents, [this.shownPart]: this.current };
       s.dirtyParts = this.model.dirtyParts.map(Boolean);
+      if (this.app.sound) s.sound = this.app.sound.state();
     }
     skStore.set(this.key("session"), s);
   }
@@ -281,9 +291,19 @@ class PresetBar {
     this.shownPart = this.model.part;
     this.current = this.currents[this.shownPart] || ui.current || this.currentFor(this.model.savePatch());
     this.model.dirtyParts = ui.dirtyParts || [];
+    this.restoreSound(ui.sound);
     if (this.model.history) this.model.history.clear();
     this.refresh();
     return true;
+  }
+  // The sound bar's state (a multi synth); without one (an older session),
+  // the multi as it is counts as unchanged.
+  restoreSound(s) {
+    const sb = this.app.sound;
+    if (!sb) return;
+    if (s) sb.restore(s);
+    if (!s || s.baseline == null) { sb.baseline = sb.sig(); if (!s) sb.multiCurrent = { kind: "session", name: "Untitled multi" }; }
+    sb.refresh();
   }
 
   restoreSession() {
@@ -295,6 +315,7 @@ class PresetBar {
       this.shownPart = this.model.part;
       this.current = this.currents[this.shownPart] || s.current || this.currentFor(this.model.savePatch());
       this.model.dirtyParts = s.dirtyParts || [];
+      this.restoreSound(s.sound);
       this.refresh();
       return true;
     }
@@ -306,7 +327,8 @@ class PresetBar {
     }
     // First visit: start from Init if the synth has one.
     const init = this.initFor(null) || this.entries().find((e) => e.kind === "factory");
-    if (init) this.load(init);
+    if (init && this.app.sound) this.app.sound.load({ ...init, type: "patch" });
+    else if (init) this.load(init);
     return false;
   }
 

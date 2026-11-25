@@ -88,7 +88,7 @@ class SkHistory {
     if (!e) {
       if (top) this.close(top);
       e = { label: (grouped && this.batchLabel) || extra.label || this.describe(kind, extra), key, changes: [], time: now,
-            merge: !grouped && kind !== "patch", uiBefore: this.ui(), uiAfter: null };
+            merge: !grouped && kind !== "patch" && kind !== "multi", uiBefore: this.ui(), uiAfter: null };
       this.undoStack.push(e);
       if (this.undoStack.length > this.limit) this.undoStack.shift();
       this.redoStack = [];

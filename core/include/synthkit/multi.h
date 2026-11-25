@@ -43,7 +43,19 @@ struct PartSettings {
   float levelDb = 0;                  // -120…+12
   float pan = 0;                      // balance, -1…1; 0 leaves the part as it is
   bool mute = false, solo = false;
+  // Keeps the part in a scale: each note (after the zone's transpose) moves
+  // to the nearest note of the scale, ties going down. 0 is Chromatic (off);
+  // the list is the sequencer's (multiScaleName). Saved by name.
+  int scale = 0;
+  int scaleKey = 0;                   // the scale's root, 0 = C … 11 = B
 };
+
+// The scales a part can be kept in (the sequencer's list; 0 is Chromatic).
+int multiScaleCount();
+const char* multiScaleName(int index);
+int multiScaleIndex(const std::string& name);   // -1 if there's no such scale
+// Where `note` goes in that scale and key (the nearest scale note, ties down).
+int multiScaleSnap(int note, int scale, int scaleKey);
 
 // Everything about a multi except the patches themselves.
 struct MultiLayout {
