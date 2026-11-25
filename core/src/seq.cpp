@@ -248,6 +248,7 @@ void Seq::startLane(int li, const MidiEvent& e, Beats keyBeat) {
   l.key = std::clamp(e.note, 0, 127);
   l.channel = e.channel;
   l.vel = e.vel;
+  l.gain = e.gain;
   l.serial = ++serial_;
   l.rng.seed(dsp::hashSeed(serial_, 0x5E9u, static_cast<uint64_t>(l.key)));
   l.evolvedFrom = -1;
@@ -330,6 +331,7 @@ void Seq::step(int li, int sample) {
       }
       MidiEvent on = NoteOn{pitch, std::clamp(n.vel / 127.f * (fixed ? fv : l.vel), 1.f / 127.f, 1.f), l.channel};
       on.arp = true;
+      on.gain = l.gain;
       on.arpLane = static_cast<int8_t>(li);
       emit(on, sample);
       if (nOffs_ >= kMaxOffs) flushOffs(sample, true);   // never lose a note-off

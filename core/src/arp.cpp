@@ -284,7 +284,9 @@ void Arp::process(const MidiEvent* in, int nIn, MidiEvent* out, int& outCount, i
           for (int i = 0; i < nChord_; ++i)
             if (chord_[static_cast<std::size_t>(i)].note == n) {
               const Entry& c = chord_[static_cast<std::size_t>(i)];
-              emit(NoteOn{c.note, c.vel, c.channel}, 0);
+              MidiEvent ev = NoteOn{c.note, c.vel, c.channel};
+              ev.gain = c.gain;
+              emit(ev, 0);
               break;
             }
       nChord_ = 0;
@@ -391,11 +393,12 @@ void Arp::addNote(const MidiEvent& e) {
       c.gone = false;
       c.vel = e.vel;
       c.channel = e.channel;
+      c.gain = e.gain;
       return;
     }
   }
   if (nChord_ >= kMaxNotes) return;
-  chord_[static_cast<std::size_t>(nChord_++)] = Entry{e.note, e.vel, e.channel, ++orderCounter_, false, 0};
+  chord_[static_cast<std::size_t>(nChord_++)] = Entry{e.note, e.vel, e.channel, ++orderCounter_, false, 0, e.gain};
 }
 
 void Arp::keyUp(int note) {
@@ -458,7 +461,7 @@ void Arp::start(Beats keyBeat) {
   stepBeat_ = g + ((gi & 1) ? get(P.swing) / 100.0 * len / 3.0 : 0.0);
 }
 
-int Arp::activeNotes(int* notes, float* vels, int* chans, bool byOrder) const {
+int Arp::activeNotes(int* notes, float* vels, int* chans, float* gains, bool byOrder) const {
   int idx[kMaxNotes];
   int n = 0;
   for (int i = 0; i < nChord_; ++i)
@@ -473,6 +476,7 @@ int Arp::activeNotes(int* notes, float* vels, int* chans, bool byOrder) const {
     notes[i] = c.note;
     vels[i] = c.vel;
     chans[i] = c.channel;
+    gains[i] = c.gain;
   }
   return n;
 }
@@ -484,24 +488,25 @@ void Arp::step(int sample) {
   const int oct = std::clamp(choice(P.octaves), 1, 4);
 
   int base[kMaxNotes], chan[kMaxNotes];
-  float bvel[kMaxNotes];
-  const int nb = activeNotes(base, bvel, chan, mode == ArpAsPlayed);
+  float bvel[kMaxNotes], bgain[kMaxNotes];
+  const int nb = activeNotes(base, bvel, chan, bgain, mode == ArpAsPlayed);
 
   if (nb > 0) {
     const bool fixed = choice(P.velMode) == 1;
     const float fv = std::clamp(get(P.velFixed), 1.f, 127.f) / 127.f;
     const double gate = get(P.gate) / 100.0;
     const Beats minLen = t_->seconds(0.003);
-    auto playFor = [&](int note, float vel, int ch, Beats dur) {
+    auto playFor = [&](int note, float vel, int ch, Beats dur, float gain) {
       if (note < 0 || note > 127) return;
       MidiEvent e = NoteOn{note, std::clamp(vel, 1.f / 127.f, 1.f), ch};
       e.arp = true;
+      e.gain = gain;
       emit(e, sample);
       if (nOffs_ >= kMaxOffs) flushOffs(sample, true);  // never lose a note-off
       offs_[static_cast<std::size_t>(nOffs_++)] = Off{at + std::max(dur, minLen), note, ch};
     };
     const bool xf = crossfade();   // notes run into the next, which fades in as they fade out
-    auto play = [&](int note, float vel, int ch) { playFor(note, fixed ? fv : vel, ch, len * (xf ? 1.0 : gate)); };
+    auto play = [&](int note, float vel, int ch, float gain) { playFor(note, fixed ? fv : vel, ch, len * (xf ? 1.0 : gate), gain); };
     const long k = stepIndex_;
     if (mode == ArpPatternMode) {
       // The drawn pattern: each note's row picks a chord tone.
@@ -531,12 +536,12 @@ void Arp::step(int sample) {
           const int idx = ((r % nb) + nb) % nb;
           const int octave = (r - idx) / nb;
           const float v = n.vel / 127.f * (fixed ? fv : bvel[idx]);
-          playFor(base[idx] + 12 * octave, v, chan[idx], (std::max<int>(n.len, 1) - 1 + (xf ? 1.0 : gate)) * len);
+          playFor(base[idx] + 12 * octave, v, chan[idx], (std::max<int>(n.len, 1) - 1 + (xf ? 1.0 : gate)) * len, bgain[idx]);
         }
       stepPos_ = static_cast<float>(p) / static_cast<float>(steps);
     } else if (mode == ArpChord) {
       const int o = static_cast<int>(k % oct);
-      for (int i = 0; i < nb; ++i) play(base[i] + 12 * o, bvel[i], chan[i]);
+      for (int i = 0; i < nb; ++i) play(base[i] + 12 * o, bvel[i], chan[i], bgain[i]);
       stepPos_ = oct > 1 ? static_cast<float>(o) / static_cast<float>(oct) : 0.f;
     } else {
       // The notes across the octaves, low to high (or in playing order).
@@ -563,7 +568,7 @@ void Arp::step(int sample) {
         }
         default: break;
       }
-      play(noteAt(i), bvel[at_(i)], chan[at_(i)]);
+      play(noteAt(i), bvel[at_(i)], chan[at_(i)], bgain[at_(i)]);
       stepPos_ = mode == ArpRandom ? static_cast<float>(i) / static_cast<float>(n)
                                    : static_cast<float>(k % cycle) / static_cast<float>(cycle);
     }

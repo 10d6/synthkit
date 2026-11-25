@@ -4,11 +4,14 @@
 //   <synth>_render --check <synth dir> [--out <dir>]
 //   <synth>_render --params
 //
+// A scenario with a "multi" plays a Multi (API.md §5b) instead of one patch.
+//
 // See API.md §10 for the scenario format.
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -21,6 +24,7 @@
 #include <vector>
 
 #include "synthkit/engine.h"
+#include "synthkit/multi.h"
 #include "wav.h"
 
 namespace fs = std::filesystem;
@@ -90,6 +94,7 @@ struct TimedEvent {
 struct Scenario {
   std::string name;
   Json patch;               // full patch JSON (may be null = defaults)
+  Json multi;               // a multi (API.md §5b): the JSON itself, or null for a single patch
   Json params = Json::object();
   Json custom = Json::object();
   double bpm = 120;
@@ -136,11 +141,20 @@ Json findPreset(const std::string& path, const fs::path& synthDir) {
   throw std::runtime_error("patch '" + path + "' not found among presets");
 }
 
+// "multis/split.json", "split" or "multis/split": a file in the synth's multis/ folder.
+Json findMulti(const std::string& name, const fs::path& synthDir) {
+  for (fs::path f : {synthDir / name, synthDir / (name + ".json"), synthDir / "multis" / name, synthDir / "multis" / (name + ".json")})
+    if (fs::is_regular_file(f)) return Json::parse(readFile(f));
+  throw std::runtime_error("no multi '" + name + "'");
+}
+
 Scenario parseScenario(const Json& j, const std::string& name, const fs::path& synthDir) {
   Scenario s;
   s.name = name;
   if (j["patch"].isString()) s.patch = findPreset(j["patch"].string(), synthDir);
   else if (j["patch"].isObject()) s.patch = j["patch"];
+  if (j["multi"].isString()) s.multi = findMulti(j["multi"].string(), synthDir);
+  else if (j["multi"].isObject()) s.multi = j["multi"];
   if (j["params"].isObject()) s.params = j["params"];
   if (j["custom"].isObject()) s.custom = j["custom"];
   const Json& t = j["transport"];
@@ -218,7 +232,39 @@ std::unique_ptr<sk::Engine> engineFor(const Scenario& s, std::string* err = null
   return eng;
 }
 
-Render render(sk::Engine& eng, const Scenario& s, const RenderOpts& o) {
+// What render() needs of the thing it plays: an Engine, or a Multi.
+struct Proc {
+  std::function<void(double, int)> prepare;
+  std::function<int(const std::string&)> messageIndex;
+  std::function<void(int, const float*, int)> sendMessage;
+  std::function<void(float* const*, int, int, const sk::MidiEvent*, int, const sk::HostTransport&)> process;
+  std::function<void()> drainParamChanges;
+  std::function<sk::EngineStats()> takeStats;
+};
+
+Proc procOf(sk::Engine& e) {
+  Proc p;
+  p.prepare = [&e](double sr, int block) { e.prepare(sr, block); };
+  p.messageIndex = [&e](const std::string& id) { return e.messageIndex(id); };
+  p.sendMessage = [&e](int i, const float* v, int n) { e.sendMessage(i, v, n); };
+  p.process = [&e](float* const* o, int n, int f, const sk::MidiEvent* ev, int ne, const sk::HostTransport& t) { e.process(o, n, f, ev, ne, t); };
+  p.drainParamChanges = [&e] { for (int moved; e.takeParamChange(moved);) {} };
+  p.takeStats = [&e] { return e.takeStats(); };
+  return p;
+}
+
+Proc procOf(sk::Multi& m) {
+  Proc p;
+  p.prepare = [&m](double sr, int block) { m.prepare(sr, block); };
+  p.messageIndex = [](const std::string&) { return -1; };   // a page talks to one part; not here
+  p.sendMessage = [](int, const float*, int) {};
+  p.process = [&m](float* const* o, int n, int f, const sk::MidiEvent* ev, int ne, const sk::HostTransport& t) { m.process(o, n, f, ev, ne, t); };
+  p.drainParamChanges = [&m] { for (int i = 0; i < m.maxParts(); ++i) for (int moved; m.part(i).takeParamChange(moved);) {} };
+  p.takeStats = [&m] { return m.takeStats(); };
+  return p;
+}
+
+Render render(Proc eng, const Scenario& s, const RenderOpts& o) {
   Render out;
   out.sr = s.sampleRate;
   int block = std::max(1, o.block);
@@ -284,7 +330,7 @@ Render render(sk::Engine& eng, const Scenario& s, const RenderOpts& o) {
     gTrack = true;
     eng.process(outs, 2, n, blockEv.data(), static_cast<int>(blockEv.size()), ht);
     gTrack = false;
-    for (int moved; eng.takeParamChange(moved);) {}   // as an adapter would
+    eng.drainParamChanges();   // as an adapter would
     auto st = eng.takeStats();
     out.peakDb = std::max(out.peakDb, st.peakBeforeLimiterDb);
     out.limiterDb = std::max(out.limiterDb, st.limiterReductionDb);
@@ -308,6 +354,33 @@ Render render(sk::Engine& eng, const Scenario& s, const RenderOpts& o) {
 }
 
 // ------------------------------------------------------------ analysis
+
+Render render(sk::Engine& eng, const Scenario& s, const RenderOpts& o) { return render(procOf(eng), s, o); }
+Render render(sk::Multi& m, const Scenario& s, const RenderOpts& o) { return render(procOf(m), s, o); }
+
+// A Multi with the scenario's multi loaded. Its warnings are failures: a multi
+// that ships should load cleanly.
+std::unique_ptr<sk::Multi> multiFor(const Json& multi, std::string* err = nullptr, const std::string& label = "multi") {
+  auto m = sk::makeMulti();
+  auto res = m->load(multi);
+  if (!res.ok) { if (err) *err = res.error; return nullptr; }
+  for (auto& w : res.warnings) fail(label + ": " + w);
+  return m;
+}
+
+// The multi of a scenario, with its "params" set on every part.
+std::unique_ptr<sk::Multi> multiForScenario(const Scenario& s, std::string* err) {
+  auto m = multiFor(s.multi, err, s.name);
+  if (!m) return nullptr;
+  for (auto& kv : s.params.members()) {
+    for (int p = 0; p < m->maxParts(); ++p) {
+      int i = m->part(p).params().find(kv.first);
+      if (i < 0) { if (err) *err = "unknown parameter '" + kv.first + "'"; return nullptr; }
+      m->part(p).params().set(i, kv.second.number());
+    }
+  }
+  return m;
+}
 
 bool allFinite(const Render& r) {
   for (std::size_t i = 0; i < r.l.size(); ++i)
@@ -447,9 +520,16 @@ int runCheck(const fs::path& synthDir, const fs::path& outDir) {
     try {
       Scenario s = parseScenario(Json::parse(readFile(t)), name, synthDir);
       std::string err;
-      auto eng = engineFor(s, &err);
-      if (!eng) { fail(name + ": " + err); continue; }
-      Render r = render(*eng, s, {});
+      Render r;
+      if (!s.multi.isNull()) {
+        auto m = multiForScenario(s, &err);
+        if (!m) { fail(name + ": " + err); continue; }
+        r = render(*m, s, {});
+      } else {
+        auto eng = engineFor(s, &err);
+        if (!eng) { fail(name + ": " + err); continue; }
+        r = render(*eng, s, {});
+      }
       audioSeconds += s.length; cpuSeconds += r.cpu;
       if (runExpect(s, r)) pass(name + "  (peak " + db(r.peakDb) + ")");
       writeIfAsked(outDir / "tests", name, r);
@@ -484,6 +564,115 @@ int runCheck(const fs::path& synthDir, const fs::path& outDir) {
       if (sr == 48000.0 && ok) info(name + ": peak " + db(r.peakDb) + ", silent " + std::to_string(r.silentAt - 1.2).substr(0, 4) + " s after all-notes-off");
     }
     if (ok) pass(name + ": all sample rates");
+  }
+
+  // Multis (API.md §5b): one part is the engine, and each multi in multis/ loads
+  // cleanly, round-trips, sounds from every zone and ends in silence.
+  if (si.features.multi) {
+    std::printf("\nMultis\n");
+    bool same = true;
+    for (auto& [name, pj] : loaded) {
+      Scenario s = standardScenario(pj, 48000);
+      auto eng = engineFor(s);
+      Render a = render(*eng, s, {});
+      Json one = Json::object();
+      Json parts = Json::array();
+      Json part = Json::object();
+      part["patch"] = pj;
+      parts.push(part);
+      one["parts"] = parts;
+      auto m = multiFor(one, nullptr, name);
+      Render b = render(*m, s, {});
+      audioSeconds += 2 * s.length; cpuSeconds += a.cpu + b.cpu;
+      basicChecks(name + " in a multi", b);
+      if (a.l != b.l || a.r != b.r) { fail(name + ": as the only part of a multi it sounds different from the engine"); same = false; }
+    }
+    if (same) pass("a multi of one part sounds the same as the engine, for every preset");
+
+    std::vector<fs::path> multis;
+    if (fs::exists(synthDir / "multis"))
+      for (auto& f : fs::directory_iterator(synthDir / "multis"))
+        if (f.path().extension() == ".json") multis.push_back(f.path());
+    std::sort(multis.begin(), multis.end());
+    for (auto& f : multis) {
+      std::string name = "multis/" + f.stem().string();
+      try {
+        Json mj = Json::parse(readFile(f));
+        std::string err;
+        auto m = multiFor(mj, &err, name);
+        if (!m) { fail(name + ": " + err); continue; }
+        int before = gFailures;
+        Json saved = m->save();
+        auto m2 = multiFor(saved, nullptr, name);
+        if (m2->save() != saved) fail(name + ": save/load round trip changed the multi");
+
+        // A scenario that plays across the keys, on every channel a zone listens to.
+        Scenario s;
+        s.name = name;
+        s.length = 1.25;
+        std::vector<int> channels{0};
+        for (auto& z : saved["zones"].items())
+          if (z["channel"].isNumber() && std::find(channels.begin(), channels.end(), static_cast<int>(z["channel"].number())) == channels.end())
+            channels.push_back(static_cast<int>(z["channel"].number()));
+        for (int ch : channels) {
+          int k = 0;
+          for (int n : {36, 48, 60, 72, 84, 96}) {
+            TimedEvent on; on.seconds = 0; on.e = sk::NoteOn{n, (k++ % 2 ? 110 : 45) / 127.f, ch}; s.events.push_back(on);
+            TimedEvent offe; offe.seconds = 1.0; offe.e = sk::NoteOff{n, ch}; s.events.push_back(offe);
+          }
+        }
+        TimedEvent all; all.seconds = 1.2; all.e = sk::CC{123, 0}; s.events.push_back(all);
+        RenderOpts o;
+        o.stopWhenSilentAfter = 1.2;
+        o.maxLength = 31.2;
+        Render r = render(*m, s, o);
+        audioSeconds += static_cast<double>(r.l.size()) / 48000.0; cpuSeconds += r.cpu;
+        basicChecks(name, r);
+        checkTail(name, r);
+        if (peakBetween(r, 0, 1.0) < -50) fail(name + ": too quiet (peak " + db(peakBetween(r, 0, 1.0)) + ")");
+        if (r.peakDb > 0) warn(name + ": hits the safety limiter (peak " + db(r.peakDb) + " before limiting)");
+        writeIfAsked(outDir / "multis", f.stem().string(), r);
+
+        // Every zone makes sound on its own, in the middle of its ranges.
+        const int zoneCount = static_cast<int>(saved["zones"].size());
+        for (int zi = 0; zi < zoneCount; ++zi) {
+          const Json& z = saved["zones"][zi];
+          const Json& pj = saved["parts"][static_cast<int>(z["part"].number(0))];
+          if (pj["mute"].boolean() || z["gain"].number(0) < -40 || pj["level"].number(0) < -40) continue;
+          Json solo = saved;
+          Json only = Json::array();
+          only.push(z);
+          solo["zones"] = only;
+          for (std::size_t q = 0; q < solo["parts"].size(); ++q) solo["parts"][q].erase("solo"), solo["parts"][q].erase("mute");
+          auto zm = multiFor(solo, nullptr, name);
+          Scenario t;
+          t.name = name + " zone " + std::to_string(zi + 1);
+          t.length = 0.9;
+          const int note = (static_cast<int>(z["key"][0].number(0)) + static_cast<int>(z["key"][1].number(127))) / 2;
+          const int vel = (static_cast<int>(z["vel"][0].number(1)) + static_cast<int>(z["vel"][1].number(127))) / 2;
+          const int ch = z["channel"].isNumber() ? static_cast<int>(z["channel"].number()) : 0;
+          TimedEvent on; on.seconds = 0; on.e = sk::NoteOn{note, vel / 127.f, ch}; t.events.push_back(on);
+          TimedEvent offe; offe.seconds = 0.7; offe.e = sk::NoteOff{note, ch}; t.events.push_back(offe);
+          Render zr = render(*zm, t, {});
+          audioSeconds += t.length; cpuSeconds += zr.cpu;
+          if (peakBetween(zr, 0, 0.7) < -60)
+            fail(t.name + ": silent for note " + std::to_string(note) + ", velocity " + std::to_string(vel) + " (peak " + db(peakBetween(zr, 0, 0.7)) + ")");
+        }
+
+        // Block size makes no difference.
+        float worst = 0;
+        auto m512 = multiFor(mj, nullptr, name);
+        Render r512 = render(*m512, s, [] { RenderOpts x; x.maxLength = 1.4; return x; }());
+        auto m3 = multiFor(mj, nullptr, name);
+        Render r37 = render(*m3, s, [] { RenderOpts x; x.block = 37; x.maxLength = 1.4; return x; }());
+        for (double t = 0; t < 1.3; t += 0.05) worst = std::max(worst, std::fabs(rmsAt(r512, t, 0.05) - rmsAt(r37, t, 0.05)));
+        if (worst > 1.5f) fail(name + ": loudness differs by " + db(worst) + " between block sizes 512 and 37");
+        if (gFailures == before) pass(name + ": loads, round-trips and plays from every zone  (peak " + db(r.peakDb) + ")");
+      } catch (std::exception& e) {
+        fail(name + ": " + e.what());
+      }
+    }
+    if (multis.empty()) info("no multis in multis/");
   }
 
   // Block size: rendering in odd block sizes must sound the same.
@@ -621,11 +810,18 @@ int main(int argc, char** argv) {
     Scenario s = parseScenario(Json::parse(readFile(file)), file.stem().string(), synthDir);
     if (!opt("--sr").empty()) s.sampleRate = std::atof(opt("--sr").c_str());
     std::string err;
-    auto eng = engineFor(s, &err);
-    if (!eng) { std::printf("%s\n", err.c_str()); return 1; }
     RenderOpts o;
     if (!opt("--block").empty()) o.block = std::atoi(opt("--block").c_str());
-    Render r = render(*eng, s, o);
+    Render r;
+    if (!s.multi.isNull()) {
+      auto m = multiForScenario(s, &err);
+      if (!m) { std::printf("%s\n", err.c_str()); return 1; }
+      r = render(*m, s, o);
+    } else {
+      auto eng = engineFor(s, &err);
+      if (!eng) { std::printf("%s\n", err.c_str()); return 1; }
+      r = render(*eng, s, o);
+    }
     bool ok = runExpect(s, r);
     std::printf("%s: peak %s before limiter, limiter %s, %.0fx realtime\n", s.name.c_str(), db(r.peakDb).c_str(),
                 db(r.limiterDb).c_str(), r.cpu > 0 ? s.length / r.cpu : 0.0);

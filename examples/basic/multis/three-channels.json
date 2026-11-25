@@ -1,0 +1,16 @@
+{
+  "format": "sk.multi",
+  "version": 1,
+  "synth": "sk-basic",
+  "name": "Three channels",
+  "parts": [
+    { "preset": "Bass/mono-bass" },
+    { "preset": "Leads/glide-lead", "level": -3 },
+    { "preset": "Pads/warm-pad", "level": -4, "pan": 0.3 }
+  ],
+  "zones": [
+    { "part": 0, "channel": 0, "key": [0, 71] },
+    { "part": 1, "channel": 1 },
+    { "part": 2, "channel": 2 }
+  ]
+}

@@ -133,6 +133,7 @@ check the synth against it.
 | `modSlots` | 0 | matrix routes; also adds `sk.pitch`, `sk.level` (§6) |
 | `shapes` | 0 | drawn, tempo-locked curves (§6a) |
 | `arp` | false | the kit's arpeggiator and step sequencer, with their note and phrase envelopes (§4b) |
+| `multi` | false | the synth can be played as a Multi: parts, each one patch of the synth, with zones that split, layer and velocity-layer them (§5b) |
 
 ## 3. Parameters
 
@@ -490,7 +491,7 @@ void processEvents(EventContext& ctx) override {
 | `ctx.setParam(p, value)` | move a parameter: in effect from the start of this block (unlike a `cc()` mapping, which moves at the CC's own sample, §3); the page and the host follow |
 | `ctx.messages()`, `ctx.post(m, {values})` | messages from the page since the last block, and sending one back (§9b) |
 
-Events are `MidiEvent`s (`type`, `note`, `vel`, `cc`, `value`, `channel`,
+Events are `MidiEvent`s (`type`, `note`, `vel`, `gain` (§5b), `cc`, `value`, `channel`,
 `sample`, `beat`, `tag`, `arp` and `arpLane` (§4b), plus `isNoteOn()`, `isNoteOff()`, `isCC(n)`). Build
 them with `NoteOn{note, vel, ch}`, `NoteOff{note, ch}`, `CC{number, value, ch}`.
 
@@ -931,6 +932,123 @@ double tune(int note, const NoteContext&) override {
 - The UI edits it through custom widgets (§9): `ctx.custom("keys")`,
   `ctx.setCustom("keys", value)`, `ctx.onCustom("keys", fn)`.
 - `migratePatch` (above) can rewrite `"custom"` too.
+
+## 5b. Multis: splits, layers and velocity layers
+
+A **Multi** plays several **parts** at once. Each part is a whole engine of
+the same synth running one patch, and a set of **zones** decides which notes
+reach which part. Splits, layers, velocity layers and a part per MIDI channel
+are all zones, which are modelled on SFZ regions and Ableton rack zones:
+ranges of key and velocity, with crossfades at the edges.
+
+Turn it on with `"multi": true` in `synth.json`'s features (§2). Nothing else
+changes for a synth that does: its patches, parameters and page are as
+before, and a multi of one part with the default zone sounds exactly like the
+engine (`--check` compares them sample for sample, for every preset).
+
+```cpp
+#include <synthkit/multi.h>
+auto multi = sk::makeMulti();             // the embedded synth; its presets can be named in a multi
+multi->prepare(sampleRate, maxBlock);
+multi->process(outs, 2, frames, events, nEvents, transport);   // as Engine::process (§4)
+```
+
+**Parts.** Up to 8 (`kMaxParts`), each with its own patch, effects, voices,
+arpeggiator and clock, reached with `multi->part(i)` (an `Engine`: load a
+patch, set parameters, custom state). Voices aren't shared, so a part's
+`voices` is its own limit and a busy part never steals from another. The
+parts in use are `layout().parts`; the others are idle and cost almost
+nothing. Each part has a level (dB), a balance pan (−1…1) and mute and solo.
+The mix goes through one limiter, as an engine's own does; the parts' limiters
+are off. All parts follow the same transport.
+
+**Zones** (`sk::Zone`), at most 64 (`kMaxZones`). A note-on is tested against
+every zone and plays every zone it falls in, so overlapping zones are layers.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `part` | 0 | the part it plays |
+| `keyLo`, `keyHi` | 0, 127 | key range, inclusive |
+| `velLo`, `velHi` | 1, 127 | velocity range, inclusive (MIDI velocity 1–127) |
+| `keyFadeIn`, `keyFadeOut` | 0 | crossfade widths in notes, inside the range (below) |
+| `velFadeIn`, `velFadeOut` | 0 | the same for velocity |
+| `linearFade` | false | false: equal power (the squares of two crossfading zones add to 1); true: linear |
+| `channel` | −1 | only this input MIDI channel (0…15); −1 is any |
+| `transpose` | 0 | semitones, applied to the note the part plays (±48) |
+| `gainDb` | 0 | level of the zone (−120…+12) |
+
+**Fades.** A fade of `n` rises from just above silence at the range's edge to
+full level `n` steps in: with `keyLo = 58` and `keyFadeIn = 3`, notes 58, 59,
+60 play at ¼, ½, ¾ and 61 at full level (`sk::zoneFade()` computes it, for a
+zone editor to draw). To crossfade two zones, give the lower zone a
+`keyFadeOut` of `n` and the upper a `keyFadeIn` of `n`, with the upper zone
+starting `n` notes below the lower one's top (`[0, 60]` out 3 and `[58, 127]`
+in 3): the two levels are complementary at every note. A zone's level is the
+product of its key fade, velocity fade and `gainDb`, and it multiplies the
+note's `MidiEvent::gain` (below); a zone under −80 dB doesn't play at all.
+Velocity layers are the same thing on the velocity axis: `[1, 90]` with
+`velFadeOut` 30 under `[60, 127]` with `velFadeIn` 30.
+
+**Notes follow their note-on.** Each note-on is remembered with the parts and
+notes it started, and its note-off goes to the same ones, whatever the zones,
+the layout or a transpose are by then. Editing zones while keys are held is
+safe: held notes finish where they began and new ones use the new layout. A
+key struck twice before it's let go needs two note-offs, as with an engine.
+Taking a part out of use (`layout().parts` goes down) stops its notes at
+once. Poly pressure follows the key; CCs, pitch bend and channel pressure go
+to every part with a zone that listens to the event's channel (all, for a
+zone with `channel` −1), so a controller reaches each part like a keyboard
+connected to it directly.
+
+**`MidiEvent::gain`.** A note-on level from 0 to 1 on top of velocity (default
+1). Velocity keeps shaping the sound through the synth's own velocity paths;
+gain only scales the voice's output, so a zone fade changes loudness without
+changing the timbre. The engine applies it to the whole voice. It stays with the note through the arpeggiator
+and the sequencer, so an arpeggiated or sequenced note keeps the level of the
+key that started it. A synth's `processEvents` can read it or set it on events
+it creates.
+
+**Changing the layout.** `setLayout()` can be called while playing from one
+control thread; the audio thread picks it up at the next block (a triple
+buffer, nothing locks), and level, pan, mute and solo changes ramp over the
+block. It corrects what it can and returns a warning for each zone it had to
+drop: more than 64, or on a part that isn't in use. Zones are never
+reordered.
+
+**Saving.** `save(name)` returns the multi as JSON, with every part's patch as
+it is now, and `load()` sets everything from it (parts it doesn't use go back
+to the synth's default patch; tempo follows part 1's patch).
+
+```json
+{
+  "format": "sk.multi", "version": 1, "synth": "my-synth", "name": "Bass and pad",
+  "parts": [
+    { "preset": "Bass/mono-bass", "level": 0, "pan": 0 },
+    { "patch": { "…": "a full patch (§5)" }, "level": -3, "pan": 0.2, "mute": false, "solo": false }
+  ],
+  "zones": [
+    { "part": 0, "key": [0, 62], "keyFade": [0, 4] },
+    { "part": 1, "key": [59, 127], "keyFade": [4, 0], "vel": [1, 127],
+      "curve": "linear", "channel": 1, "transpose": -12, "gain": -3 }
+  ]
+}
+```
+
+A part is a `patch` (what `save()` writes) or a `preset` named as the factory
+presets are (`"Bass/mono-bass"`, the path under `presets/` without `.json`)
+for a hand-written multi. Fields left out take the defaults above; a multi
+with no `zones` plays every part from every key. `load()` fails for another
+synth's multi or a file that isn't a multi, and warns about a missing preset
+or a patch problem.
+
+**Factory multis** live in `multis/*.json` beside `presets/`, and `--check`
+(§10) loads each one, checks it round-trips, plays every zone, and plays
+across the keyboard to see that it ends in silence.
+
+**Not here yet.** Multis are the kit's core and the render tool. The page and
+the plugin don't play one yet (no parts strip, zone editor, host parameters or
+plugin state), and program change, round-robin, keyswitches, per-part outputs
+and a shared effects bus aren't there either.
 
 ## 6. Modulation
 
@@ -1726,6 +1844,21 @@ The scenario is the render tool's format (the `expect` block is ignored). The
 machine's speed varies, so compare a change against the previous build on the
 same machine; a scenario that plays the synth's worst case (every voice, the
 longest tails) is the one to watch.
+
+**Multis** (§5b) are rendered with `"multi"` in place of `"patch"`: a name
+from `multis/` (`"bass-and-pad"`), or the multi's JSON inline. `"params"` then
+applies to every part, and `"msg"` events aren't available. `--check` also
+loads every `multis/*.json`: no warnings, a save/load round trip, sound from
+each zone alone, silence after all-notes-off, the same loudness at block
+sizes 512 and 37, and no allocation on the audio thread. And it renders every
+preset as the only part of a multi, which must match the engine exactly.
+
+```
+python3 synthkit/tools/stress.py build/<name>_render 100 --multi multis/<multi>.json delay.mix=0
+```
+
+`--multi` plays the passages through a multi (the keys go through its zones),
+with `id=value` set on every part.
 
 ## 11. The browser build
 

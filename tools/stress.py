@@ -18,6 +18,8 @@ keys and the pedal were released. Every note-on gets its note-off.
     --below DB        what counts as quiet: peak dBFS (default -80)
     --no-pedal        no sustain or sostenuto pedal (CC 64, 66)
     --patch NAME      the patch every passage starts from (default init)
+    --multi FILE      play a multi (API.md §5b) instead of a patch: the zones route the keys;
+                      param=value then applies to every part
     --out DIR         where failing passages are saved (default: the temp directory)
     param=value       settings for every passage, e.g. amp.release=0.5
 
@@ -117,6 +119,7 @@ def main():
     p.add_argument("--below", type=float, default=-80.0)
     p.add_argument("--no-pedal", action="store_true")
     p.add_argument("--patch", default="init")
+    p.add_argument("--multi", help="a multi's JSON file, played instead of --patch")
     p.add_argument("--out", default=tempfile.gettempdir())
     a, rest = p.parse_known_args()
     # positional `mode` too, as the piano's first version took it
@@ -132,12 +135,17 @@ def main():
     lo, hi = (int(x) for x in a.keys.split("-"))
     os.makedirs(a.out, exist_ok=True)
 
+    multi = None
+    if a.multi:
+        with open(a.multi) as f:
+            multi = json.load(f)
     work = tempfile.mkdtemp(prefix="synthkit-stress-")
     js, wav = os.path.join(work, "s.json"), os.path.join(work, "s.wav")
     fails = 0
     for seed in range(a.count):
         ev, end = passage(seed, a.mode, lo, hi, not a.no_pedal)
-        sc = {"patch": a.patch, "params": params, "length": round(end + a.tail + 1.0, 3), "events": ev}
+        sc = {"params": params, "length": round(end + a.tail + 1.0, 3), "events": ev}
+        sc["multi" if multi else "patch"] = multi or a.patch
         with open(js, "w") as f:
             json.dump(sc, f)
         r = subprocess.run([a.render, js, "--out", wav], capture_output=True, text=True)

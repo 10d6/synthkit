@@ -3,6 +3,7 @@
 #include <map>
 #include <set>
 #include <synthkit/engine.h>
+#include <synthkit/multi.h>
 
 #include "../core/src/arp.h"   // internal: the scale table, tested directly
 
@@ -2357,6 +2358,292 @@ TEST(seq_never_leaves_notes_stuck) {
     }
   }
   CHECK(bad == 0);
+}
+
+// MidiEvent::gain (API.md §5b): a level on top of velocity, kept by held, arpeggiated and
+// sequenced notes alike.
+TEST(note_gain_scales_the_note) {
+  auto level = [](float gain, int arpType) {
+    Harness h(256, kArp);
+    if (arpType) h.eng->params().set(h.param("arp.on"), arpType);
+    MidiEvent e = on(60);
+    e.gain = gain;
+    auto out = h.run(24000, {{0, e}});
+    return rmsDb(out, 12000, 24000);
+  };
+  for (int type : {0, 1, 2}) {                 // played, arpeggiated, sequenced
+    CHECK_NEAR(level(0.5f, type) - level(1.f, type), -6.02, 0.3);
+    CHECK_NEAR(level(0.25f, type) - level(1.f, type), -12.04, 0.5);
+  }
+  CHECK(level(0.f, 0) < -100);                 // gain 0 is silent
+}
+
+// ------------------------------------------------------------ Multi (API.md §5b)
+
+static const char* kMulti = R"(,"multi":true)";
+
+struct MultiRig {
+  std::unique_ptr<Multi> m;
+  HostTransport ht;
+  long pos = 0;
+  explicit MultiRig(int parts = 2, const char* extra = kMulti, int block = 256) : block(block) {
+    std::string ex = extra;
+    m = std::make_unique<Multi>([ex] { return std::make_unique<Engine>(std::make_unique<TestSynth>(), testInfo(ex.c_str())); }, parts);
+    m->prepare(48000, block);
+    ht.valid = true;
+    ht.bpm = 120;
+  }
+  int block;
+  void layout(int parts, std::vector<Zone> zones) {
+    MultiLayout l;
+    l.parts = parts;
+    l.zones = std::move(zones);
+    m->setLayout(l);
+  }
+  std::vector<float> run(long n, std::vector<std::pair<long, MidiEvent>> events = {}) {
+    std::vector<float> out, l(static_cast<std::size_t>(block)), r(static_cast<std::size_t>(block));
+    std::size_t ei = 0;
+    long end = pos + n;
+    while (pos < end) {
+      int b = static_cast<int>(std::min<long>(block, end - pos));
+      std::vector<MidiEvent> ev;
+      while (ei < events.size() && events[ei].first < pos + b) {
+        MidiEvent e = events[ei].second;
+        e.sample = static_cast<int>(events[ei].first - pos);
+        ev.push_back(e);
+        ++ei;
+      }
+      float* o[2] = {l.data(), r.data()};
+      m->process(o, 2, b, ev.data(), static_cast<int>(ev.size()), ht);
+      for (int i = 0; i < b; ++i) out.push_back(l[static_cast<std::size_t>(i)]);
+      pos += b;
+    }
+    return out;
+  }
+  int active(int p) { return m->part(p).takeStats().activeVoices; }
+};
+
+static Zone zone(int part, int lo, int hi) { Zone z; z.part = part; z.keyLo = lo; z.keyHi = hi; return z; }
+
+TEST(multi_zone_fade_curves) {
+  CHECK_NEAR(zoneFade(60, 36, 72, 0, 0, false), 1, 1e-6);
+  CHECK(zoneFade(35, 36, 72, 0, 0, false) == 0 && zoneFade(73, 36, 72, 0, 0, false) == 0);
+  CHECK_NEAR(zoneFade(36, 36, 72, 3, 0, true), 0.25, 1e-6);    // linear: 1/4, 2/4, 3/4, then full at lo+3
+  CHECK_NEAR(zoneFade(38, 36, 72, 3, 0, true), 0.75, 1e-6);
+  CHECK_NEAR(zoneFade(39, 36, 72, 3, 0, true), 1, 1e-6);
+  CHECK_NEAR(zoneFade(72, 36, 72, 0, 3, true), 0.25, 1e-6);
+  // A lower zone fading out over its top three notes and an upper one fading in
+  // over the same three crossfade: linear sums to 1, the default curve keeps power.
+  for (int n = 58; n <= 60; ++n) {
+    CHECK_NEAR(zoneFade(n, 0, 60, 0, 3, true) + zoneFade(n, 58, 127, 3, 0, true), 1, 1e-6);
+    double a = zoneFade(n, 0, 60, 0, 3, false), b = zoneFade(n, 58, 127, 3, 0, false);
+    CHECK_NEAR(a * a + b * b, 1, 1e-5);
+  }
+  CHECK_NEAR(zoneFade(57, 0, 60, 0, 3, false), 1, 1e-6);       // below the fade: full
+}
+
+TEST(multi_split_layer_and_channels) {
+  MultiRig r(2);
+  r.layout(2, {zone(0, 0, 59), zone(1, 60, 127)});
+  r.run(2000, {{0, on(48)}});
+  CHECK(r.active(0) == 1 && r.active(1) == 0);
+  r.run(2000, {{0, on(72)}, {0, off(48)}});
+  CHECK(r.active(1) == 1);
+  r.run(96000, {{0, off(72)}});
+  CHECK(r.active(0) == 0 && r.active(1) == 0);   // both released and finished
+
+  r.layout(2, {zone(0, 0, 127), zone(1, 0, 127)});             // layered: every key plays both
+  r.run(2000, {{0, on(60)}});
+  CHECK(r.active(0) == 1 && r.active(1) == 1);
+  r.run(96000, {{0, off(60)}});
+
+  Zone a = zone(0, 0, 127), b = zone(1, 0, 127);
+  a.channel = 0;
+  b.channel = 1;
+  r.layout(2, {a, b});                                         // multitimbral: a part per channel
+  r.run(2000, {{0, NoteOn{60, 0.8f, 1}}});
+  CHECK(r.active(0) == 0 && r.active(1) == 1);
+  r.run(96000, {{0, NoteOff{60, 1}}});
+  CHECK(r.active(1) == 0);
+
+  Zone t = zone(0, 0, 127);
+  t.transpose = 12;
+  r.layout(1, {t});
+  r.run(2000, {{0, on(60)}});
+  r.run(2000, {{0, off(60)}});                                 // the off finds the transposed note
+  r.run(96000);
+  CHECK(r.active(0) == 0);
+}
+
+TEST(multi_zone_levels) {
+  // Each case is a single part with one zone against the bare engine: the
+  // difference is the zone's level.
+  auto bare = [](int note, float vel) {
+    Harness h(256, kMulti);
+    auto out = h.run(12000, {{0, on(note, vel)}});
+    return rmsDb(out, 4000, 12000);
+  };
+  auto through = [](Zone z, int note, float vel) {
+    MultiRig r(1);
+    r.layout(1, {z});
+    auto out = r.run(12000, {{0, on(note, vel)}});
+    return rmsDb(out, 4000, 12000);
+  };
+  Zone z = zone(0, 0, 127);
+  CHECK_NEAR(through(z, 60, 0.8f) - bare(60, 0.8f), 0, 1e-3);          // a plain zone changes nothing
+  z.gainDb = -6;
+  CHECK_NEAR(through(z, 60, 0.8f) - bare(60, 0.8f), -6, 0.05);
+  Zone k = zone(0, 60, 80);
+  k.keyFadeIn = 3;                                                     // note 60 is at 1/4, equal power
+  CHECK_NEAR(through(k, 60, 0.8f) - bare(60, 0.8f), 20 * std::log10(std::sin(0.25 * 3.14159265358979 / 2)), 0.05);
+  CHECK_NEAR(through(k, 63, 0.8f) - bare(63, 0.8f), 0, 0.05);
+  CHECK(through(k, 59, 0.8f) < -100);                                  // outside: silent
+  Zone v = zone(0, 0, 127);
+  v.velLo = 40;
+  v.velHi = 100;
+  v.velFadeOut = 3;
+  v.linearFade = true;
+  const int velTop = 100;                                              // velocity 100: 1/4 of the way into the fade
+  CHECK_NEAR(through(v, 60, velTop / 127.f) - bare(60, velTop / 127.f), 20 * std::log10(0.25), 0.1);
+  CHECK(through(v, 60, 20 / 127.f) < -100);                            // below the zone
+  CHECK(through(v, 60, 120 / 127.f) < -100);                           // above it
+}
+
+TEST(multi_one_part_is_the_engine) {
+  const char* extra = R"(,"multi":true,"arp":true,"modSlots":4)";
+  Harness h(256, extra);
+  h.eng->params().set(h.param("master"), 12);                          // loud enough for the limiter
+  arpOn(h, {{"arp.gate", 100}});
+  std::vector<std::pair<long, MidiEvent>> ev = {{0, on(60)}, {300, on(64)}, {700, on(67)}, {20000, off(60)}, {20500, off(64)}, {21000, off(67)}};
+  auto want = h.run(48000, ev);
+
+  MultiRig r(1, extra);
+  auto& pp = r.m->part(0).params();
+  for (auto [id, v] : std::initializer_list<std::pair<const char*, double>>{{"master", 12}, {"arp.on", 1}, {"env1.release", 0.002}, {"arp.release", 0.002}, {"arp.gate", 100}})
+    pp.set(pp.find(id), v);
+  auto got = r.run(48000, ev);
+  CHECK(got.size() == want.size());
+  double worst = 0;
+  for (std::size_t i = 0; i < got.size() && i < want.size(); ++i) worst = std::max(worst, static_cast<double>(std::fabs(got[i] - want[i])));
+  CHECK(worst == 0);
+  CHECK(rmsDb(want, 4000, 20000) > -40);                               // and it was playing
+}
+
+TEST(multi_held_notes_follow_their_note_on) {
+  MultiRig r(2);
+  r.layout(2, {zone(0, 0, 127)});
+  r.run(2000, {{0, on(60)}});
+  r.layout(2, {zone(1, 0, 127)});                                      // the keyboard moves to part 2 while 60 is held
+  r.run(2000);
+  r.run(2000, {{0, off(60)}});                                         // …but the release goes where the note started
+  r.run(96000);
+  CHECK(r.active(0) == 0 && r.active(1) == 0);
+  r.run(2000, {{0, on(62)}});
+  CHECK(r.active(0) == 0 && r.active(1) == 1);                         // new notes use the new layout
+  r.run(2000, {{0, off(62)}});
+
+  // A key struck twice needs two releases, as with an engine.
+  MultiRig q(1);
+  q.layout(1, {zone(0, 0, 127)});
+  q.run(2000, {{0, on(60)}, {100, on(60)}});
+  q.run(96000, {{0, off(60)}});
+  CHECK(q.active(0) == 1);
+  q.run(96000, {{0, off(60)}});
+  q.run(96000);
+  CHECK(q.active(0) == 0);
+
+  // Taking a part away stops its notes.
+  MultiRig p(2);
+  p.layout(2, {zone(1, 0, 127)});
+  p.run(2000, {{0, on(60)}});
+  CHECK(p.active(1) == 1);
+  p.layout(1, {zone(0, 0, 127)});
+  p.run(2000);
+  p.run(2000);
+  CHECK(p.active(1) == 0);
+  p.run(2000, {{0, off(60)}});                                         // a stray off is harmless
+}
+
+TEST(multi_mix_level_pan_mute_solo) {
+  auto level = [](std::function<void(MultiLayout&)> edit) {
+    MultiRig r(2);
+    MultiLayout l;
+    l.parts = 2;
+    l.zones = {zone(0, 0, 127)};
+    edit(l);
+    r.m->setLayout(l);
+    auto out = r.run(12000, {{0, on(60)}});
+    return rmsDb(out, 4000, 12000);
+  };
+  double base = level([](MultiLayout&) {});
+  CHECK_NEAR(level([](MultiLayout& l) { l.part[0].levelDb = -6; }) - base, -6, 0.05);
+  CHECK_NEAR(level([](MultiLayout& l) { l.part[0].pan = 1; }), -200, 200);   // hard right: the left channel is (nearly) silent
+  CHECK(level([](MultiLayout& l) { l.part[0].pan = 1; }) < base - 60);
+  CHECK(level([](MultiLayout& l) { l.part[0].mute = true; }) < -100);
+  CHECK(level([](MultiLayout& l) { l.part[1].solo = true; }) < -100);        // soloing the other part
+  CHECK_NEAR(level([](MultiLayout& l) { l.part[0].solo = true; }) - base, 0, 0.01);
+}
+
+TEST(multi_layout_is_corrected) {
+  MultiRig r(2);
+  MultiLayout l;
+  l.parts = 5;                                  // more than the multi has
+  Zone bad = zone(3, 90, 10);                   // part not in use
+  Zone odd = zone(0, 90, 10);                   // reversed range
+  odd.velLo = 0;
+  odd.channel = 40;
+  l.zones = {bad, odd};
+  auto w = r.m->setLayout(l);
+  CHECK(w.size() == 2);
+  const MultiLayout& got = r.m->layout();
+  CHECK(got.parts == 2 && got.zones.size() == 1);
+  CHECK(got.zones[0].keyLo == 10 && got.zones[0].keyHi == 90 && got.zones[0].velLo == 1 && got.zones[0].channel == 15);
+  l.zones.assign(kMaxZones + 3, zone(0, 0, 127));
+  r.m->setLayout(l);
+  CHECK(static_cast<int>(r.m->layout().zones.size()) == kMaxZones);
+}
+
+TEST(multi_save_and_load) {
+  MultiRig a(3);
+  a.m->part(0).patchMeta().name = "Bass";
+  a.m->part(1).params().set(a.m->part(1).params().find("master"), -9);
+  Zone z = zone(0, 0, 59);
+  z.keyFadeOut = 4;
+  z.channel = 2;
+  Zone y = zone(1, 56, 127);
+  y.keyFadeIn = 4;
+  y.velLo = 30;
+  y.linearFade = true;
+  y.transpose = -12;
+  y.gainDb = -3;
+  MultiLayout l;
+  l.parts = 2;
+  l.zones = {z, y};
+  l.part[1].levelDb = -4.5f;
+  l.part[1].pan = 0.25f;
+  l.part[1].mute = true;
+  a.m->setLayout(l);
+  Json saved = a.m->save("Split");
+  CHECK(saved["format"].string() == "sk.multi" && saved["name"].string() == "Split" && saved["parts"].size() == 2);
+
+  MultiRig b(3);
+  auto res = b.m->load(Json::parse(saved.dump()));
+  CHECK(res.ok && res.warnings.empty());
+  CHECK(b.m->save("Split") == saved);
+  CHECK(b.m->part(0).patchMeta().name == "Bass");
+
+  CHECK(!b.m->load(Json::parse(R"({"format":"sk.multi","synth":"other","parts":[{}]})")).ok);
+  CHECK(!b.m->load(Json::parse(R"({"format":"sk.patch","parts":[{}]})")).ok);
+  CHECK(!b.m->load(Json::parse(R"({"parts":[]})")).ok);
+  // Hand-written: no zones means every part plays every key; a missing preset is a warning.
+  auto hand = b.m->load(Json::parse(R"({"parts":[{"preset":"nowhere/none"},{"patch":{"name":"Two"}}]})"));
+  CHECK(hand.ok && hand.warnings.size() == 1);
+  CHECK(b.m->layout().parts == 2 && b.m->layout().zones.size() == 2);
+  CHECK(b.m->part(1).patchMeta().name == "Two");
+}
+
+TEST(multi_needs_the_feature) {
+  CHECK_THROWS(Multi([] { return std::make_unique<Engine>(std::make_unique<TestSynth>(), testInfo()); }, 2));
 }
 
 int main() {

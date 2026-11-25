@@ -1,0 +1,38 @@
+{
+  "multi": "pluck-and-pad-by-velocity",
+  "length": 14,
+  "events": [
+    {
+      "t": 0,
+      "on": 60,
+      "vel": 30
+    },
+    {
+      "t": 1,
+      "off": 60
+    },
+    {
+      "t": 1.5,
+      "on": 60,
+      "vel": 75
+    },
+    {
+      "t": 2.5,
+      "off": 60
+    },
+    {
+      "t": 3,
+      "on": 60,
+      "vel": 120
+    },
+    {
+      "t": 4,
+      "off": 60
+    }
+  ],
+  "expect": {
+    "soundBy": 0.05,
+    "silentAfter": 13.5,
+    "limiterBelow": 1
+  }
+}
