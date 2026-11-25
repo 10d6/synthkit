@@ -41,6 +41,7 @@ class Seq {
     bool gate = false;          // key held (or latched)
     int key = 0, channel = 0;
     float vel = 0;
+    float gain = 1;             // the key's MidiEvent::gain, carried to its notes
     dsp::Adsr env;
     Beats gridBeat = 0, stepBeat = 0;
     long step = 0;

@@ -26,6 +26,7 @@ struct SynthInfo {
     int eventQueue = 256;
     bool tempoInPatch = false;   // the browser's tempo and time signature are saved in patches
     bool arp = false;            // the kit's arpeggiator (API.md §4b)
+    bool multi = false;          // the synth can be played as a Multi: parts and zones (API.md §5b)
   } features;
 
   static SynthInfo fromJson(const Json& j);  // throws std::invalid_argument
@@ -61,6 +62,13 @@ class Engine {
 
   void allNotesOff();  // thread-safe request, handled at the next block
   void panic();        // immediate silence at the next block
+
+  // For a Multi (API.md §5b), which mixes its parts and limits the mix once:
+  // the engine's own limiter can be switched off (thread-safe; on by default),
+  // and a part that isn't playing can keep its clock in step without rendering
+  // (audio thread, in place of process).
+  void setLimiterEnabled(bool on);
+  void advanceClock(int frames, const HostTransport& transport);
 
   Json savePatch() const;
   LoadResult loadPatch(const Json& patch);

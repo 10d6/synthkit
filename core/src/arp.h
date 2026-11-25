@@ -125,7 +125,7 @@ class Arp {
   bool crossfade() const { return choice(P.envMode) == ArpEnvCrossfade; }
 
  private:
-  struct Entry { int note = 0; float vel = 0; int channel = 0; uint64_t order = 0; bool gone = false; Beats goneAt = 0; };
+  struct Entry { int note = 0; float vel = 0; int channel = 0; uint64_t order = 0; bool gone = false; Beats goneAt = 0; float gain = 1; };
   struct Off { Beats beat = 0; int note = 0; int channel = 0; };
 
   int sampleOf(Beats b) const;
@@ -142,7 +142,7 @@ class Arp {
   void step(int sample);
   double stepLen() const;
   int heldKeys() const;
-  int activeNotes(int* notes, float* vels, int* chans, bool byOrder) const;
+  int activeNotes(int* notes, float* vels, int* chans, float* gains, bool byOrder) const;
 
   ArpParams P;
   const CustomSlot<ArpBank>* bank_ = nullptr;

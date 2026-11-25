@@ -20,6 +20,7 @@
     "modSlots": 8,
     "shapes": 2,
     "tempoInPatch": true,
-    "arp": true
+    "arp": true,
+    "multi": true
   }
 }

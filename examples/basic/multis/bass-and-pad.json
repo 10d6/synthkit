@@ -1,0 +1,14 @@
+{
+  "format": "sk.multi",
+  "version": 1,
+  "synth": "sk-basic",
+  "name": "Bass and pad",
+  "parts": [
+    { "preset": "Bass/mono-bass", "level": 0 },
+    { "preset": "Pads/warm-pad", "level": -3 }
+  ],
+  "zones": [
+    { "part": 0, "key": [0, 62], "keyFade": [0, 4] },
+    { "part": 1, "key": [59, 127], "keyFade": [4, 0] }
+  ]
+}

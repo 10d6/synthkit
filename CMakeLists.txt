@@ -21,6 +21,7 @@ add_library(synthkit_core STATIC
   core/src/json.cpp
   core/src/params.cpp
   core/src/engine.cpp
+  core/src/multi.cpp
   core/src/modulation.cpp
   core/src/arp.cpp
   core/src/arpgen.cpp

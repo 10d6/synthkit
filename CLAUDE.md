@@ -45,10 +45,11 @@ builds from CI artifacts at milestones.
 ```
 core/include/synthkit/   public headers: synth.h (what synths use), engine.h
                          (what adapters use), params, json, custom, messages
-                         (page <-> engine, API.md §9b), dsp/…, reverb.h (API.md
+                         (page <-> engine, API.md §9b), multi.h (API.md §5b), dsp/…, reverb.h (API.md
                          §8b, from 10d6/piano), webaudio/…
                          (sk::wa: Web Audio's nodes, API.md §8a)
-core/src/                engine.cpp (voices, events, transport), modulation.cpp
+core/src/                engine.cpp (voices, events, transport), multi.cpp (a Multi:
+                         parts, zones, router, mix; API.md §5b), modulation.cpp
                          (sources, matrix, LFOs, shapes), arp.cpp (arpeggiator,
                          pattern banks, scales), seq.cpp (step sequencer: a lane
                          per key), arpgen.cpp (pattern generator, Evolve),

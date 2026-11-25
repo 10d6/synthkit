@@ -15,6 +15,7 @@ struct MidiEvent {
   uint8_t channel = 0;  // 0…15
   int note = 60;        // note events and poly pressure
   float vel = 0;        // note on/off velocity 0…1
+  float gain = 1;       // note-on level, 0…1, on top of velocity (a multi's zone fades, API.md §5b)
   int cc = 0;           // controller number for CC events
   float value = 0;      // CC 0…1, bend -1…1, pressure 0…1
   int sample = -1;      // offset in the current block; -1 = block start

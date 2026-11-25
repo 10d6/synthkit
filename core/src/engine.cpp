@@ -180,6 +180,7 @@ SynthInfo SynthInfo::fromJson(const Json& j) {
   o.eventQueue = std::clamp(static_cast<int>(f["eventQueue"].number(o.eventQueue)), 16, 8192);
   o.tempoInPatch = f["tempoInPatch"].boolean(false);
   o.arp = f["arp"].boolean(false);
+  o.multi = f["multi"].boolean(false);
   return s;
 }
 
@@ -200,6 +201,7 @@ struct Slot {
   VoicePool::State state = VoicePool::State::Free;
   int note = -1, channel = 0;
   float vel = 0;
+  float noteGain = 1, noteGainPrev = 1;       // MidiEvent::gain; the previous block's value, to ramp a change (legato)
   uint64_t age = 0, serial = 0;
   bool sustained = false, legato = false, mono = false;
   bool sos = false;                           // caught by the sostenuto pedal: key-ups are held until it lifts
@@ -303,6 +305,7 @@ struct Core {
   int msgCount = 0;
 
   dsp::Limiter limiter;
+  std::atomic<bool> limiterOn{true};
   PatchMeta meta;
   Json extra = Json::object();  // patch sections we don't own yet (mod, shapes)
 
@@ -536,6 +539,18 @@ struct Core {
       int first = ei;
       while (ei < nEv && ev[ei].sample < done + n) ++ei;
       block(outs, nOut, done, n, ev + first, ei - first, host);
+      done += n;
+    }
+  }
+
+  // An idle part of a Multi: the clock moves as process() would move it.
+  void advanceClock(int total, const HostTransport& host) {
+    if (!prepared) return;
+    for (int done = 0; done < total;) {
+      int n = std::min(total - done, maxBlock);
+      bool jumped = false;
+      updateTransport(done, n, host, jumped);
+      clock = blockEnd;
       done += n;
     }
   }
@@ -846,13 +861,14 @@ struct Core {
 
     Ramp master{dsp::dbToGain(gprev[pMaster]), dsp::dbToGain(gvals[pMaster]), len};
     float peak = 0;
+    const bool limit = limiterOn.load(std::memory_order_relaxed);
     for (int i = 0; i < len; ++i) {
       float g = master.at(i);
       float l = io.left[i] * g, r = io.right[i] * g;
       if (!std::isfinite(l)) l = 0;
       if (!std::isfinite(r)) r = 0;
       peak = std::max(peak, std::max(std::fabs(l), std::fabs(r)));
-      limiter.process(l, r);
+      if (limit) limiter.process(l, r);
       io.left[i] = l;
       io.right[i] = r;
     }
@@ -963,12 +979,14 @@ struct Core {
       seqGain = Ramp{g(vp[p]), g(vv[p]), len};
     }
     float peak = 0;
+    Ramp noteGain{s.noteGainPrev, s.noteGain, len};
+    s.noteGainPrev = s.noteGain;
     for (int i = 0; i < len; ++i) {
       const auto si = static_cast<std::size_t>(i);
       float env = amp && !replace ? s.envBuf[0][si] : 1.f;
       if (useArpEnv) env *= s.arpBuf[si];
       if (phrase) env *= phrase[i];
-      float g = gain * level.at(i) * seqGain.at(i) * env;
+      float g = gain * level.at(i) * seqGain.at(i) * noteGain.at(i) * env;
       if (s.state == St::Fading) { s.fade = std::max(0.f, s.fade - s.fadeStep); g *= s.fade; }
       float l = scratchL[static_cast<std::size_t>(i)] * g * gl;
       float r = scratchR[static_cast<std::size_t>(i)] * g * gr;
@@ -1011,6 +1029,7 @@ struct Core {
     s.note = e.note;
     s.channel = e.channel;
     s.vel = e.vel;
+    s.noteGain = s.noteGainPrev = e.gain;
     s.age = ++ageCounter;
     s.serial = serial;
     s.sustained = false;
@@ -1184,15 +1203,17 @@ struct Core {
       }
       return;
     }
-    monoTransition(e.note, e.vel, e.channel, tuned, serial, mode == Legato && othersHeld, e.arp, e.arpLane);
+    monoTransition(e.note, e.vel, e.channel, tuned, serial, mode == Legato && othersHeld, e.arp, e.arpLane, e.gain);
   }
 
-  void monoTransition(int note, float vel, int channel, double tuned, uint64_t serial, bool legato, bool fromArp, int lane) {
+  void monoTransition(int note, float vel, int channel, double tuned, uint64_t serial, bool legato, bool fromArp, int lane, float noteGain) {
     for (auto& s : slots) {
       if (!s.mono || s.state == VoicePool::State::Free || s.state == VoicePool::State::Fading) continue;
       double from = s.glidePitch;
       s.note = note;
       s.channel = channel;
+      s.noteGain = noteGain;                  // a legato change ramps over the next block
+      if (!legato) s.noteGainPrev = noteGain;
       s.basePitch = tuned;
       s.serial = serial;
       s.sustained = false;
@@ -1245,9 +1266,9 @@ struct Core {
     }
     removeHeld(e.note);
     int current = -1;
-    float vel = 0.8f;
+    float vel = 0.8f, gain = 1.f;
     for (auto& s : slots)
-      if (s.mono && s.state == VoicePool::State::Held) { current = s.note; vel = s.vel; }
+      if (s.mono && s.state == VoicePool::State::Held) { current = s.note; vel = s.vel; gain = s.noteGain; }
     if (current != e.note) return;
     if (heldCount > 0) {
       int back = held[heldCount - 1];
@@ -1255,7 +1276,7 @@ struct Core {
       b.note = back;
       b.vel = vel;
       uint64_t serial = ++serialCounter;
-      monoTransition(back, vel, e.channel, tune(b, serial), serial, mode == Legato, e.arp, e.arpLane);
+      monoTransition(back, vel, e.channel, tune(b, serial), serial, mode == Legato, e.arp, e.arpLane, gain);
       return;
     }
     for (auto& s : slots) if (s.mono && s.state == VoicePool::State::Held) { s.relVel = rv; releaseSlot(s, e.arp); }
@@ -1453,6 +1474,8 @@ void Engine::process(float* const* outs, int nOut, int frames, const MidiEvent* 
   core_->process(outs, nOut, frames, ev, nEv, t);
 }
 void Engine::allNotesOff() { core_->reqAllOff.store(1); }
+void Engine::setLimiterEnabled(bool on) { core_->limiterOn.store(on, std::memory_order_relaxed); }
+void Engine::advanceClock(int frames, const HostTransport& transport) { core_->advanceClock(frames, transport); }
 void Engine::panic() { core_->reqPanic.store(1); }
 PatchMeta& Engine::patchMeta() { return core_->meta; }
 const Transport& Engine::transport() const { return core_->transport; }
