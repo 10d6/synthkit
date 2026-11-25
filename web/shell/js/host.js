@@ -22,15 +22,18 @@ class HostAudio {
   send(msg) { window.__JUCE__.backend.emitEvent("sk", msg); }
   midi(bytes) { this.send({ t: "midi", d: bytes }); }
 
-  sink() {
+  sink(part = () => 0) {
     return {
-      param: (i, v) => this.send({ t: "param", i, v }),
-      gesture: (i, on) => this.send({ t: "gesture", i, on }),
-      patch: (json) => this.send({ t: "patch", json }),
-      custom: (id, json) => this.send({ t: "custom", id, json }),
-      mod: (json) => this.send({ t: "mod", json }),
-      shapes: (json) => this.send({ t: "shapes", json }),
-      message: (i, v) => this.send({ t: "msg", i, v }),
+      param: (i, v) => this.send({ t: "param", i, v, p: part() }),
+      gesture: (i, on) => this.send({ t: "gesture", i, on, p: part() }),
+      patch: (json) => this.send({ t: "patch", json, p: part() }),
+      custom: (id, json) => this.send({ t: "custom", id, json, p: part() }),
+      mod: (json) => this.send({ t: "mod", json, p: part() }),
+      shapes: (json) => this.send({ t: "shapes", json, p: part() }),
+      message: (i, v) => this.send({ t: "msg", i, v, p: part() }),
+      select: (p) => this.send({ t: "select", p }),
+      layout: (json) => this.send({ t: "layout", json }),
+      multi: (json) => this.send({ t: "multi", json }),
     };
   }
 

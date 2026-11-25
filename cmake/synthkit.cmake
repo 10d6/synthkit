@@ -23,7 +23,7 @@ function(synthkit_add_synth name)
     message(FATAL_ERROR "synthkit_add_synth(${name}): ${SK_DIR}/synth.json not found")
   endif()
 
-  file(GLOB_RECURSE _presets CONFIGURE_DEPENDS "${SK_DIR}/presets/*.json")
+  file(GLOB_RECURSE _presets CONFIGURE_DEPENDS "${SK_DIR}/presets/*.json" "${SK_DIR}/multis/*.json")
   set(_embedded "${CMAKE_CURRENT_BINARY_DIR}/${name}_embedded.cpp")
   add_custom_command(
     OUTPUT "${_embedded}"

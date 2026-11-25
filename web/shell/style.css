@@ -532,3 +532,52 @@ button, input, select { font: inherit; color: inherit; }
 
 /* Dragging controls must never start a text selection. */
 .shape-area, .amt, .knob-dial, .slider-track, .wheel, .xy-pad, .keys, .seg { -webkit-user-select: none; user-select: none; }
+
+/* ---- multi: parts, mix, zones (API.md §5b) ---------------------------------------- */
+.multi { margin: 0 auto; max-width: 1180px; padding: 8px 16px 0; }
+.multi-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.multi-lib { display: flex; gap: 6px; align-items: center; }
+.multi-name { width: 12em; padding: 6px 8px; border: 1px solid var(--edge); border-radius: 7px; background: var(--field); color: var(--ink); font: inherit; font-size: 0.875rem; }
+.parts { display: flex; gap: 6px; flex-wrap: wrap; flex: 1 1 auto; }
+.part { display: flex; align-items: stretch; border: 1px solid var(--edge); border-radius: 8px; background: var(--panel); overflow: hidden; box-shadow: var(--shadow); }
+.part.is-selected { border-color: var(--part); box-shadow: 0 0 0 1px var(--part); }
+.part.is-muted .part-name { opacity: 0.5; text-decoration: line-through; }
+.part-tab { display: flex; gap: 6px; align-items: center; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 0.8125rem; padding: 6px 8px; cursor: pointer; max-width: 15em; }
+.part-num { display: inline-grid; place-items: center; min-width: 1.4em; height: 1.4em; border-radius: 50%; background: var(--part); color: #fff; font-size: 0.75rem; font-weight: 600; }
+.part-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.part-flag { border: 0; border-left: 1px solid var(--edge); background: transparent; color: var(--ink-soft); font: inherit; font-size: 0.6875rem; font-weight: 600; width: 1.9em; cursor: pointer; }
+.part-flag.is-on { background: var(--part); color: #fff; }
+.zones-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.multi-mix { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; padding: 6px 2px 0; font-size: 0.8125rem; color: var(--ink-soft); }
+.mix-part { font-weight: 600; color: var(--ink); border-left: 4px solid var(--part); padding-left: 8px; }
+.mix-field { display: flex; gap: 8px; align-items: center; }
+.mix-field input[type="range"] { width: 9em; accent-color: var(--part); }
+.mix-out { min-width: 5.5em; font-variant-numeric: tabular-nums; }
+.zones { margin-top: 8px; padding: 10px; border: 1px solid var(--edge); border-radius: var(--radius); background: var(--panel); }
+.zones[hidden] { display: none; }
+.zones-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.zones-hint { font-size: 0.75rem; color: var(--ink-soft); margin-left: auto; }
+.zmap { position: relative; height: 210px; margin-top: 18px; border: 1px solid var(--edge); border-radius: 6px; background: var(--field); touch-action: none; user-select: none;
+  background-image: repeating-linear-gradient(to right, transparent 0, transparent calc(100% / 128 * 12 - 1px), color-mix(in srgb, var(--ink-soft) 28%, transparent) calc(100% / 128 * 12 - 1px), color-mix(in srgb, var(--ink-soft) 28%, transparent) calc(100% / 128 * 12)); }
+.zticks { position: absolute; left: 0; right: 0; top: -16px; height: 14px; font-size: 0.6875rem; color: var(--ink-soft); }
+.zticks span { position: absolute; transform: translateX(2px); }
+.zrects { position: absolute; inset: 0; }
+.zrect { position: absolute; box-sizing: border-box; min-width: 3px; min-height: 3px; border: 2px solid var(--part); border-radius: 3px; background: color-mix(in srgb, var(--part) 26%, transparent); overflow: hidden; }
+.zrect.is-selected { background: color-mix(in srgb, var(--part) 42%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--part) 50%, transparent); z-index: 2; }
+.zrect-tag { position: absolute; left: 3px; top: 1px; font-size: 0.6875rem; font-weight: 700; color: var(--ink); pointer-events: none; }
+.zfade { position: absolute; pointer-events: none; }
+.zf-l { left: 0; top: 0; bottom: 0; width: var(--f); background: linear-gradient(to right, var(--field), transparent); }
+.zf-r { right: 0; top: 0; bottom: 0; width: var(--f); background: linear-gradient(to left, var(--field), transparent); }
+.zf-t { top: 0; left: 0; right: 0; height: var(--f); background: linear-gradient(to bottom, var(--field), transparent); }
+.zf-b { bottom: 0; left: 0; right: 0; height: var(--f); background: linear-gradient(to top, var(--field), transparent); }
+.zlist { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.zchip { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--edge); background: var(--panel); color: var(--ink); border-radius: 999px; font: inherit; font-size: 0.75rem; padding: 3px 10px 3px 6px; cursor: pointer; }
+.zchip.is-selected { border-color: var(--part); box-shadow: 0 0 0 1px var(--part); }
+.zswatch { width: 10px; height: 10px; border-radius: 50%; background: var(--part); }
+.zempty { font-size: 0.8125rem; color: var(--ink-soft); }
+.zform { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5em, 1fr)); gap: 8px 14px; margin-top: 12px; }
+.zform[hidden] { display: none; }
+.zf { display: flex; flex-direction: column; gap: 2px; font-size: 0.75rem; color: var(--ink-soft); }
+.zf-num, .zf-sel { padding: 4px 6px; border: 1px solid var(--edge); border-radius: 6px; background: var(--field); color: var(--ink); font: inherit; font-size: 0.875rem; }
+.zf-note { font-size: 0.6875rem; min-height: 1em; }
+@media (max-width: 640px) { .multi-name { width: 9em; } .zmap { height: 160px; } .zones-hint { display: none; } }

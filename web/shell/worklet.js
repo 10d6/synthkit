@@ -16,8 +16,10 @@ class SynthkitProcessor extends AudioWorkletProcessor {
     // Load the sound before prepare, so parameters start at their values
     // instead of gliding there from the defaults.
     // (The patch includes the mod matrix and shapes.)
-    if (o.patch) this.w.withStrings([o.patch], (p) => this.x.sk_load_patch(p));
+    if (o.multi) this.w.withStrings([o.multi], (p) => this.x.sk_multi_load(p));
+    else if (o.patch) this.w.withStrings([o.patch], (p) => this.x.sk_load_patch(p));
     for (const [id, json] of Object.entries(o.custom || {})) this.w.withStrings([id, json], (a, b) => this.x.sk_set_custom(a, b));
+    this.part = this.x.sk_select_part(o.part || 0);   // the part edits go to (a multi's selected part)
     this.block = 128;
     this.x.sk_prepare(sampleRate, this.block);
     this.meterCount = this.x.sk_mod_meter_count();
@@ -46,7 +48,12 @@ class SynthkitProcessor extends AudioWorkletProcessor {
 
   onMessage(m) {
     const x = this.x;
+    // Edits say which part they're for.
+    if (m.p !== undefined && m.p !== this.part) this.part = x.sk_select_part(m.p);
     switch (m.t) {
+      case "select": break;
+      case "layout": this.w.withStrings([m.json], (p) => x.sk_set_multi_layout(p)); break;
+      case "multi": this.w.withStrings([m.json], (p) => x.sk_multi_load(p)); this.part = x.sk_select_part(this.part); break;
       case "midi": this.queue.push(m.d); break;
       case "param": x.sk_set_param(m.i, m.v); break;
       case "patch": this.w.withStrings([m.json], (p) => x.sk_load_patch(p)); break;
@@ -131,7 +138,8 @@ class SynthkitProcessor extends AudioWorkletProcessor {
     if (nc) {
       const ids = new Int32Array(this.x.memory.buffer, x.sk_param_change_buffer(), nc);
       const seen = new Set(), changes = [];
-      for (const i of ids) if (!seen.has(i)) { seen.add(i); changes.push([i, x.sk_get_param(i)]); }
+      // part << 20 | index (part 0 is the plain index)
+      for (const id of ids) if (!seen.has(id)) { seen.add(id); changes.push([id & 0xfffff, x.sk_get_param_of(id >> 20, id & 0xfffff), id >> 20]); }
       this.port.postMessage({ t: "params", changes });
     }
 

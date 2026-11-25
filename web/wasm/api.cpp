@@ -4,6 +4,7 @@
 // validation). Strings cross the boundary as NUL-terminated UTF-8; returned
 // strings stay valid until the next call that returns a string.
 #include <synthkit/engine.h>
+#include <synthkit/multi.h>
 
 #include <cmath>
 #include <cstdlib>
@@ -17,7 +18,14 @@ extern "C" __attribute__((import_module("env"), import_name("sk_log"))) void js_
 
 namespace {
 
-std::unique_ptr<sk::Engine> gEngine;
+// A synth with features.multi runs as a Multi (API.md §5b), even for one
+// part: a multi of one part sounds like the engine. gEngine is the *selected*
+// part, which every single-engine export below works on, so the page edits
+// one part at a time. Without the feature, gEngine is the engine itself.
+std::unique_ptr<sk::Engine> gOwned;
+std::unique_ptr<sk::Multi> gMulti;
+sk::Engine* gEngine = nullptr;
+int gPart = 0;
 std::string gStr;
 std::vector<sk::MidiEvent> gEvents;
 std::vector<float> gL, gR;
@@ -73,7 +81,14 @@ sk::Json specJson(const sk::ParamSpec& s) {
 SK_EXPORT(sk_init) int sk_init() {
   if (gEngine) return 1;
   sk::setErrorHandler(onError);
-  gEngine = sk::makeEngine();
+  gOwned = sk::makeEngine();
+  if (gOwned->info().features.multi) {
+    gOwned.reset();
+    gMulti = sk::makeMulti();
+    gEngine = &gMulti->part(0);
+  } else {
+    gEngine = gOwned.get();
+  }
   gEvents.reserve(1024);
   gMeterSources = gEngine->modSources().size();
   gMeterParams = static_cast<std::size_t>(gEngine->params().size());
@@ -99,6 +114,8 @@ SK_EXPORT(sk_info) const char* sk_info() {
   s["standardEnvelopes"] = info.features.standardEnvelopes;
   s["ampEnv"] = info.features.ampEnv;
   s["arp"] = info.features.arp;
+  s["multi"] = info.features.multi;
+  s["maxParts"] = gMulti ? gMulti->maxParts() : 1;
   s["tempoInPatch"] = info.features.tempoInPatch;
   s["categories"] = sk::Json(info.categories);
   j["synth"] = s;
@@ -119,6 +136,18 @@ SK_EXPORT(sk_info) const char* sk_info() {
     presets.push(entry);
   }
   j["presets"] = presets;
+  sk::Json multis = sk::Json::array();
+  const sk::EmbeddedPreset* mp = sk::embeddedMultis(n);
+  for (int i = 0; i < n; ++i) {
+    sk::Json mj;
+    std::string err;
+    sk::Json entry = sk::Json::object();
+    entry["path"] = mp[i].path;
+    if (sk::Json::tryParse(mp[i].json, mj, &err)) entry["multi"] = mj;
+    else entry["error"] = err;
+    multis.push(entry);
+  }
+  j["multis"] = multis;
   j["custom"] = sk::Json(gEngine->customIds());
   j["messages"] = sk::Json(gEngine->messageIds());
   sk::Json mod = sk::Json::object();
@@ -142,7 +171,8 @@ SK_EXPORT(sk_info) const char* sk_info() {
 SK_EXPORT(sk_prepare) void sk_prepare(double sampleRate, int maxBlock) {
   gL.assign(static_cast<std::size_t>(maxBlock), 0.f);
   gR.assign(static_cast<std::size_t>(maxBlock), 0.f);
-  gEngine->prepare(sampleRate, maxBlock);
+  if (gMulti) gMulti->prepare(sampleRate, maxBlock);
+  else gEngine->prepare(sampleRate, maxBlock);
 }
 SK_EXPORT(sk_left) float* sk_left() { return gL.data(); }
 SK_EXPORT(sk_right) float* sk_right() { return gR.data(); }
@@ -168,7 +198,8 @@ SK_EXPORT(sk_process) void sk_process(int frames, double bpm, int playing, doubl
   t.barStart = std::floor(beat / bpb + 1e-9) * bpb;
   float* outs[2] = {gL.data(), gR.data()};
   int n = frames < static_cast<int>(gL.size()) ? frames : static_cast<int>(gL.size());
-  gEngine->process(outs, 2, n, gEvents.data(), static_cast<int>(gEvents.size()), t);
+  if (gMulti) gMulti->process(outs, 2, n, gEvents.data(), static_cast<int>(gEvents.size()), t);
+  else gEngine->process(outs, 2, n, gEvents.data(), static_cast<int>(gEvents.size()), t);
   gEvents.clear();
 }
 
@@ -215,7 +246,7 @@ SK_EXPORT(sk_set_custom) int sk_set_custom(const char* id, const char* json) {
 
 // [activeVoices, limiterReductionDb, peakBeforeLimiterDb, droppedEvents, steals]
 SK_EXPORT(sk_stats) float* sk_stats() {
-  auto s = gEngine->takeStats();
+  auto s = gMulti ? gMulti->takeStats() : gEngine->takeStats();
   gStats[0] = static_cast<float>(s.activeVoices);
   gStats[1] = s.limiterReductionDb;
   gStats[2] = s.peakBeforeLimiterDb;
@@ -277,7 +308,11 @@ constexpr int kChangeBatch = 256;
 static int gChangeOut[kChangeBatch];
 SK_EXPORT(sk_take_param_changes) int sk_take_param_changes() {
   int n = 0, i = 0;
-  while (n < kChangeBatch && gEngine->takeParamChange(i)) gChangeOut[n++] = i;
+  const int parts = gMulti ? gMulti->maxParts() : 1;
+  for (int p = 0; p < parts; ++p) {
+    sk::Engine& e = gMulti ? gMulti->part(p) : *gEngine;
+    while (n < kChangeBatch && e.takeParamChange(i)) gChangeOut[n++] = (p << 20) | i;   // part 0 is the plain index
+  }
   return n;
 }
 SK_EXPORT(sk_param_change_buffer) int* sk_param_change_buffer() { return gChangeOut; }
@@ -295,5 +330,61 @@ SK_EXPORT(sk_patch_tempo) const char* sk_patch_tempo() {
 }
 SK_EXPORT(sk_set_patch_tempo) void sk_set_patch_tempo(double bpm, int num, int den) { gEngine->setPatchTempo(bpm, num, den); }
 
-SK_EXPORT(sk_all_notes_off) void sk_all_notes_off() { gEngine->allNotesOff(); }
-SK_EXPORT(sk_panic) void sk_panic() { gEngine->panic(); }
+SK_EXPORT(sk_all_notes_off) void sk_all_notes_off() { if (gMulti) gMulti->allNotesOff(); else gEngine->allNotesOff(); }
+SK_EXPORT(sk_panic) void sk_panic() { if (gMulti) gMulti->panic(); else gEngine->panic(); }
+
+// ---- Multis (API.md §5b) -------------------------------------------------------------
+
+// The part the single-engine exports act on (0 for a synth without multis).
+SK_EXPORT(sk_select_part) int sk_select_part(int part) {
+  if (!gMulti) return 0;
+  gPart = part < 0 ? 0 : (part >= gMulti->maxParts() ? gMulti->maxParts() - 1 : part);
+  gEngine = &gMulti->part(gPart);
+  return gPart;
+}
+SK_EXPORT(sk_get_part) int sk_get_part() { return gPart; }
+// A parameter of any part, for values the engine moved.
+SK_EXPORT(sk_get_param_of) double sk_get_param_of(int part, int i) {
+  return gMulti ? gMulti->part(part).params().get(i) : gEngine->params().get(i);
+}
+
+// The layout as JSON: {"parts":[{level, pan, mute, solo}…], "zones":[…]}.
+SK_EXPORT(sk_multi_layout) const char* sk_multi_layout() {
+  return ret(gMulti ? gMulti->layoutJson().dump(0) : std::string("{}"));
+}
+// Sets it; returns the warnings (what was dropped) as a JSON array.
+SK_EXPORT(sk_set_multi_layout) const char* sk_set_multi_layout(const char* json) {
+  sk::Json v;
+  if (!gMulti || !sk::Json::tryParse(json, v)) return ret("[\"not valid JSON\"]");
+  return ret(sk::Json(gMulti->setLayoutJson(v)).dump(0));
+}
+// Each part in use: {"name", "category"}, for the parts strip.
+SK_EXPORT(sk_part_names) const char* sk_part_names() {
+  sk::Json a = sk::Json::array();
+  if (gMulti) {
+    for (int p = 0; p < gMulti->maxParts(); ++p) {
+      sk::Json o = sk::Json::object();
+      o["name"] = gMulti->part(p).patchMeta().name;
+      o["category"] = gMulti->part(p).patchMeta().category;
+      a.push(o);
+    }
+  }
+  return ret(a.dump(0));
+}
+// The whole multi as JSON (patches and layout), and loading one. Returns
+// {"ok", "error", "warnings"} like sk_load_patch.
+SK_EXPORT(sk_multi_save) const char* sk_multi_save(const char* name) {
+  return ret(gMulti ? gMulti->save(name ? name : "").dump(2) : std::string("{}"));
+}
+SK_EXPORT(sk_multi_load) const char* sk_multi_load(const char* text) {
+  sk::Json r = sk::Json::object();
+  sk::Json multi;
+  std::string err;
+  if (!gMulti) { r["ok"] = false; r["error"] = "this synth has no multis"; return ret(r.dump(0)); }
+  if (!sk::Json::tryParse(text, multi, &err)) { r["ok"] = false; r["error"] = err; return ret(r.dump(0)); }
+  auto res = gMulti->load(multi);
+  r["ok"] = res.ok;
+  if (!res.ok) r["error"] = res.error;
+  r["warnings"] = sk::Json(res.warnings);
+  return ret(r.dump(0));
+}

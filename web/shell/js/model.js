@@ -28,10 +28,18 @@ class Model {
     this.sourceIndex = new Map(this.mod.sources.map((s, i) => [s.id, i]));
     this.modListeners = new Set();
     this.shapeListeners = new Set();
-    this.dirty = false;
+    this.dirtyParts = [];              // "changed since loaded", per part (the bar shows the selected part's)
+    this.multi = !!this.info.synth.multi;      // the synth can be played as a Multi (API.md §5b)
+    this.maxParts = this.info.synth.maxParts || 1;
+    this.part = 0;                     // the part everything below edits
+    this.partListeners = new Set();    // (part) after another part is selected
+    this.layoutListeners = new Set();  // (layout) after the layout changed
     this.patchListeners = new Set();   // after any patch load
     this.history = null;               // SkHistory (history.js), set by the app
   }
+
+  get dirty() { return !!this.dirtyParts[this.part]; }
+  set dirty(v) { this.dirtyParts[this.part] = !!v; }
 
   param(id) { return typeof id === "number" ? this.params[id] : this.byId.get(id); }
   get(id) { const p = this.param(id); return p ? this.x.sk_get_param(p.index) : NaN; }
@@ -52,12 +60,19 @@ class Model {
     this.x.sk_set_param(p.index, v);
     const now = this.get(p.index);
     if (now === before) return;
-    if (this.history) this.history.record("p", before, now, { i: p.index });
+    if (this.history) this.history.record("p", before, now, { i: p.index });   // (the history adds the part)
     this.dirty = true;
     if (this.sink) this.sink.param(p.index, now);
     this.emit(p.index, now, source);
   }
   setNorm(id, n, source) { this.set(id, this.fromNorm(id, Math.min(1, Math.max(0, n))), source); }
+  // The same for another part of a multi.
+  applyHostPart(part, i, v) {
+    if (!part || part === this.part) return this.applyHost(i, v);
+    this.x.sk_select_part(part);
+    this.x.sk_set_param(i, v);
+    this.x.sk_select_part(this.part);
+  }
   // A value that changed in the plugin (automation, the host's own controls):
   // update the page without sending it back.
   applyHost(i, v) {
@@ -126,6 +141,67 @@ class Model {
     if (this.history) this.history.record("tempo", t, { bpm, num, den });
     this.dirty = true;
     for (const fn of this.anyListeners) fn(-1, 0, "tempo");
+  }
+
+  // Multis (API.md §5b) ------------------------------------------------------
+  // The page edits one part at a time: selecting a part points everything
+  // above (parameters, patches, modulation, custom state) at it.
+  selectPart(i, { quiet = false } = {}) {
+    if (!this.multi) return 0;
+    i = Math.max(0, Math.min(this.maxParts - 1, Math.round(i)));
+    if (i === this.part && !quiet) return i;
+    this.part = this.x.sk_select_part(i);
+    if (this.sink && this.sink.select) this.sink.select(this.part);
+    this.emitAll();
+    for (const id of this.info.custom) this.emitCustom(id);
+    this.emitMod();
+    this.emitShapes();
+    for (const fn of this.patchListeners) { try { fn(); } catch (err) { console.error(err); } }
+    for (const fn of this.partListeners) { try { fn(this.part); } catch (err) { console.error(err); } }
+    return this.part;
+  }
+  onPart(fn) { this.partListeners.add(fn); return () => this.partListeners.delete(fn); }
+
+  // [{name, category}] for every part (the unused ones hold the default patch).
+  partNames() { return this.multi ? this.w.json(this.x.sk_part_names()) : []; }
+
+  layout() { return this.multi ? this.w.json(this.x.sk_multi_layout()) : { parts: [{}], zones: [] }; }
+  // Sets the layout (see Multi::layoutJson in the API). Returns what was dropped.
+  setLayout(layout, { fromHost = false } = {}) {
+    const before = this.history && !fromHost ? this.layout() : null;
+    const warnings = this.w.json(this.w.withStrings([JSON.stringify(layout)], (p) => this.x.sk_set_multi_layout(p)));
+    const after = this.layout();
+    if (before && JSON.stringify(before) !== JSON.stringify(after)) this.history.record("layout", before, after);
+    if (!fromHost) { this.multiDirty = true; if (this.sink && this.sink.layout) this.sink.layout(JSON.stringify(after)); }
+    // A selected part that's no longer in use.
+    if (this.part >= after.parts.length) this.selectPart(after.parts.length - 1);
+    for (const fn of this.layoutListeners) { try { fn(after); } catch (err) { console.error(err); } }
+    return warnings;
+  }
+  onLayout(fn) { this.layoutListeners.add(fn); return () => this.layoutListeners.delete(fn); }
+
+  multiSave(name = "") { return JSON.parse(this.w.str(this.w.withStrings([name], (p) => this.x.sk_multi_save(p)))); }
+  // Loads a whole multi: every part's patch and the layout.
+  loadMulti(multi, { fromHost = false } = {}) {
+    const text = typeof multi === "string" ? multi : JSON.stringify(multi);
+    const prev = this.history && !fromHost ? this.multiSave() : null;
+    const res = this.w.json(this.w.withStrings([text], (p) => this.x.sk_multi_load(p)));
+    if (!res.ok) return res;
+    const saved = this.multiSave();
+    if (prev) this.history.record("multi", prev, saved, { label: `loading multi “${saved.name || "multi"}”` });
+    if (this.sink && !fromHost && this.sink.multi) this.sink.multi(JSON.stringify(saved));
+    this.dirtyParts = [];
+    this.multiDirty = false;
+    const layout = this.layout();
+    if (this.part >= layout.parts.length) this.part = this.x.sk_select_part(0);
+    this.emitAll();
+    for (const id of this.info.custom) this.emitCustom(id);
+    this.emitMod();
+    this.emitShapes();
+    for (const fn of this.patchListeners) { try { fn(); } catch (err) { console.error(err); } }
+    for (const fn of this.layoutListeners) { try { fn(layout); } catch (err) { console.error(err); } }
+    for (const fn of this.partListeners) { try { fn(this.part); } catch (err) { console.error(err); } }
+    return res;
   }
 
   // Modulation -------------------------------------------------------------
