@@ -84,16 +84,19 @@ Processor::Processor()
   uiState_ = juce::var(new juce::DynamicObject());
   startTimerHz(30);
 
-  // A new instance starts on the Init preset, like the browser page does.
+  // A new instance starts on the Init preset, like the browser page does:
+  // presets/init.json, else the first init.json in a category folder.
   int count = 0;
   const sk::EmbeddedPreset* presets = sk::embeddedPresets(count);
+  int init = -1;
   for (int i = 0; i < count; ++i) {
     const juce::String path(presets[i].path);
-    if (path == "init.json" || path.endsWith("/init.json")) {
-      sk::Json patch;
-      if (sk::Json::tryParse(presets[i].json, patch)) engine_->loadPatch(patch);
-      break;
-    }
+    if (path == "presets/init.json") { init = i; break; }
+    if (init < 0 && (path == "init.json" || path.endsWith("/init.json"))) init = i;
+  }
+  if (init >= 0) {
+    sk::Json patch;
+    if (sk::Json::tryParse(presets[init].json, patch)) engine_->loadPatch(patch);
   }
 }
 

@@ -33,6 +33,7 @@ class PatchData {
 struct PatchMeta {
   std::string name = "Init";
   std::string author;
+  std::string category;   // "" = none (API.md §5)
   std::vector<std::string> tags;
 };
 

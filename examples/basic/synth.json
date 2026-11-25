@@ -6,6 +6,7 @@
   "pluginCode": "Skba",
   "vendorCode": "Tend",
   "patchVersion": 1,
+  "categories": ["Pads", "Leads", "Bass", "Keys", "Plucks", "Sequences"],
   "features": {
     "voices": 24,
     "voiceModes": [

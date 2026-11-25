@@ -95,6 +95,8 @@ class Model {
   savePatch() { return JSON.parse(this.w.str(this.x.sk_save_patch())); }
   get patchName() { return this.savePatch().name; }
   setName(name) { this.w.withStrings([name], (p) => this.x.sk_set_name(p)); }
+  get patchCategory() { return this.savePatch().category || ""; }
+  setCategory(category) { this.w.withStrings([category || ""], (p) => this.x.sk_set_category(p)); }
 
   // fromHost: the plugin already has this patch, so don't send it back.
   loadPatch(patch, { fromHost = false } = {}) {

@@ -103,10 +103,11 @@ button, input, select { font: inherit; color: inherit; }
 
 .presets { display: flex; align-items: center; gap: 6px; }
 .preset-field { position: relative; display: flex; align-items: center; }
-.preset-select, .preset-name, .sig-select, .midi-select, .menu-select, .bpm-input, .kb-assign {
+.preset-select, .preset-category, .preset-name, .sig-select, .midi-select, .menu-select, .bpm-input, .kb-assign {
   background: var(--field); border: 1px solid var(--edge); border-radius: 7px; padding: 5px 8px;
 }
 .preset-select, .preset-name { width: 13.5rem; font-weight: 600; }
+.preset-category { width: 7.5rem; }
 .preset-dirty {
   position: absolute; right: -4px; top: -4px; width: 9px; height: 9px; border-radius: 50%;
   background: var(--accent); border: 2px solid var(--bg);
@@ -389,6 +390,8 @@ button, input, select { font: inherit; color: inherit; }
   .presets { width: 100%; }
   .preset-field { flex: 1; }
   .preset-select, .preset-name { width: 100%; }
+  .presets { flex-wrap: wrap; }
+  .preset-category { width: 100%; }
   .output { margin-left: 0; }
   .scope { width: 120px; }
   .main { padding: 14px 16px; }

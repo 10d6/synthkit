@@ -100,6 +100,7 @@ SK_EXPORT(sk_info) const char* sk_info() {
   s["ampEnv"] = info.features.ampEnv;
   s["arp"] = info.features.arp;
   s["tempoInPatch"] = info.features.tempoInPatch;
+  s["categories"] = sk::Json(info.categories);
   j["synth"] = s;
   sk::Json params = sk::Json::array();
   auto& ps = gEngine->params();
@@ -203,6 +204,7 @@ SK_EXPORT(sk_load_patch) const char* sk_load_patch(const char* text) {
 SK_EXPORT(sk_save_patch) const char* sk_save_patch() { return ret(gEngine->savePatch().dump(2)); }
 
 SK_EXPORT(sk_set_name) void sk_set_name(const char* name) { gEngine->patchMeta().name = name; }
+SK_EXPORT(sk_set_category) void sk_set_category(const char* category) { gEngine->patchMeta().category = category; }
 
 SK_EXPORT(sk_get_custom) const char* sk_get_custom(const char* id) { return ret(gEngine->customState(id).dump(0)); }
 SK_EXPORT(sk_set_custom) int sk_set_custom(const char* id, const char* json) {

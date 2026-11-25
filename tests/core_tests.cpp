@@ -574,6 +574,17 @@ TEST(patch_load_migrate_and_warn) {
   CHECK(!bad.ok);
 }
 
+TEST(patch_category_round_trips) {
+  Harness h;
+  CHECK(h.eng->loadPatch(Json::parse(R"({"synth":"test","name":"Bells","category":"Keys"})")).ok);
+  CHECK(h.eng->patchMeta().category == "Keys");
+  Json saved = h.eng->savePatch();
+  CHECK(saved["category"].string() == "Keys");
+  // No category: none saved, and loading a patch without one clears it.
+  CHECK(h.eng->loadPatch(Json::parse(R"({"synth":"test","name":"Plain"})")).ok);
+  CHECK(h.eng->patchMeta().category.empty() && !h.eng->savePatch().contains("category"));
+}
+
 TEST(transport_jump_flushes_pending) {
   Harness h;
   h.synth->scheduleFifth = true;
@@ -600,8 +611,12 @@ TEST(synth_json_validation) {
   CHECK_THROWS(SynthInfo::fromJson(Json::parse(R"({"name":"x"})")));
   CHECK_THROWS(SynthInfo::fromJson(Json::parse(R"({"id":"x","pluginCode":"toolong"})")));
   CHECK_THROWS(SynthInfo::fromJson(Json::parse(R"({"id":"x","features":{"voiceModes":["chord"]}})")));
+  CHECK_THROWS(SynthInfo::fromJson(Json::parse(R"({"id":"x","categories":["Keys","Keys"]})")));
+  CHECK_THROWS(SynthInfo::fromJson(Json::parse(R"({"id":"x","categories":[""]})")));
   auto i = SynthInfo::fromJson(Json::parse(R"({"id":"x"})"));
-  CHECK(i.features.voices == 8 && i.features.ampEnv);
+  CHECK(i.features.voices == 8 && i.features.ampEnv && i.categories.empty());
+  auto c = SynthInfo::fromJson(Json::parse(R"({"id":"x","categories":["Pads","Bass"]})"));
+  CHECK(c.categories.size() == 2 && c.categories[0] == "Pads" && c.categories[1] == "Bass");
 }
 
 

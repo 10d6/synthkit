@@ -496,7 +496,7 @@ class App {
   pageApi() {
     const m = this.model, app = this;
     const pr = this.presets;
-    const entry = (name, kind) => pr.entries().find((e) => e.name === name && (!kind || e.kind === kind));
+    const entry = (name, kind, category) => pr.entries().find((e) => e.name === name && (!kind || e.kind === kind) && (category === undefined || e.category === category));
     const storeKey = (k) => `synthkit:${m.info.synth.id}:page:${k}`;
     return {
       info: { synth: m.info.synth, params: m.params, messages: this.messageIds.slice(), custom: m.info.custom.slice() },
@@ -557,14 +557,20 @@ class App {
 
       // presets (the kit's preset store; mount "presets" for its bar)
       presets: {
-        list: () => pr.entries().map((e) => ({ name: e.name, kind: e.kind })),
-        current: () => ({ ...pr.current, dirty: !!m.dirty }),
-        load: (name, kind) => { const e = entry(name, kind); return e ? pr.load(e) : false; },
+        list: () => pr.entries().map((e) => ({ name: e.name, kind: e.kind, category: e.category })),
+        current: () => ({ kind: pr.current.kind, name: pr.current.name, category: m.patchCategory, dirty: !!m.dirty }),
+        load: (name, kind, category) => { const e = entry(name, kind, category); return e ? pr.load(e) : false; },
+        // categories (API.md §5): the names in the bar's order ("" for none),
+        // the one the bar shows (null: all), and the sound's own
+        categories: () => pr.categories(),
+        filter: () => pr.category,
+        setFilter: (c) => { pr.pickCategory(c === null || c === undefined ? "*" : "c:" + c); },
+        setCategory: (c) => pr.setCategory(c),
         save: () => { if (pr.current.kind !== "user") return false; pr.store(pr.current.name); return true; },
         saveAs: (name) => { if (!String(name || "").trim()) return false; pr.store(String(name).trim()); return true; },
         rename: (name) => pr.renameTo(String(name || "").trim()),
         remove: () => { if (pr.current.kind !== "user") return false; pr.remove(); return true; },
-        revert: () => { const e = entry(pr.current.name, pr.current.kind); return e ? pr.load(e) : false; },
+        revert: () => { const e = pr.current.kind === "session" ? null : pr.find(pr.current); return e ? pr.load(e) : false; },
         init: () => pr.init(),
         exportFile: () => pr.exportFile(),
         importFile: () => pr.startImport(),

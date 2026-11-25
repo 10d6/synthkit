@@ -52,7 +52,7 @@ jobs:
           name: renders-basic
           path: |
             renders/tests/*.wav
-            renders/presets/*.wav
+            renders/presets/**/*.wav
             renders/failures/*
             stuck/*
           if-no-files-found: ignore
