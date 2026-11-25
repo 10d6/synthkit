@@ -167,16 +167,18 @@ async function main() {
   // ---- remove the selected part ----------------------------------------------------------------
   await page.click(".part-add");                                                   // a third part
   await ev(() => window.synthkit.model.set("filter.cutoff", 3210));
-  await page.click(".part:nth-child(2) .part-tab");
-  check(await page.locator(".multi-mix .btn:has-text('Remove part 2')").isVisible(), "the remove button names the selected part");
-  await page.click(".multi-mix .btn:has-text('Remove part 2')");
+  check(await page.locator(".part .part-remove").count() === 3, "each part's tab has a remove button");
+  await page.click('.part-remove[title="Remove part 2"]');                          // part 3 (selected) stays selected
   lay = await ev(() => window.synthkit.model.layout());
-  const moved = await ev(() => { window.synthkit.model.selectPart(1); return window.synthkit.model.get("filter.cutoff"); });
-  check(lay.parts.length === 2 && lay.zones.every((z) => z.part < 2) && Math.abs(moved - 3210) < 20,
-    "removing part 2 removes it; part 3 moves down with its sound and zone", { parts: lay.parts.length, moved });
+  const moved = await ev(() => ({ part: window.synthkit.model.part, cutoff: window.synthkit.model.get("filter.cutoff") }));
+  check(lay.parts.length === 2 && lay.zones.every((z) => z.part < 2) && moved.part === 1 && Math.abs(moved.cutoff - 3210) < 20,
+    "× on part 2 removes it with no selecting first; part 3 moves down with its sound and zone, still selected", { parts: lay.parts.length, moved });
   await ev(() => window.synthkit.model.history.undo());
   check(await ev(() => window.synthkit.model.layout().parts.length) === 3, "removing a part can be undone");
   await ev(() => window.synthkit.model.history.redo());
+  await ev(() => window.synthkit.app.multiBar.setOpen(false));
+  check(await page.locator(".part .part-remove").count() === 0, "with the drawer closed the tabs have no remove buttons");
+  await ev(() => window.synthkit.app.multiBar.setOpen(true));
 
   // ---- a part in a scale -----------------------------------------------------------------------------
   check(await ev(() => document.querySelector(".mix-scale").value === "Chromatic" && document.querySelector(".mix-key").disabled), "parts start chromatic");

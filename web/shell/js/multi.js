@@ -67,7 +67,6 @@ class MultiBar {
     this.keySel = h("select", { class: "mix-key", "aria-label": "Scale key", title: "The scale's key",
       onchange: () => this.edit((l) => { l.parts[m.part].scaleKey = Number(this.keySel.value); }) });
     SK_KEY_NAMES.forEach((n, i) => this.keySel.append(h("option", { value: i, text: n })));
-    this.removeBtn = h("button", { type: "button", class: "btn btn-quiet", onclick: () => this.removePart() }, "Remove part");
     // The selected part's patch: the kit's preset bar (presets.js), here rather
     // than at the top of the page, which picks whole sounds.
     this.patchSlot = h("div", { class: "mix-patch" });
@@ -75,8 +74,7 @@ class MultiBar {
       this.partLabel, this.patchSlot,
       h("label", { class: "mix-field" }, h("span", { text: "Level" }), this.level, this.levelOut),
       h("label", { class: "mix-field" }, h("span", { text: "Balance" }), this.pan, this.panOut),
-      h("label", { class: "mix-field" }, h("span", { text: "Scale" }), this.scaleSel, this.keySel),
-      this.removeBtn);
+      h("label", { class: "mix-field" }, h("span", { text: "Scale" }), this.scaleSel, this.keySel));
 
     this.zones = this.buildZones();
 
@@ -91,6 +89,7 @@ class MultiBar {
     this.open = !!open;
     skStore.set(this.key("multiOpen"), this.open);
     this.showOpen();
+    this.renderParts();   // the tabs' remove buttons come and go with the drawer
     for (const fn of this.openListeners) fn(this.open);
   }
   showOpen() {
@@ -182,7 +181,10 @@ class MultiBar {
         h("button", { type: "button", class: "part-flag" + (pt.mute ? " is-on" : ""), "aria-pressed": String(!!pt.mute), title: `Mute part ${p + 1}`, "aria-label": `Mute part ${p + 1}`,
           onclick: () => this.edit((l) => { l.parts[p].mute = !l.parts[p].mute; }) }, "M"),
         h("button", { type: "button", class: "part-flag" + (pt.solo ? " is-on" : ""), "aria-pressed": String(!!pt.solo), title: `Solo part ${p + 1}`, "aria-label": `Solo part ${p + 1}`,
-          onclick: () => this.edit((l) => { l.parts[p].solo = !l.parts[p].solo; }) }, "S")));
+          onclick: () => this.edit((l) => { l.parts[p].solo = !l.parts[p].solo; }) }, "S"),
+        // Remove, straight from the tab (only in the open drawer, and never the last part).
+        this.open && this.parts > 1 ? h("button", { type: "button", class: "part-flag part-remove", title: `Remove part ${p + 1}`, "aria-label": `Remove part ${p + 1}: ${label}`,
+          onclick: () => this.removePart(p) }, "×") : null));
     }
     this.addBtn.disabled = this.parts >= m.maxParts;
   }
@@ -195,13 +197,11 @@ class MultiBar {
     this.scaleSel.value = sc;
     this.keySel.value = String(pt.scaleKey || 0);
     this.keySel.disabled = sc === "Chromatic";
-    this.removeBtn.textContent = `Remove part ${p + 1}`;
     if (document.activeElement !== this.level) this.level.value = pt.level || 0;
     if (document.activeElement !== this.pan) this.pan.value = pt.pan || 0;
     const lv = Number(pt.level || 0), pn = Number(pt.pan || 0);
     this.levelOut.textContent = `${lv > 0 ? "+" : ""}${lv.toFixed(1)} dB`;
     this.panOut.textContent = Math.abs(pn) < 0.005 ? "centre" : `${Math.round(Math.abs(pn) * 100)}% ${pn < 0 ? "left" : "right"}`;
-    this.removeBtn.disabled = this.parts <= 1;
   }
 
   renderZones() {
@@ -292,10 +292,12 @@ class MultiBar {
     this.edit((l) => { l.parts.push({ level: 0, pan: 0 }); l.zones.push(this.newZone(part)); });
     m.selectPart(part);
   }
-  // Removes the selected part; the ones after it move down a place (in a
-  // plugin, host automation stays with the place, not the sound).
-  removePart() {
-    const m = this.model, i = m.part, n = this.parts;
+  // Removes part i; the ones after it move down a place (in a plugin, host
+  // automation stays with the place, not the sound). The part being edited
+  // stays selected, or the one taking the removed part's place.
+  removePart(i) {
+    const m = this.model, n = this.parts, was = m.part;
+    if (i < 0 || i >= n) return;
     if (n <= 1) return;
     const ms = m.multiSave();
     ms.parts.splice(i, 1);
@@ -311,7 +313,7 @@ class MultiBar {
     const shifted = {};
     for (let p = 0; p < n; p++) if (p !== i && currents[p]) shifted[p > i ? p - 1 : p] = currents[p];
     pr.currents = shifted;
-    m.selectPart(Math.min(i, n - 2), { quiet: true });
+    m.selectPart(was > i ? was - 1 : Math.min(was, n - 2), { quiet: true });
     pr.shownPart = m.part;
     pr.current = shifted[m.part] || pr.currentFor(m.savePatch());
     pr.refresh();

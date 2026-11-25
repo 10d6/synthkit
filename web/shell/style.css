@@ -545,6 +545,8 @@ button, input, select { font: inherit; color: inherit; }
 .part-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .part-flag { border: 0; border-left: 1px solid var(--edge); background: transparent; color: var(--ink-soft); font: inherit; font-size: 0.6875rem; font-weight: 600; width: 1.9em; cursor: pointer; }
 .part-flag.is-on { background: var(--part); color: #fff; }
+.part-remove { font-size: 0.875rem; font-weight: 400; }
+.part-remove:hover { color: var(--bad, #d55); }
 .sound-multi.is-on { border-color: var(--accent); color: var(--accent); }
 .sound-tag { font-size: 0.6875rem; padding: 2px 6px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .multi.is-open { padding-bottom: 8px; border-bottom: 1px solid var(--edge); }

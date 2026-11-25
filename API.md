@@ -1068,10 +1068,10 @@ more as a multi. *More* has Save as new, Rename, Delete, Category (presets),
 Export, Import (a preset or a multi file) and Start from Init.
 
 *Layers and splits* (it reads *N parts* when there are several) opens the
-*multi bar* under it: a tab per part (its patch's name, with mute and solo),
-*+ Part*, and the selected part's row: its patch (the kit's preset bar, which
-loads, saves and steps through presets for that part only), level, balance,
-scale and key, and *Remove part N* (the parts after it move down a place).
+*multi bar* under it: a tab per part (its patch's name, with mute, solo and
+× to remove it; the parts after it move down a place), *+ Part*, and the
+selected part's row: its patch (the kit's preset bar, which loads, saves and
+steps through presets for that part only), level, balance, scale and key.
 Under that is the zone editor. Closed, the bar shows just the part tabs when
 there's more than one part, so it's clear which part the panels edit.
 Everything else on the page (panels, modulation, the arp, undo) edits **the
