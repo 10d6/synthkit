@@ -4696,7 +4696,16 @@ class PresetBar {
   saveSession() {
     // In the plugin the DAW project keeps the sound; the plugin just notes
     // which preset is showing.
-    if (skHost) { this.app.audio.send({ t: "meta", ui: { current: this.current, dirty: this.model.dirty } }); return; }
+    if (skHost) {
+      const ui = { current: this.current, dirty: this.model.dirty };
+      if (this.model.multi) {
+        ui.part = this.model.part;
+        ui.currents = { ...this.currents, [this.shownPart]: this.current };
+        ui.dirtyParts = this.model.dirtyParts.map(Boolean);
+      }
+      this.app.audio.send({ t: "meta", ui });
+      return;
+    }
     const s = { patch: this.model.savePatch(), current: this.current, dirty: this.model.dirty };
     if (this.model.multi) {
       s.multi = this.model.multiSave();
@@ -4708,7 +4717,8 @@ class PresetBar {
   }
 
   // The plugin's sound (on opening the window, or when the DAW loads a project).
-  applyHostState(patch, ui) {
+  applyHostState(patch, ui, multi) {
+    if (multi && this.model.multi) return this.applyHostMulti(multi, ui || {});
     const res = this.model.loadPatch(patch, { fromHost: true });
     if (!res.ok) { this.app.toast(`Couldn't show the plugin's sound: ${res.error}`, "error"); return false; }
     ui = ui || {};
@@ -4722,8 +4732,23 @@ class PresetBar {
     return true;
   }
 
+  // A whole multi from the DAW: every part's patch, the zones, and what the
+  // window had selected.
+  applyHostMulti(multi, ui) {
+    const res = this.model.loadMulti(multi, { fromHost: true });
+    if (!res.ok) { this.app.toast(`Couldn't show the plugin's sound: ${res.error}`, "error"); return false; }
+    this.model.selectPart(Math.min(ui.part || 0, this.model.layout().parts.length - 1));
+    this.currents = ui.currents || {};
+    this.shownPart = this.model.part;
+    this.current = this.currents[this.shownPart] || ui.current || this.currentFor(this.model.savePatch());
+    this.model.dirtyParts = ui.dirtyParts || [];
+    if (this.model.history) this.model.history.clear();
+    this.refresh();
+    return true;
+  }
+
   restoreSession() {
-    if (skHost) return this.applyHostState(skHost.state.patch, skHost.state.ui);
+    if (skHost) return this.applyHostState(skHost.state.patch, skHost.state.ui, skHost.state.multi);
     const s = skStore.get(this.key("session"), null);
     if (s && s.multi && this.model.multi && this.model.loadMulti(s.multi).ok) {
       this.model.selectPart(s.part || 0);
@@ -6106,7 +6131,7 @@ class MultiBar {
       items.push(null);
       for (const n of mine) items.push({ label: `Delete \u201c${n}\u201d`, run: () => this.remove(n) });
     }
-    items.push(null, { label: "Export as a file", run: () => this.exportFile() }, { label: "Import a file\u2026", run: () => this.fileInput.click() });
+    items.push(null, { label: "Export as a file", run: () => this.exportFile() }, { label: "Import a file\u2026", run: () => (skHost ? this.app.audio.send({ t: "import", kind: "multi" }) : this.fileInput.click()) });
     this.app.menu(r.left, r.bottom + 4, items);
   }
 
@@ -6140,6 +6165,7 @@ class MultiBar {
   }
   exportFile() {
     const name = this.nameInput.value.trim() || "Untitled multi";
+    if (skHost) { this.app.audio.send({ t: "export", kind: "multi", name, json: JSON.stringify(this.model.multiSave(name), null, 2) }); return; }
     const blob = new Blob([JSON.stringify(this.model.multiSave(name), null, 2)], { type: "application/json" });
     const a = h("a", { href: URL.createObjectURL(blob), download: `${name.replace(/[^\w\- ]+/g, "")}.multi.json` });
     document.body.append(a);
@@ -6151,11 +6177,12 @@ class MultiBar {
     const f = this.fileInput.files[0];
     this.fileInput.value = "";
     if (!f) return;
-    f.text().then((text) => {
-      let j;
-      try { j = JSON.parse(text); } catch { this.app.toast("That file isn't valid JSON.", "error"); return; }
-      this.load(j);
-    });
+    f.text().then((text) => this.importText(text, f.name));
+  }
+  importText(text, fileName) {
+    let j;
+    try { j = JSON.parse(text); } catch { this.app.toast(`${fileName} isn't valid JSON.`, "error"); return; }
+    this.load(j);
   }
 }
 
@@ -6217,7 +6244,7 @@ class App {
     this.keyboard = new Keyboard(this);
     // A synth with features.multi gets the multi bar: parts, zones, saved
     // multis (API.md \u00a75b). The plugin doesn't show it yet.
-    this.multiBar = m.multi && !this.host ? new MultiBar(this) : null;
+    this.multiBar = m.multi ? new MultiBar(this) : null;
     this.buildParts();
 
     this.toasts = h("div", { class: "toasts", role: "status", "aria-live": "polite" });
@@ -6327,10 +6354,11 @@ class App {
 
   // Messages from the plugin (see host.js).
   hostMessage(m) {
-    if (m.t === "params") { for (const [i, v] of m.changes || []) this.model.applyHost(i, v); }
-    else if (m.t === "state") this.presets.applyHostState(m.patch, m.ui);
+    if (m.t === "params") { for (const [i, v, part] of m.changes || []) this.model.applyHostPart(part || 0, i, v); }
+    else if (m.t === "state") this.presets.applyHostState(m.patch, m.ui, m.multi);
+    else if (m.t === "layout") { this.model.setLayout(typeof m.json === "string" ? JSON.parse(m.json) : m.json, { fromHost: true }); }
     else if (m.t === "store") skStore.external(m.key, m.value);
-    else if (m.t === "imported") this.presets.importText(m.text, m.file);
+    else if (m.t === "imported") { if (m.kind === "multi" && this.multiBar) this.multiBar.importText(m.text, m.file); else this.presets.importText(m.text, m.file); }
   }
 
   sendMidi(bytes) {
