@@ -101,12 +101,34 @@ struct Scenario {
   Json expect = Json::object();
 };
 
+// "presets/keys/init.json" -> "keys/init"
+std::string presetKey(const std::string& path) {
+  std::string k = path;
+  if (k.rfind("presets/", 0) == 0) k = k.substr(8);
+  if (k.size() > 5 && k.compare(k.size() - 5, 5, ".json") == 0) k.resize(k.size() - 5);
+  return k;
+}
+
+// A preset's category: its "category", else the folder it's in under presets/.
+std::string presetCategory(const std::string& path, const Json& patch) {
+  if (patch["category"].isString()) return patch["category"].string();
+  std::string k = presetKey(path);
+  auto slash = k.find('/');
+  return slash == std::string::npos ? std::string() : k.substr(0, slash);
+}
+
 Json findPreset(const std::string& path, const fs::path& synthDir) {
   int n = 0;
   const sk::EmbeddedPreset* p = sk::embeddedPresets(n);
+  // Exact paths first ("presets/keys/init.json", "keys/init"), then a bare
+  // file name ("init"), which is the top-level one when several share it.
   for (int i = 0; i < n; ++i) {
     std::string pp = p[i].path;
-    if (pp == path || fs::path(pp).filename().string() == path || fs::path(pp).stem().string() == path)
+    if (pp == path || presetKey(pp) == path || presetKey(pp) == presetKey(path)) return Json::parse(p[i].json);
+  }
+  for (int i = 0; i < n; ++i) {
+    std::string pp = p[i].path;
+    if (fs::path(pp).filename().string() == path || fs::path(pp).stem().string() == path)
       return Json::parse(p[i].json);
   }
   fs::path f = synthDir / path;
@@ -350,8 +372,8 @@ bool runExpect(const Scenario& s, const Render& r) {
 
 void writeIfAsked(const fs::path& dir, const std::string& name, const Render& r) {
   if (dir.empty()) return;
-  fs::create_directories(dir);
-  fs::path p = dir / (name + ".wav");
+  fs::path p = dir / (name + ".wav");   // a preset in a category folder: presets/<category>/<name>.wav
+  fs::create_directories(p.parent_path());
   if (!skr::writeWav(p.string(), r.l, r.r, static_cast<int>(r.sr))) warn("could not write " + p.string());
 }
 
@@ -386,10 +408,20 @@ int runCheck(const fs::path& synthDir, const fs::path& outDir) {
   int np = 0;
   const sk::EmbeddedPreset* presets = sk::embeddedPresets(np);
   std::vector<std::pair<std::string, Json>> loaded;
+  std::map<std::string, std::string> shown;   // category + name -> preset, to catch two the picker can't tell apart
   for (int i = 0; i < np; ++i) {
-    std::string name = fs::path(presets[i].path).stem().string();
+    std::string name = presetKey(presets[i].path);
     Json pj;
     try { pj = Json::parse(presets[i].json); } catch (std::exception& e) { fail(name + ": " + e.what()); continue; }
+    // Categories (API.md §5): a string, one of synth.json's when it lists them.
+    if (pj.contains("category") && !pj["category"].isString()) fail(name + ": \"category\" must be a string");
+    std::string cat = presetCategory(presets[i].path, pj);
+    if (!cat.empty() && !si.categories.empty() &&
+        std::find(si.categories.begin(), si.categories.end(), cat) == si.categories.end())
+      fail(name + ": category \"" + cat + "\" isn't one of synth.json's \"categories\"");
+    std::string label = pj["name"].string(fs::path(presets[i].path).stem().string());
+    auto [it, fresh] = shown.emplace(cat + "\n" + label, name);
+    if (!fresh) fail(name + ": same name (\"" + label + "\") and category as " + it->second);
     auto e1 = sk::makeEngine();
     auto res = e1->loadPatch(pj);
     if (!res.ok) { fail(name + ": " + res.error); continue; }

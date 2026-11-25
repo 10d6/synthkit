@@ -150,6 +150,14 @@ SynthInfo SynthInfo::fromJson(const Json& j) {
   if (!s.vendorCode.empty() && !validCode(s.vendorCode))
     fail("synth.json: \"vendorCode\" must be exactly 4 characters");
 
+  for (auto& c : j["categories"].items()) {
+    std::string v = c.string();
+    if (v.empty()) fail("synth.json: \"categories\" entries must be non-empty strings");
+    if (std::find(s.categories.begin(), s.categories.end(), v) != s.categories.end())
+      fail("synth.json: category \"" + v + "\" is listed twice");
+    s.categories.push_back(v);
+  }
+
   const Json& f = j["features"];
   auto& o = s.features;
   o.voices = std::clamp(static_cast<int>(f["voices"].number(o.voices)), 1, 128);
@@ -1509,6 +1517,7 @@ Json Engine::savePatch() const {
   p["name"] = core_->meta.name;
   p["author"] = core_->meta.author;
   p["tags"] = Json(core_->meta.tags);
+  if (!core_->meta.category.empty()) p["category"] = core_->meta.category;
   Json params = Json::object();
   auto& st = *core_->store;
   for (int i = 0; i < st.size(); ++i) params[st.spec(i).id] = static_cast<double>(st.get(i));
@@ -1563,6 +1572,7 @@ LoadResult Engine::loadPatch(const Json& in) {
   }
   core_->meta.name = j["name"].string("Untitled");
   core_->meta.author = j["author"].string("");
+  core_->meta.category = j["category"].string("");
   core_->meta.tags.clear();
   for (auto& t : j["tags"].items()) core_->meta.tags.push_back(t.string());
   core_->extra = Json::object();

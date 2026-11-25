@@ -37,7 +37,8 @@ my-synth/
   ui/style.css         optional: the synth's own styles, after the kit's (§9)
   ui/page.html,        optional: the synth's own page instead of the kit's
   ui/page.js, ui/page/ (§9a)
-  presets/*.json       factory patches (embedded into the build)
+  presets/*.json       factory patches (embedded into the build); a
+  presets/<cat>/*.json subfolder is a category (§5)
   tests/*.json         render scenarios run in CI
   CMakeLists.txt
   .github/workflows/ci.yml
@@ -113,6 +114,11 @@ check the synth against it.
   with each release you install.
 - `bundleId` (optional, default `com.<vendor>.<id>`): the macOS bundle
   identifier. Also **permanent** once released.
+- `categories` (optional): preset categories in the order the preset bar
+  shows them, e.g. `["Piano", "Organ", "Strings"]`. When given, the render
+  check fails on a factory preset whose category isn't one of them (catching
+  typos). Categories are display names, not identifiers: renaming one only
+  means moving or editing its presets. See *Categories* in §5.
 
 | Feature | Default | Meaning |
 |---|---|---|
@@ -808,6 +814,7 @@ old patches.
   "name": "Glass Rain",
   "author": "",
   "tags": ["pad", "bright"],
+  "category": "Pads",
   "params": { "cutoff": 3200, "reso": 0.35, "wave": 1, "env1.attack": 0.02 },
   "custom": { "keys": { "keyDetune": [0, 3.5, -2] } },
   "mod": [
@@ -841,6 +848,42 @@ old patches.
   leaves the tempo as it was.
 - `"mod"` holds the matrix routes (§6) and `"shapes"` the shape curves (§6a).
   A synth without those features keeps them unchanged through load and save.
+
+### Categories
+
+For a synth with many kinds of sound (several instruments in one synth, say),
+presets can be grouped by category. `"category"` is optional, and a patch
+without one is saved without one.
+
+- **Factory presets** get their category from `"category"`, or else from the
+  folder they're in: `presets/Organ/full.json` is in *Organ*. Folders keep a
+  big set tidy; the field suits a preset that stays at the top level. The
+  folder name is the category's display name, so name folders as they should
+  read. A preset loaded from a folder carries its category into the sound, so
+  a copy you save keeps it.
+- **Order**: `categories` in `synth.json` (§2), then any others by name, then
+  *Other* (presets with none). With `categories` listed, `--check` fails on
+  a factory preset outside them, and on two presets with the same name in
+  the same category (the picker couldn't tell them apart). The same name in
+  two categories is fine (an *Init* per instrument).
+- **The preset bar** gets a category picker (*All* plus each category in
+  use). Picking one lists only its presets and keeps ‹ › inside it; *All*
+  groups the list by category, with your presets after the factory ones in
+  each. The choice is remembered. A sound from elsewhere (undo, a DAW
+  project) that isn't in the category picked shows at the top of the list
+  with its category, and the picker stays put. Without any categories the bar
+  is as before.
+- **Your presets**: saving a new sound while a category is picked puts it in
+  that category, unless the sound already has one. *More → Category…* moves
+  the sound showing to another category, or a new one; for one of your
+  presets that's immediate, like a rename; any other sound keeps it when you
+  save.
+- **Init per category**: *Start from Init* with a category picked starts from
+  that category's own Init (`presets/<category>/init.json`, or a factory
+  preset named *Init* in it), else `presets/init.json`. A new instance starts
+  on `presets/init.json` (or the first `init.json` in a folder, when there's
+  no top-level one).
+- Tags (`"tags"`) are separate and free-form; the bar doesn't use them yet.
 
 ## 5a. Custom state
 
@@ -1503,7 +1546,8 @@ export function mount(sk, root) {
   | `transport()`, `onTransport(fn)` | the tempo the page shows: `{ bpm, num, den, playing, source }`, `source` being `daw`, `browser` or `midiClock` (§7) |
   | `hostBar(options)` | the host bar: `{ midi, tempo, panic, space }` set to `false` leave those out (`space: false`: Space doesn't start the clock); `hostBar(false)` leaves it out entirely |
   | `start()`, `running` | start the sound (browsers need a click first; the kit also starts it on any click or key) |
-  | `presets.list()`, `current()`, `load(name, kind?)`, `save()`, `saveAs(name)`, `rename(name)`, `remove()`, `revert()`, `init()`, `exportFile()`, `importFile()`, `importPatch(patch)`, `onChange(fn)` | the kit's presets without its bar: `current()` is `{ name, kind, dirty }`, `kind` is `factory`, `user` or `session`. `importPatch` loads a patch object the page built (from an older format, say) and saves it as one of your presets under its name, made unique; it returns `{ ok, name, error, warnings }` |
+  | `presets.list()`, `current()`, `load(name, kind?, category?)`, `save()`, `saveAs(name)`, `rename(name)`, `remove()`, `revert()`, `init()`, `exportFile()`, `importFile()`, `importPatch(patch)`, `onChange(fn)` | the kit's presets without its bar: `list()` gives `{ name, kind, category }`, `current()` is `{ name, kind, category, dirty }`, `kind` is `factory`, `user` or `session`, `category` is `""` for none (§5 *Categories*). `importPatch` loads a patch object the page built (from an older format, say) and saves it as one of your presets under its name, made unique; it returns `{ ok, name, error, warnings }` |
+  | `presets.categories()`, `filter()`, `setFilter(category)`, `setCategory(category)` | categories (§5): the names in the bar's order (`""` for *Other*), the category the bar shows (`null` for all) and picking one (`init()` and ‹ › follow it), and putting the sound into a category (`""` for none; moves one of your presets straight away) |
   | `store.get(key, fallback)`, `store.set(key, value)` | the page's own settings (open drawers, a chosen view): kept per synth in the browser, or in the plugin's shared settings; never in patches |
   | `toast(text, kind)`, `menu(x, y, items)`, `host` | |
 
@@ -1617,7 +1661,9 @@ thread, and on dropped events.
 
 **Generic checks** run on every synth, with no scenario needed:
 
-- every preset loads without warnings and survives a save/load round trip
+- every preset loads without warnings and survives a save/load round trip,
+  its category (if any) is a string and one of `synth.json`'s `categories`
+  (when it lists them), and no two presets share a name and a category
 - every preset renders at 44.1, 48 and 96 kHz, is audible, and goes silent
   after all-notes-off (it warns when the safety limiter has to engage)
 - rendering in blocks of 512, 1, 37 and 4096 samples gives the same loudness
@@ -1745,7 +1791,8 @@ Nothing in the synth changes for the plugin:
 - **MIDI** comes from the host track: notes, pitch bend, mod wheel, sustain and
   other CCs, aftertouch. (For VST3 the host sends CCs as hidden parameters;
   the plugin turns them back into MIDI.)
-- **A new instance** starts on `presets/init.json` when there is one.
+- **A new instance** starts on `presets/init.json` when there is one (else
+  the first `init.json` in a category folder, §5).
 
 **The plugin window is the browser page** (§11) in a web view (WebView2 on
 Windows, WebKit on macOS and Linux). Build the page first and point

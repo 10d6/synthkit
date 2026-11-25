@@ -30,7 +30,7 @@ The browser page and the plugins are built the same way as in synthkit: see
 |---|---|
 | `synth.json` | identity (name, IDs, plugin codes) and kit features |
 | `src/` | the sound engine |
-| `presets/` | factory presets (`init.json` is what a new instance starts on) |
+| `presets/` | factory presets (`init.json` is what a new instance starts on); a subfolder is a category |
 | `tests/` | render scenarios checked in CI |
 | `ui/layout.json` | the panel layout (and `ui/custom.js` for custom widgets, `ui/style.css` for styles, or `ui/page.js` for a page of the synth's own: API.md §9a) |
 | `synthkit/` | the kit, as a pinned submodule |

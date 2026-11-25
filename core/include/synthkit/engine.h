@@ -13,6 +13,7 @@ namespace sk {
 struct SynthInfo {
   std::string id, name, vendor, version, pluginCode, vendorCode;
   int patchVersion = 1;
+  std::vector<std::string> categories;   // preset categories, in display order (API.md §5)
   struct Features {
     int voices = 8;
     std::vector<std::string> voiceModes{"poly"};

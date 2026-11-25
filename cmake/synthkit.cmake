@@ -1,7 +1,7 @@
 # synthkit_add_synth(<name> SOURCES <files...> [DIR <synth dir>])
 #
 # Builds a synth on synthkit. DIR (default: the current source dir) must
-# contain synth.json and may contain presets/*.json and tests/*.json.
+# contain synth.json and may contain presets/**/*.json and tests/*.json.
 # Creates:
 #   <name>_synth   static library: the synth + embedded synth.json/presets
 #   <name>_render  offline render + check tool (see API.md §10)
@@ -23,7 +23,7 @@ function(synthkit_add_synth name)
     message(FATAL_ERROR "synthkit_add_synth(${name}): ${SK_DIR}/synth.json not found")
   endif()
 
-  file(GLOB _presets CONFIGURE_DEPENDS "${SK_DIR}/presets/*.json")
+  file(GLOB_RECURSE _presets CONFIGURE_DEPENDS "${SK_DIR}/presets/*.json")
   set(_embedded "${CMAKE_CURRENT_BINARY_DIR}/${name}_embedded.cpp")
   add_custom_command(
     OUTPUT "${_embedded}"

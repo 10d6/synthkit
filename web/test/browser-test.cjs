@@ -729,6 +729,54 @@ async function main() {
         if (shapeAfter !== shapeBefore) fail(`shape reset left ${shapeAfter} (saved ${shapeBefore})`); else pass("a shape panel's reset restores its curve");
         await ev(() => { window.synthkit.app.presets.remove(); });
       }
+
+      // Preset categories (API.md §5): folders and "category", the picker,
+      // stepping inside a category, saving into one and moving a preset.
+      {
+        const ev = (fn, arg) => page.evaluate(fn, arg);
+        const opts = (sel) => ev((sel) => [...document.querySelectorAll(sel + " option")].map((o) => o.textContent), sel);
+        const cats = await opts(".preset-category");
+        const want = ["All", "Pads", "Leads", "Bass", "Keys", "Plucks", "Sequences", "Other"];
+        if (JSON.stringify(cats) !== JSON.stringify(want)) fail(`category picker offers ${JSON.stringify(cats)}`);
+        else pass("category picker: synth.json's order, a preset's own \"category\", and Other for the rest");
+        await page.selectOption(".preset-category", { label: "Pads" });
+        const padList = (await opts(".preset-select")).filter((t) => !/\(/.test(t));
+        await page.click('button[title="Next preset"]');
+        const a = await ev(() => window.synthkit.app.presets.current.name);
+        await page.click('button[title="Next preset"]');
+        const b = await ev(() => window.synthkit.app.presets.current.name);
+        await page.click('button[title="Next preset"]');
+        const c = await ev(() => window.synthkit.app.presets.current.name);
+        const pads = ["Seq Breathing", "Warm Pad"];
+        if (JSON.stringify(padList.sort()) !== JSON.stringify(pads) || !pads.includes(a) || !pads.includes(b) || a === b || c !== a)
+          fail(`Pads: lists ${JSON.stringify(padList)}, steps ${a} → ${b} → ${c}`);
+        else pass("picking a category lists only its presets, and ‹ › stay inside it");
+        // A sound saved while Pads is picked goes into Pads (Init has no category).
+        await ev(() => window.synthkit.app.presets.init());
+        await ev(() => window.synthkit.app.presets.store("My Pad"));
+        const saved = await ev(() => window.synthkit.app.presets.user["My Pad"].category);
+        const listed = await opts(".preset-select");
+        if (saved !== "Pads" || !listed.includes("My Pad")) fail(`saving under Pads: category ${saved}, list ${JSON.stringify(listed)}`);
+        else pass("a new preset saved while a category is picked goes into it");
+        // Category… moves one of your presets, and the picker follows.
+        await page.click('button[title="More preset actions"]');
+        await page.click('.menu-item:text-is("Category…")');
+        await page.click('.menu-item:text-is("Leads")');
+        const moved = await ev(() => ({ cat: window.synthkit.app.presets.user["My Pad"].category, filter: window.synthkit.app.presets.category,
+                                        sound: window.synthkit.model.patchCategory, dirty: !!window.synthkit.model.dirty }));
+        if (moved.cat !== "Leads" || moved.filter !== "Leads" || moved.sound !== "Leads" || moved.dirty) fail(`moving to Leads: ${JSON.stringify(moved)}`);
+        else pass("Category… moves one of your presets to another category");
+        // A factory copy saved keeps its folder's category.
+        await page.selectOption(".preset-category", { label: "All" });
+        await ev(() => window.synthkit.app.presets.load(window.synthkit.app.presets.entries().find((e) => e.name === "Mono Bass")));
+        await ev(() => window.synthkit.app.presets.store("Bass copy"));
+        const copyCat = await ev(() => window.synthkit.app.presets.user["Bass copy"].category);
+        const groups = await ev(() => [...document.querySelectorAll(".preset-select optgroup")].map((g) => g.label));
+        if (copyCat !== "Bass" || !groups.includes("Bass · yours") || !groups.includes("Leads · yours")) fail(`copy of Mono Bass: ${copyCat}, groups ${JSON.stringify(groups)}`);
+        else pass("a copy of a factory preset keeps its folder's category; All groups by category");
+        for (const n of ["My Pad", "Bass copy"]) await ev((n) => { const p = window.synthkit.app.presets; p.load(p.entries().find((e) => e.name === n && e.kind === "user")); p.remove(); }, n);
+        await page.selectOption(".preset-category", { label: "All" });
+      }
       }  // kitUi
     }
     if (errors.length) fail(`${name}: console errors: ${errors.join(" | ")}`); else pass(`${name}: boots with no console errors`);
