@@ -1,4 +1,4 @@
-# Generates a .cpp embedding synth.json and presets/**/*.json as byte arrays
+# Generates a .cpp embedding synth.json, presets/**/*.json and multis/**/*.json as byte arrays
 # (a subfolder of presets/ is a category, API.md §5).
 # Run with: cmake -DSYNTH_DIR=... -DOUT=... -P embed.cmake
 # (Byte arrays rather than string literals: MSVC caps literal length.)
@@ -25,9 +25,25 @@ foreach(p IN LISTS presets)
   math(EXPR i "${i} + 1")
 endforeach()
 string(APPEND src "const sk::EmbeddedPreset kPresets[] = {\n${table}  {nullptr, nullptr}\n};\n")
+set(presetCount ${i})
+
+# multis/*.json: factory multis (API.md §5b)
+file(GLOB_RECURSE multis RELATIVE "${SYNTH_DIR}" "${SYNTH_DIR}/multis/*.json")
+list(SORT multis)
+set(i 0)
+set(table "")
+foreach(p IN LISTS multis)
+  _sk_hex_array(b "${SYNTH_DIR}/${p}")
+  string(APPEND src "const char kMulti${i}[] = {${b}};\n")
+  string(APPEND table "  {\"${p}\", kMulti${i}},\n")
+  math(EXPR i "${i} + 1")
+endforeach()
+string(APPEND src "const sk::EmbeddedPreset kMultis[] = {\n${table}  {nullptr, nullptr}\n};\n")
+set(multiCount ${i})
 string(APPEND src "}  // namespace\n\nnamespace sk {\n")
 string(APPEND src "const char* embeddedSynthJson() { return kSynthJson; }\n")
-string(APPEND src "const EmbeddedPreset* embeddedPresets(int& count) { count = ${i}; return kPresets; }\n")
+string(APPEND src "const EmbeddedPreset* embeddedPresets(int& count) { count = ${presetCount}; return kPresets; }\n")
+string(APPEND src "const EmbeddedPreset* embeddedMultis(int& count) { count = ${multiCount}; return kMultis; }\n")
 string(APPEND src "}  // namespace sk\n")
 
 # Only rewrite when content changes, so builds stay incremental.

@@ -53,6 +53,9 @@ class App {
     this.undoEl = skUndoButtons(this);
     this.midi = new MidiInput(this);
     this.keyboard = new Keyboard(this);
+    // A synth with features.multi gets the multi bar: parts, zones, saved
+    // multis (API.md §5b). The plugin doesn't show it yet.
+    this.multiBar = m.multi && !this.host ? new MultiBar(this) : null;
     this.buildParts();
 
     this.toasts = h("div", { class: "toasts", role: "status", "aria-live": "polite" });
@@ -70,6 +73,7 @@ class App {
       problems.push(...panels.problems);
       rootEl.append(
         this.header(),
+        this.multiBar && this.multiBar.root,
         this.banner,
         h("main", { class: "main" }, panelEl),
         this.layout.keyboard === false ? null : this.keyboard.root,
@@ -90,13 +94,13 @@ class App {
     this.tempoInPatch = !!m.info.synth.tempoInPatch;
     m.onPatch(() => this.applyPatchTempo());
     // Parameters the engine moved (mapped MIDI controllers, ctx.setParam).
-    this.audio.onParams = (changes) => { for (const [i, v] of changes) this.model.applyHost(i, v); };
+    this.audio.onParams = (changes) => { for (const [i, v, part] of changes) this.model.applyHostPart(part || 0, i, v); };
 
     this.presets.restoreSession();
     this.history.clear();   // starting up isn't a step to undo
     if (this.host) {
       // The plugin makes the sound: changes go straight to it.
-      this.model.sink = this.audio.sink();
+      this.model.sink = this.audio.sink(() => this.model.part);
       this.banner.hidden = true;
       this.audio.onHost = (msg) => this.hostMessage(msg);
     }
@@ -150,7 +154,7 @@ class App {
     if (this.audio.running) return;
     try {
       await this.audio.start(this.model, this.transport);
-      this.model.sink = this.audio.sink();
+      this.model.sink = this.audio.sink(() => this.model.part);
       this.banner.hidden = true;
       this.sendTransport();
     } catch (err) {
@@ -599,6 +603,10 @@ class App {
       toast: (msg, kind) => app.toast(msg, kind),
       menu: (x, y, items) => app.menu(x, y, items),
       mount: (el, name, opts) => app.mountPart(el, name, opts || {}),
+      // Multis (API.md §5b): the part the page's controls edit.
+      get part() { return m.part; },
+      selectPart: (i) => m.selectPart(i),
+      onPart: (fn) => m.onPart(fn),
     };
   }
 
@@ -628,6 +636,7 @@ class App {
         if (opts) this.hostBarOpts = { ...(this.hostBarOpts || {}), ...opts };
         this.hostBarEl = el;
         return el;
+      case "multi": part = this.multiBar ? this.multiBar.root : null; break;   // parts, zones and saved multis (API.md §5b)
       case "output": part = this.outputEl; break;
       case "panic": part = this.panicBtn; break;
       case "undo": part = this.undoEl; break;
@@ -714,8 +723,10 @@ class App {
       app,
       model,
       evalCurve: skEvalCurve,
-      renderOffline: (opts = {}) => Audio.renderOffline(bytes, {
-        patch: JSON.stringify(model.savePatch()), custom: model.customSnapshot(), ...opts }),
+      // A multi renders as it is (every part and the zones); otherwise the one patch.
+      renderOffline: (opts = {}) => Audio.renderOffline(bytes, model.multi
+        ? { multi: JSON.stringify(model.multiSave()), ...opts }
+        : { patch: JSON.stringify(model.savePatch()), custom: model.customSnapshot(), ...opts }),
     };
   } catch (err) {
     console.error(err);

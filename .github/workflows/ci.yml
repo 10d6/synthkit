@@ -89,6 +89,11 @@ jobs:
         run: |
           ./build/examples/basic/basic_render examples/basic/tests/demo-pump.json --block 128 --out web-test/native.wav
           python3 web/test/compare.py web-test/web-render.f32 web-test/native.wav
+      - name: Multis in the page (parts, zones, saved multis), compared with native
+        run: |
+          node web/test/multi-test.cjs build-web/web/basic.html web-test/multi examples/basic/tests/multi-split.json
+          ./build/examples/basic/basic_render examples/basic/tests/multi-split.json --block 128 --out web-test/multi/native.wav
+          python3 web/test/compare.py web-test/multi/web-render.f32 web-test/multi/native.wav
       - name: A synth's own page (examples/reed), compared with native
         run: |
           node web/test/page-test.cjs build-web/web/reed.html web-test/reed

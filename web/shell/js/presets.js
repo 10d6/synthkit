@@ -76,6 +76,34 @@ class PresetBar {
     }
     this.build();
     this.model.onAny(() => this.changed());
+    // A multi (API.md §5b): the bar shows the selected part's sound, and each
+    // part keeps its own preset and "changed" state.
+    this.currents = {};
+    this.shownPart = this.model.part;
+    this.model.onPart((p) => this.partChanged(p));
+  }
+
+  partChanged(p) {
+    if (p === this.shownPart) return;
+    this.currents[this.shownPart] = this.current;
+    this.shownPart = p;
+    this.current = this.currents[p] || this.currentFor(this.model.savePatch());
+    this.refresh();
+  }
+  // What the bar says for a patch we didn't load from it: the factory preset
+  // with the same name and category, else the sound itself.
+  currentFor(patch) {
+    const name = patch && patch.name;
+    const factory = this.find({ kind: "factory", name, category: catOf(patch) });
+    return factory ? this.ref(factory) : { kind: "session", name: name || "Untitled" };
+  }
+  // A whole multi was loaded: every part starts afresh.
+  multiLoaded() {
+    this.currents = {};
+    this.shownPart = this.model.part;
+    this.current = this.currentFor(this.model.savePatch());
+    this.refresh();
+    this.saveSession();
   }
 
   build() {
@@ -208,7 +236,14 @@ class PresetBar {
     // In the plugin the DAW project keeps the sound; the plugin just notes
     // which preset is showing.
     if (skHost) { this.app.audio.send({ t: "meta", ui: { current: this.current, dirty: this.model.dirty } }); return; }
-    skStore.set(this.key("session"), { patch: this.model.savePatch(), current: this.current, dirty: this.model.dirty });
+    const s = { patch: this.model.savePatch(), current: this.current, dirty: this.model.dirty };
+    if (this.model.multi) {
+      s.multi = this.model.multiSave();
+      s.part = this.model.part;
+      s.currents = { ...this.currents, [this.shownPart]: this.current };
+      s.dirtyParts = this.model.dirtyParts.map(Boolean);
+    }
+    skStore.set(this.key("session"), s);
   }
 
   // The plugin's sound (on opening the window, or when the DAW loads a project).
@@ -229,6 +264,15 @@ class PresetBar {
   restoreSession() {
     if (skHost) return this.applyHostState(skHost.state.patch, skHost.state.ui);
     const s = skStore.get(this.key("session"), null);
+    if (s && s.multi && this.model.multi && this.model.loadMulti(s.multi).ok) {
+      this.model.selectPart(s.part || 0);
+      this.currents = s.currents || {};
+      this.shownPart = this.model.part;
+      this.current = this.currents[this.shownPart] || s.current || this.currentFor(this.model.savePatch());
+      this.model.dirtyParts = s.dirtyParts || [];
+      this.refresh();
+      return true;
+    }
     if (s && s.patch && this.model.loadPatch(s.patch).ok) {
       this.current = s.current || { kind: "session", name: s.patch.name || "Untitled" };
       this.model.dirty = !!s.dirty;

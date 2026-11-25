@@ -1045,10 +1045,28 @@ or a patch problem.
 (§10) loads each one, checks it round-trips, plays every zone, and plays
 across the keyboard to see that it ends in silence.
 
-**Not here yet.** Multis are the kit's core and the render tool. The page and
-the plugin don't play one yet (no parts strip, zone editor, host parameters or
-plugin state), and program change, round-robin, keyswitches, per-part outputs
-and a shared effects bus aren't there either.
+**In the page.** A synth with `features.multi` gets the *multi bar* between
+the header and the panels: a tab per part (its patch's name, with mute and
+solo), *+ Part*, the selected part's level and balance, and a *Zones* editor.
+Everything else on the page (panels, the preset bar, modulation, the arp,
+undo) edits **the selected part**, so a synth's panels need no change for
+multis. In the editor, zones are rectangles on a map of keys (across) and
+velocity (up), coloured by part, with their fades shaded; drag one to move
+it, drag an edge to resize, or use the numbers below (key and velocity
+ranges, fades, curve, MIDI channel, transpose, gain). Arrow keys nudge the
+focused zone (Shift resizes, Alt steps by an octave). *Set up…* arranges the
+parts as layers, a split, velocity layers or one MIDI channel each, in one
+undoable step. The *Multi* menu loads factory multis (`multis/*.json`, built
+into the page), your own (kept in this browser, like presets), or a file, and
+exports one; *One part* goes back to a single part keeping the sound being
+edited. The session restores the multi, its selected part and each part's
+preset. A synth's own page (§9a) mounts the bar with
+`sk.mount(el, "multi")`, and `sk.part` / `sk.onPart(fn)` / `sk.selectPart(i)`
+say which part its own controls are editing. Plugins don't show it yet.
+
+**Not here yet.** The plugin (host parameters for each part, saved state) and
+program change, round-robin, keyswitches, per-part outputs and a shared
+effects bus.
 
 ## 6. Modulation
 
@@ -1639,6 +1657,7 @@ export function mount(sk, root) {
   | `keyboard` | the on-screen keyboard, wheels, pedals and knobs; computer keys play while it's on the page (`typing: false` to stop that). Its bar also takes the tempo and MIDI controls unless the page placed them (`tempo: false`, `midi: false`). `controllers: false` leaves out the pedals and knobs, for a page with controls of its own (the reed example has treadles). |
   | `midi`, `tempo`, `output`, `panic`, `theme` | the Connect MIDI control, tempo controls (a readout in the plugin; `space: false` if the page uses Space itself), scope and level, Stop all sound, light/dark switch |
   | `undo` | the undo and redo buttons (§9). Ctrl/⌘+Z works on every page, mounted or not |
+  | `multi` | the multi bar: parts, zones and saved multis (§5b); nothing for a synth without `features.multi` |
   | `hostbar` | the host bar (below), here instead of at the top of the page |
   | `panels` | panels for a whole layout (`{ sections: [...] }` as in layout.json; default: `ui/layout.json`) |
   | `section` | one panel, from one layout section (`{ title, controls }` or `{ kit: "env1" }`, `"modMatrix"`, `"shape1"`, …); without its reset button, which comes with `panels` |

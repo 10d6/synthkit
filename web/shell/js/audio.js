@@ -45,8 +45,11 @@ class Audio {
         outputChannelCount: [2],
         processorOptions: {
           wasm: this.wasm.slice().buffer,
-          patch: JSON.stringify(model.savePatch()),
-          custom: model.customSnapshot(),
+          // A multi carries every part's patch; otherwise the one patch.
+          patch: model.multi ? undefined : JSON.stringify(model.savePatch()),
+          custom: model.multi ? undefined : model.customSnapshot(),
+          multi: model.multi ? JSON.stringify(model.multiSave()) : undefined,
+          part: model.part,
           transport,
         },
       });
@@ -76,20 +79,24 @@ class Audio {
   midi(bytes) { this.send({ t: "midi", d: bytes }); }
 
   // Sink interface used by Model.
-  sink() {
+  // part(): which part an edit is for (a multi's selected part).
+  sink(part = () => 0) {
     return {
-      param: (i, v) => this.send({ t: "param", i, v }),
-      patch: (json) => this.send({ t: "patch", json }),
-      custom: (id, json) => this.send({ t: "custom", id, json }),
-      mod: (json) => this.send({ t: "mod", json }),
-      shapes: (json) => this.send({ t: "shapes", json }),
-      message: (i, v) => this.send({ t: "msg", i, v }),
+      param: (i, v) => this.send({ t: "param", i, v, p: part() }),
+      patch: (json) => this.send({ t: "patch", json, p: part() }),
+      custom: (id, json) => this.send({ t: "custom", id, json, p: part() }),
+      mod: (json) => this.send({ t: "mod", json, p: part() }),
+      shapes: (json) => this.send({ t: "shapes", json, p: part() }),
+      message: (i, v) => this.send({ t: "msg", i, v, p: part() }),
+      select: (p) => this.send({ t: "select", p }),
+      layout: (json) => this.send({ t: "layout", json }),
+      multi: (json) => this.send({ t: "multi", json }),
     };
   }
 
   // Render offline through the same worklet (used by tests, and handy for
   // bouncing a phrase). events: [{t: seconds, d: [status, d1, d2]}].
-  static async renderOffline(wasmBytes, { patch, custom, events = [], seconds = 2, sampleRate = 48000, transport }) {
+  static async renderOffline(wasmBytes, { patch, custom, multi, events = [], seconds = 2, sampleRate = 48000, transport }) {
     const len = Math.ceil(seconds * sampleRate);
     const ctx = new OfflineAudioContext(2, len, sampleRate);
     await ctx.audioWorklet.addModule(skWorkletUrl());
@@ -101,7 +108,7 @@ class Audio {
       numberOfInputs: 0,
       numberOfOutputs: 1,
       outputChannelCount: [2],
-      processorOptions: { wasm: wasmBytes.slice().buffer, patch, custom, schedule, transport, meters: false },
+      processorOptions: { wasm: wasmBytes.slice().buffer, patch, custom, multi, schedule, transport, meters: false },
     });
     node.connect(ctx.destination);
     const buf = await ctx.startRendering();

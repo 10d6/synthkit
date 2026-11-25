@@ -75,7 +75,10 @@ class SkHistory {
   // kind: "p" (parameter i), "mod", "shapes", "custom" (id), "tempo", "patch".
   record(kind, from, to, extra = {}) {
     if (this.applying) return;
-    const key = kind === "p" ? "p:" + extra.i : kind === "custom" ? "custom:" + extra.id : kind;
+    // What changed belongs to the part that was selected (undo selects it again).
+    if (kind !== "layout" && kind !== "multi" && extra.part === undefined) extra = { ...extra, part: this.m.part };
+    const at = extra.part === undefined ? "" : extra.part + ":";
+    const key = at + (kind === "p" ? "p:" + extra.i : kind === "custom" ? "custom:" + extra.id : kind);
     const grouped = this.gestures.size > 0 || this.batchDepth > 0;
     const now = performance.now();
     const top = this.undoStack[this.undoStack.length - 1];
@@ -106,6 +109,8 @@ class SkHistory {
     if (kind === "custom") return extra.id === "sk.arp" || extra.id === "sk.seq" ? "pattern" : extra.id;
     if (kind === "tempo") return "tempo";
     if (kind === "patch") return "preset change";
+    if (kind === "layout") return "zones";
+    if (kind === "multi") return "multi change";
     return kind;
   }
 
@@ -142,7 +147,10 @@ class SkHistory {
     try {
       for (const c of list) {
         const v = c[side];
-        if (c.kind === "p") this.m.set(c.i, v, "history");
+        if (c.part !== undefined && c.part !== this.m.part) this.m.selectPart(c.part);
+        if (c.kind === "layout") this.m.setLayout(v);
+        else if (c.kind === "multi") this.m.loadMulti(v);
+        else if (c.kind === "p") this.m.set(c.i, v, "history");
         else if (c.kind === "mod") this.m.setRoutes(v);
         else if (c.kind === "shapes") this.m.setShapes(v);
         else if (c.kind === "custom") this.m.setCustom(c.id, v);

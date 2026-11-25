@@ -89,6 +89,13 @@ class Multi {
   // Presets named in a multi's parts ("preset": "pads/warm") come from here.
   void setPresetResolver(PresetResolver r);
 
+  // Just the layout as JSON, `{"parts":[{level, pan, mute, solo}…], "zones":[…]}`
+  // in the form save() uses, for a page or plugin that edits it. setLayoutJson
+  // is setLayout() from that form; fields left out take their defaults, and a
+  // missing "zones" is one zone per part (every part plays every key).
+  Json layoutJson() const;
+  std::vector<std::string> setLayoutJson(const Json& layout);
+
   // The multi as JSON ("format": "sk.multi"): the layout and every part's
   // patch (as the part is right now). Loading sets all the patches and the
   // layout; parts the multi doesn't use go back to the synth's default.

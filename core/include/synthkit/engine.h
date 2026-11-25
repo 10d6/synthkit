@@ -126,6 +126,7 @@ struct EmbeddedPreset {
 };
 const char* embeddedSynthJson();
 const EmbeddedPreset* embeddedPresets(int& count);
+const EmbeddedPreset* embeddedMultis(int& count);   // multis/*.json (API.md §5b)
 std::unique_ptr<Engine> makeEngine();  // createSynth + synth.json
 
 // The arpeggiator's pattern generator (API.md §4b), for pages: settings

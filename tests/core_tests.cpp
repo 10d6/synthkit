@@ -2632,6 +2632,13 @@ TEST(multi_save_and_load) {
   CHECK(b.m->save("Split") == saved);
   CHECK(b.m->part(0).patchMeta().name == "Bass");
 
+  // The layout alone, as a page or plugin edits it.
+  Json lj = a.m->layoutJson();
+  MultiRig c(3);
+  CHECK(c.m->setLayoutJson(lj).empty() && c.m->layoutJson() == lj);
+  CHECK(c.m->layout().zones.size() == 2 && c.m->layout().part[1].mute);
+  CHECK(c.m->setLayoutJson(Json::parse(R"({"parts":[{},{}]})")).empty() && c.m->layout().zones.size() == 2);   // no zones: one per part
+
   CHECK(!b.m->load(Json::parse(R"({"format":"sk.multi","synth":"other","parts":[{}]})")).ok);
   CHECK(!b.m->load(Json::parse(R"({"format":"sk.patch","parts":[{}]})")).ok);
   CHECK(!b.m->load(Json::parse(R"({"parts":[]})")).ok);

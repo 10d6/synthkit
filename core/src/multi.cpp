@@ -416,6 +416,77 @@ EngineStats Multi::takeStats() {
 
 // ------------------------------------------------------------ saving and loading
 
+namespace {
+
+Json zoneToJson(const Zone& z) {
+  Json o = Json::object();
+  o["part"] = z.part;
+  o["key"] = std::vector<int>{z.keyLo, z.keyHi};
+  o["vel"] = std::vector<int>{z.velLo, z.velHi};
+  if (z.keyFadeIn || z.keyFadeOut) o["keyFade"] = std::vector<int>{z.keyFadeIn, z.keyFadeOut};
+  if (z.velFadeIn || z.velFadeOut) o["velFade"] = std::vector<int>{z.velFadeIn, z.velFadeOut};
+  if (z.linearFade) o["curve"] = "linear";
+  if (z.channel >= 0) o["channel"] = z.channel;
+  if (z.transpose) o["transpose"] = z.transpose;
+  if (z.gainDb != 0) o["gain"] = z.gainDb;
+  return o;
+}
+
+Zone zoneFromJson(const Json& jz) {
+  Zone z;
+  z.part = static_cast<int>(jz["part"].number(0));
+  if (jz["key"].isArray()) { z.keyLo = static_cast<int>(jz["key"][0].number(0)); z.keyHi = static_cast<int>(jz["key"][1].number(127)); }
+  if (jz["vel"].isArray()) { z.velLo = static_cast<int>(jz["vel"][0].number(1)); z.velHi = static_cast<int>(jz["vel"][1].number(127)); }
+  if (jz["keyFade"].isArray()) { z.keyFadeIn = static_cast<int>(jz["keyFade"][0].number(0)); z.keyFadeOut = static_cast<int>(jz["keyFade"][1].number(0)); }
+  if (jz["velFade"].isArray()) { z.velFadeIn = static_cast<int>(jz["velFade"][0].number(0)); z.velFadeOut = static_cast<int>(jz["velFade"][1].number(0)); }
+  z.linearFade = jz["curve"].string() == "linear";
+  z.channel = jz["channel"].isNumber() ? static_cast<int>(jz["channel"].number(-1)) : -1;
+  z.transpose = static_cast<int>(jz["transpose"].number(0));
+  z.gainDb = static_cast<float>(jz["gain"].number(0));
+  return z;
+}
+
+}  // namespace
+
+Json Multi::layoutJson() const {
+  const MultiLayout& l = impl_->layout;
+  Json j = Json::object();
+  Json parts = Json::array();
+  for (int p = 0; p < l.parts; ++p) {
+    const PartSettings& s = l.part[static_cast<std::size_t>(p)];
+    Json o = Json::object();
+    o["level"] = s.levelDb;
+    o["pan"] = s.pan;
+    if (s.mute) o["mute"] = true;
+    if (s.solo) o["solo"] = true;
+    parts.push(o);
+  }
+  j["parts"] = parts;
+  Json zones = Json::array();
+  for (const Zone& z : l.zones) zones.push(zoneToJson(z));
+  j["zones"] = zones;
+  return j;
+}
+
+std::vector<std::string> Multi::setLayoutJson(const Json& in) {
+  MultiLayout l;
+  l.parts = in["parts"].isArray() ? static_cast<int>(in["parts"].size()) : 1;
+  for (int p = 0; p < std::min(l.parts, kMaxParts); ++p) {
+    const Json& jp = in["parts"][p];
+    PartSettings& s = l.part[static_cast<std::size_t>(p)];
+    s.levelDb = static_cast<float>(jp["level"].number(0));
+    s.pan = static_cast<float>(jp["pan"].number(0));
+    s.mute = jp["mute"].boolean(false);
+    s.solo = jp["solo"].boolean(false);
+  }
+  if (in["zones"].isArray()) {
+    for (auto& jz : in["zones"].items()) l.zones.push_back(zoneFromJson(jz));
+  } else {
+    for (int p = 0; p < std::clamp(l.parts, 1, kMaxParts); ++p) { Zone z; z.part = p; l.zones.push_back(z); }   // no zones: every part plays every key
+  }
+  return setLayout(l);
+}
+
 Json Multi::save(const std::string& name) const {
   const Impl& m = *impl_;
   Json j = Json::object();
@@ -423,33 +494,15 @@ Json Multi::save(const std::string& name) const {
   j["version"] = 1;
   j["synth"] = m.info.id;
   if (!name.empty()) j["name"] = name;
+  Json lay = layoutJson();
   Json parts = Json::array();
   for (int p = 0; p < m.layout.parts; ++p) {
-    const PartSettings& s = m.layout.part[static_cast<std::size_t>(p)];
-    Json o = Json::object();
-    o["level"] = s.levelDb;
-    o["pan"] = s.pan;
-    if (s.mute) o["mute"] = true;
-    if (s.solo) o["solo"] = true;
+    Json o = lay["parts"][p];
     o["patch"] = m.engines[static_cast<std::size_t>(p)]->savePatch();
     parts.push(o);
   }
   j["parts"] = parts;
-  Json zones = Json::array();
-  for (const Zone& z : m.layout.zones) {
-    Json o = Json::object();
-    o["part"] = z.part;
-    o["key"] = std::vector<int>{z.keyLo, z.keyHi};
-    o["vel"] = std::vector<int>{z.velLo, z.velHi};
-    if (z.keyFadeIn || z.keyFadeOut) o["keyFade"] = std::vector<int>{z.keyFadeIn, z.keyFadeOut};
-    if (z.velFadeIn || z.velFadeOut) o["velFade"] = std::vector<int>{z.velFadeIn, z.velFadeOut};
-    if (z.linearFade) o["curve"] = "linear";
-    if (z.channel >= 0) o["channel"] = z.channel;
-    if (z.transpose) o["transpose"] = z.transpose;
-    if (z.gainDb != 0) o["gain"] = z.gainDb;
-    zones.push(o);
-  }
-  j["zones"] = zones;
+  j["zones"] = lay["zones"];
   return j;
 }
 
@@ -470,21 +523,15 @@ LoadResult Multi::load(const Json& in) {
   }
   if (!in["parts"].isArray() || in["parts"].size() == 0) { r.ok = false; r.error = "multi has no parts"; return r; }
 
-  MultiLayout l;
-  l.parts = std::min(static_cast<int>(in["parts"].size()), maxParts());
-  if (static_cast<int>(in["parts"].size()) > l.parts)
-    r.warnings.push_back("only the first " + std::to_string(l.parts) + " parts were loaded");
+  const int used = std::min(static_cast<int>(in["parts"].size()), maxParts());
+  if (static_cast<int>(in["parts"].size()) > used)
+    r.warnings.push_back("only the first " + std::to_string(used) + " parts were loaded");
   Json init = Json::object();
   init["name"] = "Init";
   for (int p = 0; p < maxParts(); ++p) {
     Engine& e = *m.engines[static_cast<std::size_t>(p)];
-    if (p >= l.parts) { e.loadPatch(init); continue; }
+    if (p >= used) { e.loadPatch(init); continue; }
     const Json& jp = in["parts"][p];
-    PartSettings& s = l.part[static_cast<std::size_t>(p)];
-    s.levelDb = static_cast<float>(jp["level"].number(0));
-    s.pan = static_cast<float>(jp["pan"].number(0));
-    s.mute = jp["mute"].boolean(false);
-    s.solo = jp["solo"].boolean(false);
     Json patch;
     if (jp["patch"].isObject()) {
       patch = jp["patch"];
@@ -505,24 +552,7 @@ LoadResult Multi::load(const Json& in) {
   if (m.engines[0]->patchTempo(bpm, num, den))
     for (int p = 1; p < maxParts(); ++p) m.engines[static_cast<std::size_t>(p)]->setPatchTempo(bpm, num, den);
 
-  if (in["zones"].isArray()) {
-    for (auto& jz : in["zones"].items()) {
-      Zone z;
-      z.part = static_cast<int>(jz["part"].number(0));
-      if (jz["key"].isArray()) { z.keyLo = static_cast<int>(jz["key"][0].number(0)); z.keyHi = static_cast<int>(jz["key"][1].number(127)); }
-      if (jz["vel"].isArray()) { z.velLo = static_cast<int>(jz["vel"][0].number(1)); z.velHi = static_cast<int>(jz["vel"][1].number(127)); }
-      if (jz["keyFade"].isArray()) { z.keyFadeIn = static_cast<int>(jz["keyFade"][0].number(0)); z.keyFadeOut = static_cast<int>(jz["keyFade"][1].number(0)); }
-      if (jz["velFade"].isArray()) { z.velFadeIn = static_cast<int>(jz["velFade"][0].number(0)); z.velFadeOut = static_cast<int>(jz["velFade"][1].number(0)); }
-      z.linearFade = jz["curve"].string() == "linear";
-      z.channel = jz["channel"].isNumber() ? static_cast<int>(jz["channel"].number(-1)) : -1;
-      z.transpose = static_cast<int>(jz["transpose"].number(0));
-      z.gainDb = static_cast<float>(jz["gain"].number(0));
-      l.zones.push_back(z);
-    }
-  } else {
-    for (int p = 0; p < l.parts; ++p) { Zone z; z.part = p; l.zones.push_back(z); }   // no zones: every part plays every key
-  }
-  for (auto& w : setLayout(l)) r.warnings.push_back(w);
+  for (auto& w : setLayoutJson(in)) r.warnings.push_back(w);
   return r;
 }
 
