@@ -2564,6 +2564,48 @@ TEST(multi_held_notes_follow_their_note_on) {
   p.run(2000, {{0, off(60)}});                                         // a stray off is harmless
 }
 
+TEST(multi_scale_snaps_to_nearest) {
+  const int major = multiScaleIndex("Major"), penta = multiScaleIndex("Major Pentatonic");
+  CHECK(multiScaleIndex("Chromatic") == 0 && major > 0 && penta > 0 && multiScaleIndex("Nope") == -1);
+  CHECK(multiScaleSnap(61, 0, 0) == 61);                       // Chromatic: every note
+  CHECK(multiScaleSnap(60, major, 0) == 60);                   // in the scale: unchanged
+  CHECK(multiScaleSnap(61, major, 0) == 60);                   // C#: C and D tie, so down
+  CHECK(multiScaleSnap(66, major, 0) == 65);                   // F#: F and G tie, so down
+  CHECK(multiScaleSnap(71, penta, 0) == 72);                   // B in C pentatonic: C (1) is nearer than A (2)
+  CHECK(multiScaleSnap(65, penta, 0) == 64);                   // F: E (1) beats G (2)
+  CHECK(multiScaleSnap(62, penta, 2) == 62 && multiScaleSnap(63, penta, 2) == 62);   // D pentatonic: D E F# A B
+  CHECK(multiScaleSnap(127, major, 1) == 127 || multiScaleSnap(127, major, 1) == 126);
+  CHECK(multiScaleSnap(127, penta, 0) <= 127 && multiScaleSnap(0, penta, 1) >= 0);   // stays in MIDI range
+
+  // A part in a scale: a key out of it plays the snapped note, the off finds it,
+  // and two keys landing on one note keep it until both are up.
+  MultiRig r(1);
+  MultiLayout l;
+  l.parts = 1;
+  l.part[0].scale = major;
+  l.zones = {zone(0, 0, 127)};
+  r.m->setLayout(l);
+  r.run(2000, {{0, on(61)}});
+  CHECK(r.active(0) == 1);
+  r.run(2000, {{0, on(60)}});                                  // C as well: retriggers the same note
+  r.run(96000, {{0, off(61)}});
+  CHECK(r.active(0) == 1);                                     // C still held
+  r.run(96000, {{0, off(60)}});
+  r.run(96000);
+  CHECK(r.active(0) == 0);
+
+  // Saved by name, with the key; an unknown name warns and plays every note.
+  r.m->setLayout(l);
+  Json j = r.m->layoutJson();
+  CHECK(j["parts"][0]["scale"].string() == "Major" && j["parts"][0]["scaleKey"].number(-1) == 0);
+  j["parts"][0]["scaleKey"] = 9;
+  CHECK(r.m->setLayoutJson(j).empty() && r.m->layout().part[0].scaleKey == 9);
+  j["parts"][0]["scale"] = "Martian";
+  auto w = r.m->setLayoutJson(j);
+  CHECK(w.size() == 1 && r.m->layout().part[0].scale == 0);
+  CHECK(!r.m->layoutJson()["parts"][0].contains("scale"));    // Chromatic isn't written
+}
+
 TEST(multi_mix_level_pan_mute_solo) {
   auto level = [](std::function<void(MultiLayout&)> edit) {
     MultiRig r(2);

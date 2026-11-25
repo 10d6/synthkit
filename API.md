@@ -959,6 +959,14 @@ patch, set parameters, custom state). Voices aren't shared, so a part's
 `voices` is its own limit and a busy part never steals from another. The
 parts in use are `layout().parts`; the others are idle and cost almost
 nothing. Each part has a level (dB), a balance pan (−1…1) and mute and solo.
+A part can also be kept in a scale (`PartSettings::scale`, `scaleKey`): each
+note it gets, after its zone's transpose, moves to the nearest note of the
+scale, ties going down (in C major, C♯ plays C and F♯ plays F). The scales
+are the sequencer's (§4b: `sk::multiScaleName(i)`, 0 is Chromatic, which
+leaves notes alone and is the default); `sk::multiScaleSnap()` computes it.
+When two keys land on one note, the second retriggers it and it stops with
+the last key released, so the part sees a single note. Zones still match the
+key played, not the note it moves to.
 The mix goes through one limiter, as an engine's own does; the parts' limiters
 are off. All parts follow the same transport.
 
@@ -1024,7 +1032,8 @@ to the synth's default patch; tempo follows part 1's patch).
   "format": "sk.multi", "version": 1, "synth": "my-synth", "name": "Bass and pad",
   "parts": [
     { "preset": "Bass/mono-bass", "level": 0, "pan": 0 },
-    { "patch": { "…": "a full patch (§5)" }, "level": -3, "pan": 0.2, "mute": false, "solo": false }
+    { "patch": { "…": "a full patch (§5)" }, "level": -3, "pan": 0.2, "mute": false, "solo": false,
+      "scale": "Major Pentatonic", "scaleKey": 2 }
   ],
   "zones": [
     { "part": 0, "key": [0, 62], "keyFade": [0, 4] },
@@ -1036,7 +1045,9 @@ to the synth's default patch; tempo follows part 1's patch).
 
 A part is a `patch` (what `save()` writes) or a `preset` named as the factory
 presets are (`"Bass/mono-bass"`, the path under `presets/` without `.json`)
-for a hand-written multi. Fields left out take the defaults above; a multi
+for a hand-written multi. `scale` is the scale's name and `scaleKey` its key
+(0 = C … 11 = B); a part without `scale` plays every note, and an unknown
+name warns and does the same. Fields left out take the defaults above; a multi
 with no `zones` plays every part from every key. `load()` fails for another
 synth's multi or a file that isn't a multi, and warns about a missing preset
 or a patch problem.
@@ -1045,24 +1056,38 @@ or a patch problem.
 (§10) loads each one, checks it round-trips, plays every zone, and plays
 across the keyboard to see that it ends in silence.
 
-**In the page.** A synth with `features.multi` gets the *multi bar* between
-the header and the panels: a tab per part (its patch's name, with mute and
-solo), *+ Part*, the selected part's level and balance, and a *Zones* editor.
-Everything else on the page (panels, the preset bar, modulation, the arp,
-undo) edits **the selected part**, so a synth's panels need no change for
-multis. In the editor, zones are rectangles on a map of keys (across) and
-velocity (up), coloured by part, with their fades shaded; drag one to move
-it, drag an edge to resize, or use the numbers below (key and velocity
-ranges, fades, curve, MIDI channel, transpose, gain). Arrow keys nudge the
-focused zone (Shift resizes, Alt steps by an octave). *Set up…* arranges the
-parts as layers, a split, velocity layers or one MIDI channel each, in one
-undoable step. The *Multi* menu loads factory multis (`multis/*.json`, built
-into the page), your own (kept in this browser, like presets), or a file, and
-exports one; *One part* goes back to a single part keeping the sound being
-edited. The session restores the multi, its selected part and each part's
-preset. A synth's own page (§9a) mounts the bar with
-`sk.mount(el, "multi")`, and `sk.part` / `sk.onPart(fn)` / `sk.selectPart(i)`
-say which part its own controls are editing.
+**In the page.** A synth with `features.multi` gets the *sound bar* at the
+top in place of the preset bar. It picks **whole sounds**: the presets, in
+their categories, and the multis, in a *Multis* category (factory ones from
+`multis/*.json`, built into the page, then yours, kept in this browser like
+presets). Picking a preset gives one part playing it across the keyboard;
+picking a multi loads every part and the zones; either is one undo step. A
+small *multi* tag marks a multi. *Save* keeps what you have: one plain part
+(every key and velocity, 0 dB, centred, no scale) saves as a preset, anything
+more as a multi. *More* has Save as new, Rename, Delete, Category (presets),
+Export, Import (a preset or a multi file) and Start from Init.
+
+*Layers and splits*, beside the *multi* tag, opens the *multi bar* under the
+header (open, the button and the bar share an accent, like a tab and its page): a tab per part (its patch's name, with mute, solo and
+× to remove it; the parts after it move down a place), *+ Part*, and the
+selected part's row: its patch (the kit's preset bar, which loads, saves and
+steps through presets for that part only), level, balance, scale and key.
+Under that is the zone editor. Closed, the bar shows just the part tabs when
+there's more than one part, so it's clear which part the panels edit.
+Everything else on the page (panels, modulation, the arp, undo) edits **the
+selected part**, so a synth's panels need no change for multis. In the
+editor, zones are rectangles on a map of keys (across) and velocity (up),
+coloured by part, with their fades shaded; drag one to move it, drag an edge
+to resize, or use the numbers below (key and velocity ranges, fades, curve,
+MIDI channel, transpose, gain). Arrow keys nudge the focused zone (Shift
+resizes, Alt steps by an octave). *Set up…* arranges the parts as layers, a
+split, velocity layers or one MIDI channel each, in one undoable step. The
+session restores the sound, its name, its selected part and each part's
+preset. A synth's own page (§9a) mounts the sound bar with
+`sk.mount(el, "presets")` and the multi bar with `sk.mount(el, "multi")`;
+`sk.presets` works on the selected part's patch, and `sk.part` /
+`sk.onPart(fn)` / `sk.selectPart(i)` say which part its own controls are
+editing. The scales' names are in the page's info (`scales`).
 
 **In the plugin** the window shows the same bar, and a synth with
 `"multi": true` becomes a multi there with nothing to change in it. The host
@@ -1074,7 +1099,10 @@ also has host parameters `mix.p<n>.level` (−60…+12 dB), `.pan`, `.mute` and
 changes the layout (the page follows), and the window changing it moves the
 parameter. Zones, fades and channels are not host parameters; they are saved
 with the project. The project stores a whole multi (see Plugins, below), and
-a project saved before the multi loads into part 1 alone.
+a project saved before the multi loads into part 1 alone. Removing a part in
+the window moves the parts after it down a place, and their host parameters
+with them: automation stays with the place (`p3.…` drives whatever is now
+part 3).
 
 **Not here yet.** Program change, round-robin, keyswitches, per-part outputs and a shared
 effects bus.
@@ -1664,11 +1692,11 @@ export function mount(sk, root) {
 
   | Name | Part |
   |---|---|
-  | `presets` | the preset bar (pick, step, save, rename, delete, import, export) |
+  | `presets` | the preset bar (pick, step, save, rename, delete, import, export); for a synth with `features.multi`, the sound bar (§5b) |
   | `keyboard` | the on-screen keyboard, wheels, pedals and knobs; computer keys play while it's on the page (`typing: false` to stop that). Its bar also takes the tempo and MIDI controls unless the page placed them (`tempo: false`, `midi: false`). `controllers: false` leaves out the pedals and knobs, for a page with controls of its own (the reed example has treadles). |
   | `midi`, `tempo`, `output`, `panic`, `theme` | the Connect MIDI control, tempo controls (a readout in the plugin; `space: false` if the page uses Space itself), scope and level, Stop all sound, light/dark switch |
   | `undo` | the undo and redo buttons (§9). Ctrl/⌘+Z works on every page, mounted or not |
-  | `multi` | the multi bar: parts, zones and saved multis (§5b); nothing for a synth without `features.multi` |
+  | `multi` | the multi bar: parts, each part's patch, mix and scale, and zones (§5b); nothing for a synth without `features.multi` |
   | `hostbar` | the host bar (below), here instead of at the top of the page |
   | `panels` | panels for a whole layout (`{ sections: [...] }` as in layout.json; default: `ui/layout.json`) |
   | `section` | one panel, from one layout section (`{ title, controls }` or `{ kit: "env1" }`, `"modMatrix"`, `"shape1"`, …); without its reset button, which comes with `panels` |

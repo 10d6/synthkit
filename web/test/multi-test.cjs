@@ -1,5 +1,5 @@
-// Headless-Chromium checks for the multi bar (API.md §5b) on a synth with
-// features.multi:
+// Headless-Chromium checks for the sound bar and the multi bar (API.md §5b)
+// on a synth with features.multi:
 //   node web/test/multi-test.cjs <synth.html> <out dir> [multi scenario.json]
 // Parts and their independent state, the zone editor (fields, dragging,
 // keyboard), undo, saved multis, the session, edits reaching the audio
@@ -37,7 +37,32 @@ async function main() {
   // ---- the bar ------------------------------------------------------------------------
   check(await ev(() => window.synthkit.model.multi === true), "the synth is a multi (features.multi)");
   check(await page.locator(".multi .part-tab").count() === 1, "starts as one part");
-  check(await ev(() => window.synthkit.app.multiBar.factory.length) === 3, "factory multis are embedded in the page");
+  check(await ev(() => window.synthkit.app.sound.factoryMultis.length) === 3, "factory multis are embedded in the page");
+  check(await page.locator("header .sound .sound-select").isVisible() && !(await page.locator(".multi").isVisible()),
+    "the top bar picks sounds; the multi drawer is closed with one part");
+  const groups = await ev(() => [...document.querySelectorAll(".sound-select optgroup")].map((g) => g.label));
+  check(groups.includes("Multis") && groups.includes("Pads"), "the sound list has the preset categories and a Multis category", groups);
+
+  // Picking a multi from the top bar loads the whole sound; picking a preset
+  // goes back to one part playing it.
+  await page.selectOption(".sound-select", "m:factory:multis/bass-and-pad.json");
+  let snd = await ev(() => ({ parts: window.synthkit.model.layout().parts.length, tag: !document.querySelector(".sound-tag").hidden,
+    btn: document.querySelector(".sound-multi").textContent, tabs: document.querySelector(".multi").hidden }));
+  check(snd.parts === 2 && snd.tag && snd.btn.startsWith("Layers and splits") && !snd.tabs, "a multi from the top bar: two parts, tagged, part tabs showing", snd);
+  const warm = await ev(() => { const e = window.synthkit.app.sound.entries().find((x) => x.type === "patch" && x.category === "Pads"); return window.synthkit.app.sound.value(e); });
+  await page.selectOption(".sound-select", warm);
+  snd = await ev(() => ({ parts: window.synthkit.model.layout().parts.length, plain: window.synthkit.app.sound.plain(), tag: !document.querySelector(".sound-tag").hidden,
+    shown: document.querySelector(".sound-select").value, hidden: document.querySelector(".multi").hidden, btn: document.querySelector(".sound-multi").textContent }));
+  check(snd.parts === 1 && snd.plain && !snd.tag && snd.shown === warm && snd.hidden && snd.btn.startsWith("Layers and splits"),
+    "a preset from the top bar: one part across the keyboard, no multi editing in sight", snd);
+  await ev(() => window.synthkit.model.history.undo());
+  check(await ev(() => window.synthkit.model.layout().parts.length) === 2, "loading a sound can be undone");
+  await page.selectOption(".sound-select", warm);
+
+  // Open the drawer: the part's patch picker is in it.
+  await page.click(".sound-multi");
+  check(await page.locator(".multi .mix-patch .preset-select").isVisible() && await page.locator(".zmap").isVisible(),
+    "Layers and splits opens the drawer: the part's patch picker and the zones");
 
   // Add a part: it's selected, layered over the keyboard, and has its own sound.
   await page.click(".part-add");
@@ -65,7 +90,6 @@ async function main() {
     "undo goes back to the part a change was made in");
 
   // ---- zone editor -----------------------------------------------------------------------
-  await page.click(".zones-btn");
   check(await page.locator(".zrect").count() === 2, "the zone map shows both zones");
   await page.screenshot({ path: path.join(outDir, "multi-zones.png"), fullPage: true });
 
@@ -140,30 +164,65 @@ async function main() {
   check(sent.some((m) => m.t === "layout"), "a layout edit is sent to the audio thread");
   await page.mouse.click(5, 5);
 
-  // ---- saved multis ----------------------------------------------------------------------------
-  await ev(() => { const b = window.synthkit.app.multiBar; b.nameInput.value = "My split"; b.nameInput.dispatchEvent(new Event("change")); b.saveMulti(); });
-  check(await ev(() => Object.keys(window.synthkit.app.multiBar.user).includes("My split")), "Save keeps the multi in this browser");
-  await ev(() => window.synthkit.app.multiBar.single());
-  check(await ev(() => window.synthkit.model.layout().parts.length) === 1, "One part, keeping the sound being edited");
-  await ev(() => window.synthkit.app.multiBar.load(window.synthkit.app.multiBar.user["My split"]));
+  // ---- remove the selected part ----------------------------------------------------------------
+  await page.click(".part-add");                                                   // a third part
+  await ev(() => window.synthkit.model.set("filter.cutoff", 3210));
+  check(await page.locator(".part .part-remove").count() === 3, "each part's tab has a remove button");
+  await page.click('.part-remove[title="Remove part 2"]');                          // part 3 (selected) stays selected
   lay = await ev(() => window.synthkit.model.layout());
-  check(lay.parts.length === 2, "a saved multi loads back", lay.parts);
-  await page.click(".multi-lib .btn:has-text('Multi')");
-  await page.click(".menu-item:has-text('Bass and pad')");
-  lay = await ev(() => window.synthkit.model.layout());
-  const names = await ev(() => window.synthkit.model.partNames().slice(0, 2).map((p) => p.name));
-  check(lay.parts.length === 2 && lay.zones.length === 2 && names[0] !== names[1], "a factory multi loads both parts' sounds", { names });
+  const moved = await ev(() => ({ part: window.synthkit.model.part, cutoff: window.synthkit.model.get("filter.cutoff") }));
+  check(lay.parts.length === 2 && lay.zones.every((z) => z.part < 2) && moved.part === 1 && Math.abs(moved.cutoff - 3210) < 20,
+    "× on part 2 removes it with no selecting first; part 3 moves down with its sound and zone, still selected", { parts: lay.parts.length, moved });
   await ev(() => window.synthkit.model.history.undo());
-  check(await ev(() => window.synthkit.model.layout().parts.length) === 2 && await ev(() => window.synthkit.model.partNames()[0].name) !== names[0],
-    "loading a multi can be undone");
+  check(await ev(() => window.synthkit.model.layout().parts.length) === 3, "removing a part can be undone");
+  await ev(() => window.synthkit.model.history.redo());
+  await ev(() => window.synthkit.app.multiBar.setOpen(false));
+  check(await page.locator(".part .part-remove").count() === 0, "with the drawer closed the tabs have no remove buttons");
+  await ev(() => window.synthkit.app.multiBar.setOpen(true));
+
+  // ---- a part in a scale -----------------------------------------------------------------------------
+  check(await ev(() => document.querySelector(".mix-scale").value === "Chromatic" && document.querySelector(".mix-key").disabled), "parts start chromatic");
+  await page.selectOption(".mix-scale", "Major Pentatonic");
+  await page.selectOption(".mix-key", "2");
+  lay = await ev(() => window.synthkit.model.layout());
+  const sp = await ev(() => window.synthkit.model.part);
+  check(lay.parts[sp].scale === "Major Pentatonic" && lay.parts[sp].scaleKey === 2, "a scale and key for the selected part", lay.parts[sp]);
+  check(await ev(() => !window.synthkit.app.sound.plain()), "a part in a scale makes the sound a multi");
+  const snapped = await ev(async () => {
+    const sk = window.synthkit;
+    const patch = sk.model.savePatch();
+    const one = (scale) => ({ format: "sk.multi", version: 1, synth: sk.model.info.synth.id, parts: [{ patch, ...(scale ? { scale, scaleKey: 0 } : {}) }] });
+    const play = async (multi, note) => (await sk.renderOffline({ multi: JSON.stringify(multi), seconds: 0.6, events: [{ t: 0, d: [0x90, note, 100] }, { t: 0.4, d: [0x80, note, 64] }] })).left;
+    const a = await play(one("Major"), 61), b = await play(one(null), 60), c = await play(one(null), 61);
+    let dab = 0, dac = 0, e = 0;
+    for (let i = 0; i < a.length; i++) { dab = Math.max(dab, Math.abs(a[i] - b[i])); dac = Math.max(dac, Math.abs(a[i] - c[i])); e = Math.max(e, Math.abs(b[i])); }
+    return { dab, dac, e };
+  });
+  check(snapped.e > 0.01 && snapped.dab < 1e-6 && snapped.dac > 1e-3, "in C major, C♯ plays C (rendered in the worklet)", snapped);
+
+  // ---- saving ----------------------------------------------------------------------------------
+  await ev(() => window.synthkit.app.sound.storeAs("My split"));
+  check(await ev(() => Object.keys(window.synthkit.app.sound.userMultis).includes("My split") && document.querySelector(".sound .preset-dirty").hidden),
+    "Save keeps a multi as one of yours, unchanged since", await ev(() => Object.keys(window.synthkit.app.sound.userMultis)));
+  check(await ev(() => [...document.querySelectorAll(".sound-select optgroup")].some((g) => g.label === "Multis · yours")), "your multis are listed under Multis");
+  await ev(() => window.synthkit.model.set("filter.cutoff", 999));
+  await page.waitForTimeout(100);
+  check(await page.locator(".sound .preset-dirty").isVisible(), "an edit marks the sound changed");
+  await page.selectOption(".sound-select", warm);
+  await ev(() => window.synthkit.model.set("filter.cutoff", 1500));
+  await ev(() => window.synthkit.app.sound.storeAs("My pad"));
+  check(await ev(() => !!window.synthkit.app.presets.user["My pad"] && !window.synthkit.app.sound.userMultis["My pad"]), "one plain part saves as a preset");
+  await page.selectOption(".sound-select", "m:user:My split");
+  check(await ev(() => window.synthkit.model.layout().parts.length) === 2 && await ev(() => window.synthkit.app.sound.shown().name) === "My split", "a saved multi loads back");
 
   // ---- the session ------------------------------------------------------------------------------
-  await ev(() => window.synthkit.app.multiBar.load(window.synthkit.app.multiBar.factory[0].multi));
   await ev(() => window.synthkit.model.selectPart(1));
   await page.waitForTimeout(600);
   await boot();
-  check(await ev(() => window.synthkit.model.layout().parts.length) === 2 && await ev(() => window.synthkit.model.part) === 1,
-    "the multi and the selected part come back after a reload");
+  check(await ev(() => window.synthkit.model.layout().parts.length) === 2 && await ev(() => window.synthkit.model.part) === 1 &&
+    await ev(() => window.synthkit.app.sound.shown().name) === "My split" && await page.locator(".sound .preset-dirty").isHidden(),
+    "the multi, its name and the selected part come back after a reload");
+  await page.screenshot({ path: path.join(outDir, "multi-sound.png"), fullPage: true });
 
   // ---- a split, rendered through the AudioWorklet --------------------------------------------------
   const levels = await ev(async () => {

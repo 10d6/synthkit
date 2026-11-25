@@ -99,19 +99,22 @@ async function main() {
   check(Math.abs((await get("filter.cutoff")) - 3000) < 1 && undoSent && Math.abs(undoSent.v - 3000) < 1,
     "undo goes back past the page's change (not the DAW's) and tells the plugin", `after undo: ${await get("filter.cutoff")}, sent ${JSON.stringify(undoSent)}`);
 
-  // 5. The DAW loads a project (and earlier steps no longer apply).
+  // 5. The DAW loads a project (and earlier steps no longer apply). Basic is a
+  // multi synth (API.md §5b), so the plugin sends a whole multi and the top bar
+  // is the sound bar.
   await clear();
-  await page.evaluate(() => window.__deliver({ t: "state", patch: { synth: "sk-basic", name: "Pluck", params: { "filter.cutoff": 260 } }, ui: {} }));
-  const label5 = await page.evaluate(() => document.querySelector(".preset-select").selectedOptions[0].textContent);
-  check(Math.abs((await get("filter.cutoff")) - 260) < 1 && label5 === "Pluck" && (await sent("patch")).length === 0,
+  await page.evaluate(() => window.__deliver({ t: "state", multi: { format: "sk.multi", version: 1, synth: "sk-basic",
+    parts: [{ patch: { synth: "sk-basic", name: "Pluck", params: { "filter.cutoff": 260 } } }] }, ui: {} }));
+  const label5 = await page.evaluate(() => document.querySelector(".sound-select").selectedOptions[0].textContent);
+  check(Math.abs((await get("filter.cutoff")) - 260) < 1 && label5 === "Pluck" && (await sent("multi")).length === 0,
     "a project load from the DAW shows its sound (factory name recognised)", `after state: cutoff ${await get("filter.cutoff")}, "${label5}", sent ${JSON.stringify((await sent()).map((m) => m.t))}`);
   check(!(await page.evaluate(() => window.synthkit.app.history.canUndo)), "a project load from the DAW starts a fresh undo history", "undo steps survived a project load");
 
-  // 6. Picking a preset sends the patch and notes the preset for the project.
+  // 6. Picking a preset sends the sound (one part playing it) and notes the preset for the project.
   await clear();
-  await page.selectOption(".preset-select", "user:Mine");
-  const p6 = await sent("patch"), m6 = await sent("meta");
-  check(p6.length === 1 && JSON.parse(p6[0].json).params["filter.cutoff"] === 1500, "picking a preset sends its patch to the plugin",
+  await page.selectOption(".sound-select", "p:user:Mine");
+  const p6 = await sent("multi"), m6 = await sent("meta");
+  check(p6.length === 1 && JSON.parse(p6[0].json).parts[0].patch.params["filter.cutoff"] === 1500, "picking a preset sends its sound to the plugin",
     `preset pick sent ${JSON.stringify(p6)}`);
   await page.waitForTimeout(500);   // the session note is debounced
   const meta = (await sent("meta")).pop() || (m6 || []).pop();
@@ -120,13 +123,13 @@ async function main() {
 
   // 7. Saving a preset writes the shared store; another window's save shows up.
   await clear();
-  await page.click('button[title="Save preset"]');
+  await page.click('button[title="Save sound"]');
   const st = await sent("store");
   check(st.some((m) => m.key === "synthkit:sk-basic:presets" && m.value.Mine), "saving writes presets to the plugin's store",
     `save sent ${JSON.stringify(st.map((m) => m.key))}`);
   await page.evaluate(() => window.__deliver({ t: "store", key: "synthkit:sk-basic:presets", value: {
     Mine: { synth: "sk-basic", name: "Mine", params: {} }, "Other window": { synth: "sk-basic", name: "Other window", params: {} } } }));
-  const opts = await page.evaluate(() => [...document.querySelectorAll(".preset-select option")].map((o) => o.textContent));
+  const opts = await page.evaluate(() => [...document.querySelectorAll(".sound-select option")].map((o) => o.textContent));
   check(opts.includes("Other window"), "a preset saved in another plugin window appears", `options ${JSON.stringify(opts)}`);
 
   // 8. On-screen keyboard plays through the plugin.
@@ -159,16 +162,17 @@ async function main() {
 
   // 11. Export and import go through the plugin's file dialogs.
   await clear();
-  await page.click('button[title="More preset actions"]');
+  await page.click('button[title="More sound actions"]');
   await page.click('.menu-item:has-text("Export to file")');
-  await page.click('button[title="More preset actions"]');
+  await page.click('button[title="More sound actions"]');
   await page.click('.menu-item:has-text("Import from file")');
   const ex = await sent("export"), im = await sent("import");
   check(ex.length === 1 && JSON.parse(ex[0].json).synth === "sk-basic" && im.length === 1, "export and import ask the plugin for file dialogs",
     `sent ${JSON.stringify((await sent()).map((m) => m.t))}`);
+  check(im[0].kind === "sound", "the sound bar's import is marked as a sound (a preset or a multi)", `import ${JSON.stringify(im[0])}`);
   await clear();
-  await page.evaluate(() => window.__deliver({ t: "imported", file: "Bass.json", text: JSON.stringify({ synth: "sk-basic", name: "Imported bass", params: { "filter.cutoff": 400 } }) }));
-  const imported = await sent("store"), patch11 = await sent("patch");
+  await page.evaluate(() => window.__deliver({ t: "imported", kind: "sound", file: "Bass.json", text: JSON.stringify({ synth: "sk-basic", name: "Imported bass", params: { "filter.cutoff": 400 } }) }));
+  const imported = await sent("store"), patch11 = await sent("multi");
   check(Math.abs((await get("filter.cutoff")) - 400) < 1 && imported.some((m) => m.value && m.value["Imported bass"]) && patch11.length === 1,
     "an imported file loads, plays and is saved as a preset", `after import: cutoff ${await get("filter.cutoff")}, sent ${JSON.stringify((await sent()).map((m) => m.t))}`);
 
@@ -191,7 +195,7 @@ async function main() {
 
   // 14. A multi in the plugin (API.md §5b): the bar is there, the DAW's multi loads
   // without echo, and part-aware messages carry the part.
-  check(await page.evaluate(() => !!document.querySelector(".multi-bar, .parts")), "the multi bar shows in the plugin", "no multi bar in plugin mode");
+  check(await page.evaluate(() => !!document.querySelector(".multi .parts") && !!document.querySelector("header .sound")), "the sound bar and the multi bar show in the plugin", "no multi bar in plugin mode");
   const factoryMulti = await page.evaluate(() => window.synthkit.model.info.multis.map((m) => m.multi).find((m) => m && m.parts.length >= 2));
   check(!!factoryMulti, "the synth has a multi with two parts to test with", "no two-part factory multi");
   await clear();
@@ -231,16 +235,17 @@ async function main() {
 
   // Multi files go through the plugin's dialogs, and are told apart from patches.
   await clear();
-  await page.evaluate(() => window.synthkit.app.multiBar.exportFile());
+  await page.evaluate(() => window.synthkit.app.sound.exportFile());
   const exm = (await sent("export")).pop();
   check(exm && exm.kind === "multi" && JSON.parse(exm.json).format === "sk.multi", "exporting a multi sends it, marked as a multi", `export ${JSON.stringify(exm && exm.kind)}`);
   await clear();
-  await page.evaluate((mu) => window.__deliver({ t: "imported", kind: "multi", file: "x.multi.json", text: JSON.stringify(mu) }), factoryMulti);
+  await page.evaluate((mu) => window.__deliver({ t: "imported", kind: "sound", file: "x.multi.json", text: JSON.stringify(mu) }), factoryMulti);
   const mm = await sent("multi");
   check(mm.length === 1 && JSON.parse(mm[0].json).format === "sk.multi", "an imported multi loads and goes to the plugin", `sent ${JSON.stringify((await sent()).map((m) => m.t))}`);
   await page.waitForTimeout(500);
   const meta14 = (await sent("meta")).pop();
-  check(meta14 && typeof meta14.ui.part === "number" && meta14.ui.currents && Array.isArray(meta14.ui.dirtyParts), "the plugin is told the part, presets and changes per part",
+  check(meta14 && typeof meta14.ui.part === "number" && meta14.ui.currents && Array.isArray(meta14.ui.dirtyParts) && meta14.ui.sound && meta14.ui.sound.current,
+    "the plugin is told the part, presets and changes per part, and the sound's name",
     `meta ${JSON.stringify(meta14)}`);
 
   await page.screenshot({ path: path.join(outDir, "ui-plugin.png") });

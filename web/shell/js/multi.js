@@ -1,10 +1,13 @@
-// The multi bar (API.md §5b): a strip of parts (each one patch of the synth),
-// the selected part's mix, the zone editor, and saved multis. The rest of the
-// page edits whichever part is selected here.
+// The multi bar (API.md §5b): a drawer under the sound bar with a strip of
+// parts (each one patch of the synth), the selected part's patch, mix and
+// scale, and the zone editor. The sound bar (sound.js) opens it and loads and
+// saves whole sounds. The rest of the page edits whichever part is selected
+// here. Closed, it shows just the part tabs when the sound has more than one.
 
 const SK_PART_HUES = [212, 28, 150, 330, 52, 265, 185, 0];
 const skPartColor = (p, a = 1) => `hsl(${SK_PART_HUES[p % SK_PART_HUES.length]} 62% 56% / ${a})`;
 const skKeyLabel = (n) => skNoteName(n);
+const SK_KEY_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 
 class MultiBar {
   constructor(app) {
@@ -12,14 +15,10 @@ class MultiBar {
     this.model = app.model;
     this.key = (k) => `synthkit:${this.model.info.synth.id}:${k}`;
     this.sel = -1;                                   // the zone selected in the editor
-    this.open = !!skStore.get(this.key("zonesOpen"), false);
-    this.name = "Untitled multi";
-    this.user = skStore.get(this.key("multis"), {});
-    skStore.on(this.key("multis"), () => { this.user = skStore.get(this.key("multis"), {}); });
-    this.factory = (this.model.info.multis || []).filter((m) => m.multi).map((m) => ({
-      name: m.multi.name || m.path.replace(/^multis\//, "").replace(/\.json$/, ""), multi: m.multi, file: m.path,
-    }));
+    this.open = !!skStore.get(this.key("multiOpen"), false);
+    this.scales = this.model.info.scales || ["Chromatic"];
     this.l = this.model.layout();
+    this.openListeners = new Set();
     this.build();
     this.model.onLayout((l) => { this.l = l; this.render(); });
     this.model.onPart(() => this.render());
@@ -34,13 +33,6 @@ class MultiBar {
 
   build() {
     const m = this.model;
-    this.nameInput = h("input", { class: "multi-name", type: "text", value: this.name, "aria-label": "Multi name", spellcheck: "false",
-      onchange: () => { this.name = this.nameInput.value.trim() || "Untitled multi"; this.nameInput.value = this.name; } });
-    this.nameInput.addEventListener("keydown", (e) => e.stopPropagation());
-    this.libBtn = h("button", { type: "button", class: "btn", "aria-haspopup": "menu", onclick: () => this.libMenu() }, "Multi ▾");
-    this.saveBtn = h("button", { type: "button", class: "btn", title: "Keep this multi in this browser", onclick: () => this.saveMulti() }, "Save");
-    this.fileInput = h("input", { type: "file", accept: ".json,application/json", hidden: true, onchange: () => this.importFile() });
-
     this.strip = h("div", { class: "parts", role: "tablist", "aria-label": "Parts" });
     this.strip.addEventListener("keydown", (e) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
@@ -50,7 +42,6 @@ class MultiBar {
       if (t) t.focus();
     });
     this.addBtn = h("button", { type: "button", class: "btn part-add", title: "Add a part (layered over the keyboard)", onclick: () => this.addPart() }, "+ Part");
-    this.zonesBtn = h("button", { type: "button", class: "btn zones-btn", "aria-expanded": String(this.open), onclick: () => this.toggleZones() }, "Zones");
 
     // The selected part's mix.
     this.partLabel = h("span", { class: "mix-part" });
@@ -65,21 +56,49 @@ class MultiBar {
       r.addEventListener("change", () => m.history && m.history.end("mix"));
       r.addEventListener("dblclick", () => { r.value = 0; r.dispatchEvent(new Event("input")); });   // back to 0 dB / centre
     }
-    this.removeBtn = h("button", { type: "button", class: "btn btn-quiet", onclick: () => this.removePart() }, "Remove last part");
+    // Keeping the part in a scale: out-of-scale notes move to the nearest scale note.
+    this.scaleSel = h("select", { class: "mix-scale", "aria-label": "Part scale", title: "Keep this part's notes in a scale (out-of-scale keys play the nearest scale note)",
+      onchange: () => this.edit((l) => {
+        const pt = l.parts[m.part];
+        if (this.scaleSel.value === "Chromatic") { delete pt.scale; delete pt.scaleKey; }
+        else { pt.scale = this.scaleSel.value; pt.scaleKey = pt.scaleKey || 0; }
+      }) });
+    for (const sc of this.scales) this.scaleSel.append(h("option", { value: sc, text: sc }));
+    this.keySel = h("select", { class: "mix-key", "aria-label": "Scale key", title: "The scale's key",
+      onchange: () => this.edit((l) => { l.parts[m.part].scaleKey = Number(this.keySel.value); }) });
+    SK_KEY_NAMES.forEach((n, i) => this.keySel.append(h("option", { value: i, text: n })));
+    // The selected part's patch: the kit's preset bar (presets.js), here rather
+    // than at the top of the page, which picks whole sounds.
+    this.patchSlot = h("div", { class: "mix-patch" });
     this.mix = h("div", { class: "multi-mix" },
-      this.partLabel,
+      this.partLabel, this.patchSlot,
       h("label", { class: "mix-field" }, h("span", { text: "Level" }), this.level, this.levelOut),
       h("label", { class: "mix-field" }, h("span", { text: "Balance" }), this.pan, this.panOut),
-      this.removeBtn);
+      h("label", { class: "mix-field" }, h("span", { text: "Scale" }), this.scaleSel, this.keySel));
 
     this.zones = this.buildZones();
-    this.zones.hidden = !this.open;
 
-    this.root = h("section", { class: "multi", "aria-label": "Multi: parts and zones" },
-      h("div", { class: "multi-head" },
-        h("div", { class: "multi-lib" }, this.nameInput, this.libBtn, this.saveBtn, this.fileInput),
-        this.strip, this.addBtn, this.zonesBtn),
-      this.mix, this.zones);
+    this.head = h("div", { class: "multi-head" }, this.strip, this.addBtn);
+    this.root = h("section", { class: "multi", id: "sk-multi", "aria-label": "Layers and splits: parts and zones" }, this.head, this.mix, this.zones);
+    this.showOpen();
+  }
+
+  // The drawer: open shows everything; closed shows the part tabs only when
+  // there's more than one part (so it's clear which one the knobs edit).
+  setOpen(open) {
+    this.open = !!open;
+    skStore.set(this.key("multiOpen"), this.open);
+    this.showOpen();
+    this.renderParts();   // the tabs' remove buttons come and go with the drawer
+    for (const fn of this.openListeners) fn(this.open);
+  }
+  showOpen() {
+    if (!this.root) return;
+    this.root.hidden = !this.open && this.parts <= 1;
+    this.root.classList.toggle("is-open", this.open);
+    this.addBtn.hidden = !this.open;
+    this.mix.hidden = this.zones.hidden = !this.open;
+    if (this.open && this.app.presets && this.app.presets.root.parentNode !== this.patchSlot) this.patchSlot.append(this.app.presets.root);
   }
 
   buildZones() {
@@ -142,6 +161,7 @@ class MultiBar {
   // ---- showing the state -------------------------------------------------------------
 
   render() {
+    this.showOpen();
     this.renderParts();
     this.renderMix();
     this.renderZones();
@@ -161,7 +181,10 @@ class MultiBar {
         h("button", { type: "button", class: "part-flag" + (pt.mute ? " is-on" : ""), "aria-pressed": String(!!pt.mute), title: `Mute part ${p + 1}`, "aria-label": `Mute part ${p + 1}`,
           onclick: () => this.edit((l) => { l.parts[p].mute = !l.parts[p].mute; }) }, "M"),
         h("button", { type: "button", class: "part-flag" + (pt.solo ? " is-on" : ""), "aria-pressed": String(!!pt.solo), title: `Solo part ${p + 1}`, "aria-label": `Solo part ${p + 1}`,
-          onclick: () => this.edit((l) => { l.parts[p].solo = !l.parts[p].solo; }) }, "S")));
+          onclick: () => this.edit((l) => { l.parts[p].solo = !l.parts[p].solo; }) }, "S"),
+        // Remove, straight from the tab (only in the open drawer, and never the last part).
+        this.open && this.parts > 1 ? h("button", { type: "button", class: "part-flag part-remove", title: `Remove part ${p + 1}`, "aria-label": `Remove part ${p + 1}: ${label}`,
+          onclick: () => this.removePart(p) }, "×") : null));
     }
     this.addBtn.disabled = this.parts >= m.maxParts;
   }
@@ -170,12 +193,15 @@ class MultiBar {
     const p = this.model.part, pt = this.l.parts[p] || {};
     this.mix.style.setProperty("--part", skPartColor(p));
     this.partLabel.textContent = `Part ${p + 1}`;
+    const sc = this.scales.includes(pt.scale) ? pt.scale : "Chromatic";
+    this.scaleSel.value = sc;
+    this.keySel.value = String(pt.scaleKey || 0);
+    this.keySel.disabled = sc === "Chromatic";
     if (document.activeElement !== this.level) this.level.value = pt.level || 0;
     if (document.activeElement !== this.pan) this.pan.value = pt.pan || 0;
     const lv = Number(pt.level || 0), pn = Number(pt.pan || 0);
     this.levelOut.textContent = `${lv > 0 ? "+" : ""}${lv.toFixed(1)} dB`;
     this.panOut.textContent = Math.abs(pn) < 0.005 ? "centre" : `${Math.round(Math.abs(pn) * 100)}% ${pn < 0 ? "left" : "right"}`;
-    this.removeBtn.disabled = this.parts <= 1;
   }
 
   renderZones() {
@@ -266,10 +292,32 @@ class MultiBar {
     this.edit((l) => { l.parts.push({ level: 0, pan: 0 }); l.zones.push(this.newZone(part)); });
     m.selectPart(part);
   }
-  removePart() {
-    if (this.parts <= 1) return;
-    const last = this.parts - 1;
-    this.edit((l) => { l.parts.pop(); l.zones = l.zones.filter((z) => z.part < last); });
+  // Removes part i; the ones after it move down a place (in a plugin, host
+  // automation stays with the place, not the sound). The part being edited
+  // stays selected, or the one taking the removed part's place.
+  removePart(i) {
+    const m = this.model, n = this.parts, was = m.part;
+    if (i < 0 || i >= n) return;
+    if (n <= 1) return;
+    const ms = m.multiSave();
+    ms.parts.splice(i, 1);
+    ms.zones = (ms.zones || []).filter((z) => z.part !== i).map((z) => (z.part > i ? { ...z, part: z.part - 1 } : z));
+    const pr = this.app.presets;
+    const currents = { ...pr.currents, [pr.shownPart]: pr.current };
+    const dirty = m.dirtyParts.slice(0, n);
+    const res = m.loadMulti(ms);
+    if (!res.ok) { this.app.toast(`Couldn't remove the part: ${res.error}`, "error"); return; }
+    // Each part keeps its preset name and "changed" mark.
+    dirty.splice(i, 1);
+    m.dirtyParts = dirty;
+    const shifted = {};
+    for (let p = 0; p < n; p++) if (p !== i && currents[p]) shifted[p > i ? p - 1 : p] = currents[p];
+    pr.currents = shifted;
+    m.selectPart(was > i ? was - 1 : Math.min(was, n - 2), { quiet: true });
+    pr.shownPart = m.part;
+    pr.current = shifted[m.part] || pr.currentFor(m.savePatch());
+    pr.refresh();
+    pr.saveSession();
   }
   addZone() {
     const part = this.model.part;
@@ -407,82 +455,5 @@ class MultiBar {
     }, true);
     const el = this.rects.querySelector(`[data-zone="${i}"]`);
     if (el) el.focus();
-  }
-
-  toggleZones() {
-    this.open = !this.open;
-    this.zones.hidden = !this.open;
-    this.zonesBtn.setAttribute("aria-expanded", String(this.open));
-    skStore.set(this.key("zonesOpen"), this.open);
-  }
-
-  // ---- saved multis ----------------------------------------------------------------------------
-
-  libMenu() {
-    const r = this.libBtn.getBoundingClientRect();
-    const items = [{ label: "One part, keeping the sound being edited", run: () => this.single() }];
-    if (this.factory.length) {
-      items.push(null);
-      for (const f of this.factory) items.push({ label: f.name, run: () => this.load(f.multi) });
-    }
-    const mine = Object.keys(this.user).sort((a, b) => a.localeCompare(b));
-    if (mine.length) {
-      items.push(null);
-      for (const n of mine) items.push({ label: `Mine: ${n}`, run: () => this.load(this.user[n]) });
-      items.push(null);
-      for (const n of mine) items.push({ label: `Delete “${n}”`, run: () => this.remove(n) });
-    }
-    items.push(null, { label: "Export as a file", run: () => this.exportFile() }, { label: "Import a file…", run: () => (skHost ? this.app.audio.send({ t: "import", kind: "multi" }) : this.fileInput.click()) });
-    this.app.menu(r.left, r.bottom + 4, items);
-  }
-
-  single() {
-    const patch = this.model.savePatch();
-    this.load({ format: "sk.multi", version: 1, synth: this.model.info.synth.id, name: "Untitled multi", parts: [{ patch }] });
-  }
-  load(multi) {
-    const res = this.model.loadMulti(multi);
-    if (!res.ok) { this.app.toast(`Couldn't load the multi: ${res.error}`, "error"); return false; }
-    for (const w of res.warnings || []) this.app.toast(w, "warn");
-    this.name = multi.name || "Untitled multi";
-    this.nameInput.value = this.name;
-    this.sel = -1;
-    this.l = this.model.layout();
-    this.app.presets.multiLoaded();
-    this.render();
-    return true;
-  }
-  saveMulti() {
-    const name = this.nameInput.value.trim() || "Untitled multi";
-    this.name = name;
-    this.user[name] = this.model.multiSave(name);
-    if (!skStore.set(this.key("multis"), this.user)) this.app.toast("This browser isn't letting the page store multis. Use Export to keep a file instead.", "error");
-    else this.app.toast(`Saved multi "${name}"`);
-  }
-  remove(name) {
-    delete this.user[name];
-    skStore.set(this.key("multis"), this.user);
-    this.app.toast(`Deleted multi "${name}"`);
-  }
-  exportFile() {
-    const name = this.nameInput.value.trim() || "Untitled multi";
-    if (skHost) { this.app.audio.send({ t: "export", kind: "multi", name, json: JSON.stringify(this.model.multiSave(name), null, 2) }); return; }
-    const blob = new Blob([JSON.stringify(this.model.multiSave(name), null, 2)], { type: "application/json" });
-    const a = h("a", { href: URL.createObjectURL(blob), download: `${name.replace(/[^\w\- ]+/g, "")}.multi.json` });
-    document.body.append(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  }
-  importFile() {
-    const f = this.fileInput.files[0];
-    this.fileInput.value = "";
-    if (!f) return;
-    f.text().then((text) => this.importText(text, f.name));
-  }
-  importText(text, fileName) {
-    let j;
-    try { j = JSON.parse(text); } catch { this.app.toast(`${fileName} isn't valid JSON.`, "error"); return; }
-    this.load(j);
   }
 }
