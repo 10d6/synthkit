@@ -48,12 +48,12 @@ async function main() {
   await page.selectOption(".sound-select", "m:factory:multis/bass-and-pad.json");
   let snd = await ev(() => ({ parts: window.synthkit.model.layout().parts.length, tag: !document.querySelector(".sound-tag").hidden,
     btn: document.querySelector(".sound-multi").textContent, tabs: document.querySelector(".multi").hidden }));
-  check(snd.parts === 2 && snd.tag && snd.btn === "2 parts" && !snd.tabs, "a multi from the top bar: two parts, tagged, part tabs showing", snd);
+  check(snd.parts === 2 && snd.tag && snd.btn.startsWith("Layers and splits") && !snd.tabs, "a multi from the top bar: two parts, tagged, part tabs showing", snd);
   const warm = await ev(() => { const e = window.synthkit.app.sound.entries().find((x) => x.type === "patch" && x.category === "Pads"); return window.synthkit.app.sound.value(e); });
   await page.selectOption(".sound-select", warm);
   snd = await ev(() => ({ parts: window.synthkit.model.layout().parts.length, plain: window.synthkit.app.sound.plain(), tag: !document.querySelector(".sound-tag").hidden,
     shown: document.querySelector(".sound-select").value, hidden: document.querySelector(".multi").hidden, btn: document.querySelector(".sound-multi").textContent }));
-  check(snd.parts === 1 && snd.plain && !snd.tag && snd.shown === warm && snd.hidden && snd.btn === "Layers and splits",
+  check(snd.parts === 1 && snd.plain && !snd.tag && snd.shown === warm && snd.hidden && snd.btn.startsWith("Layers and splits"),
     "a preset from the top bar: one part across the keyboard, no multi editing in sight", snd);
   await ev(() => window.synthkit.model.history.undo());
   check(await ev(() => window.synthkit.model.layout().parts.length) === 2, "loading a sound can be undone");

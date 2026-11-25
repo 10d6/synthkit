@@ -121,13 +121,15 @@ class SoundBar {
     const btn = (label, title, fn, cls = "") => h("button", { type: "button", class: "btn " + cls, title, "aria-label": title, onclick: fn }, label);
     this.saveBtn = btn("Save", "Save sound", () => this.save());
     this.moreBtn = btn("More", "More sound actions", (e) => this.moreMenu(e), "btn-quiet");
-    this.multiBtn = h("button", { type: "button", class: "btn sound-multi", "aria-expanded": "false", onclick: () => this.toggleMulti() }, "Layers and splits");
+    // Opens the multi bar under the header; styled as that drawer's tab.
+    this.multiBtn = h("button", { type: "button", class: "btn sound-multi", "aria-expanded": "false", "aria-controls": "sk-multi", title: "Edit this sound's parts and zones",
+      onclick: () => this.toggleMulti() }, h("span", { text: "Layers and splits" }), h("span", { class: "sound-multi-caret", "aria-hidden": "true", text: "▾" }));
     this.root = h("div", { class: "presets sound" },
       this.catSelect,
       btn("‹", "Previous sound", () => this.step(-1), "btn-icon"),
       h("div", { class: "preset-field" }, this.select, this.nameInput, this.dirtyDot),
       btn("›", "Next sound", () => this.step(1), "btn-icon"),
-      this.tag, this.saveBtn, this.moreBtn, this.multiBtn, this.fileInput);
+      this.tag, this.multiBtn, this.saveBtn, this.moreBtn, this.fileInput);
     this.refresh();
   }
 
@@ -159,9 +161,7 @@ class SoundBar {
     this.dirtyDot.hidden = !this.dirty;
     this.tag.hidden = cur.type !== "multi";
 
-    const n = this.model.layout().parts.length;
     const open = !!(this.app.multiBar && this.app.multiBar.open);
-    this.multiBtn.textContent = n > 1 ? `${n} parts` : "Layers and splits";
     this.multiBtn.setAttribute("aria-expanded", String(open));
     this.multiBtn.classList.toggle("is-on", open);
     const state = { ...cur, dirty: this.dirty };

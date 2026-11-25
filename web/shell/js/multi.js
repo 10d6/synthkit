@@ -79,7 +79,7 @@ class MultiBar {
     this.zones = this.buildZones();
 
     this.head = h("div", { class: "multi-head" }, this.strip, this.addBtn);
-    this.root = h("section", { class: "multi", "aria-label": "Multi: parts and zones" }, this.head, this.mix, this.zones);
+    this.root = h("section", { class: "multi", id: "sk-multi", "aria-label": "Layers and splits: parts and zones" }, this.head, this.mix, this.zones);
     this.showOpen();
   }
 
