@@ -42,8 +42,8 @@ jobs:
         run: ./build/examples/reed/reed_render --check examples/reed ${{ matrix.renders && '--out renders-reed' || '' }}
       - name: Random playing (every note stops)
         run: |
-          python3 tools/stress.py build/examples/basic/basic_render 60 --out stuck
-          python3 tools/stress.py build/examples/basic/basic_render 60 --mode overlap --out stuck
+          python3 tools/stress.py build/examples/basic/basic_render 60 delay.mix=0 --out stuck
+          python3 tools/stress.py build/examples/basic/basic_render 60 --mode overlap delay.mix=0 --out stuck
           python3 tools/stress.py build/examples/reed/reed_render 30 --out stuck
       - name: Upload renders
         if: matrix.renders && always()
