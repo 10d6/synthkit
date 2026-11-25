@@ -55,7 +55,7 @@ class App {
     this.keyboard = new Keyboard(this);
     // A synth with features.multi gets the multi bar: parts, zones, saved
     // multis (API.md §5b). The plugin doesn't show it yet.
-    this.multiBar = m.multi && !this.host ? new MultiBar(this) : null;
+    this.multiBar = m.multi ? new MultiBar(this) : null;
     this.buildParts();
 
     this.toasts = h("div", { class: "toasts", role: "status", "aria-live": "polite" });
@@ -165,10 +165,11 @@ class App {
 
   // Messages from the plugin (see host.js).
   hostMessage(m) {
-    if (m.t === "params") { for (const [i, v] of m.changes || []) this.model.applyHost(i, v); }
-    else if (m.t === "state") this.presets.applyHostState(m.patch, m.ui);
+    if (m.t === "params") { for (const [i, v, part] of m.changes || []) this.model.applyHostPart(part || 0, i, v); }
+    else if (m.t === "state") this.presets.applyHostState(m.patch, m.ui, m.multi);
+    else if (m.t === "layout") { this.model.setLayout(typeof m.json === "string" ? JSON.parse(m.json) : m.json, { fromHost: true }); }
     else if (m.t === "store") skStore.external(m.key, m.value);
-    else if (m.t === "imported") this.presets.importText(m.text, m.file);
+    else if (m.t === "imported") { if (m.kind === "multi" && this.multiBar) this.multiBar.importText(m.text, m.file); else this.presets.importText(m.text, m.file); }
   }
 
   sendMidi(bytes) {

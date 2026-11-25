@@ -432,7 +432,7 @@ class MultiBar {
       items.push(null);
       for (const n of mine) items.push({ label: `Delete “${n}”`, run: () => this.remove(n) });
     }
-    items.push(null, { label: "Export as a file", run: () => this.exportFile() }, { label: "Import a file…", run: () => this.fileInput.click() });
+    items.push(null, { label: "Export as a file", run: () => this.exportFile() }, { label: "Import a file…", run: () => (skHost ? this.app.audio.send({ t: "import", kind: "multi" }) : this.fileInput.click()) });
     this.app.menu(r.left, r.bottom + 4, items);
   }
 
@@ -466,6 +466,7 @@ class MultiBar {
   }
   exportFile() {
     const name = this.nameInput.value.trim() || "Untitled multi";
+    if (skHost) { this.app.audio.send({ t: "export", kind: "multi", name, json: JSON.stringify(this.model.multiSave(name), null, 2) }); return; }
     const blob = new Blob([JSON.stringify(this.model.multiSave(name), null, 2)], { type: "application/json" });
     const a = h("a", { href: URL.createObjectURL(blob), download: `${name.replace(/[^\w\- ]+/g, "")}.multi.json` });
     document.body.append(a);
@@ -477,10 +478,11 @@ class MultiBar {
     const f = this.fileInput.files[0];
     this.fileInput.value = "";
     if (!f) return;
-    f.text().then((text) => {
-      let j;
-      try { j = JSON.parse(text); } catch { this.app.toast("That file isn't valid JSON.", "error"); return; }
-      this.load(j);
-    });
+    f.text().then((text) => this.importText(text, f.name));
+  }
+  importText(text, fileName) {
+    let j;
+    try { j = JSON.parse(text); } catch { this.app.toast(`${fileName} isn't valid JSON.`, "error"); return; }
+    this.load(j);
   }
 }

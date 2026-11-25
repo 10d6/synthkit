@@ -189,6 +189,60 @@ async function main() {
   check(await page.evaluate(() => document.querySelector(".clear-note").textContent === "Cleared"),
     "the synth's answer reaches the page", "delay.cleared from the plugin didn't show");
 
+  // 14. A multi in the plugin (API.md §5b): the bar is there, the DAW's multi loads
+  // without echo, and part-aware messages carry the part.
+  check(await page.evaluate(() => !!document.querySelector(".multi-bar, .parts")), "the multi bar shows in the plugin", "no multi bar in plugin mode");
+  const factoryMulti = await page.evaluate(() => window.synthkit.model.info.multis.map((m) => m.multi).find((m) => m && m.parts.length >= 2));
+  check(!!factoryMulti, "the synth has a multi with two parts to test with", "no two-part factory multi");
+  await clear();
+  await page.evaluate((mu) => window.__deliver({ t: "state", multi: mu, ui: { part: 1, currents: {}, dirtyParts: [] } }), factoryMulti);
+  const l14 = await page.evaluate(() => ({ parts: window.synthkit.model.layout().parts.length, part: window.synthkit.model.part }));
+  check(l14.parts === factoryMulti.parts.length && l14.part === 1, "the DAW's multi loads, with the part the window had selected",
+    `after multi state: ${JSON.stringify(l14)}`);
+  check((await sent()).filter((m) => m.t !== "meta" && m.t !== "select").length === 0,
+    "a multi from the DAW isn't echoed back", `sent ${JSON.stringify((await sent()).map((m) => m.t))}`);
+
+  await clear();
+  await page.evaluate(() => window.synthkit.model.set("filter.cutoff", 1234, "ui"));
+  const p14 = (await sent("param")).pop();
+  check(p14 && p14.p === 1, "a knob on part 2 sends its part", `param message ${JSON.stringify(p14)}`);
+  await clear();
+  await page.evaluate(() => window.synthkit.model.selectPart(0));
+  check((await sent("select")).some((m) => m.p === 0), "selecting a part tells the plugin", `sent ${JSON.stringify(await sent())}`);
+
+  // Automation of part 2's knob while part 1 is shown: applied to part 2, not shown on part 1.
+  await clear();
+  const before14 = await get("filter.cutoff");
+  await page.evaluate((i) => window.__deliver({ t: "params", changes: [[i, 4321, 1]] }), idx);
+  check(Math.abs((await get("filter.cutoff")) - before14) < 1e-3, "automation of another part leaves the shown part alone", "part 1's cutoff moved");
+  await page.evaluate(() => window.synthkit.model.selectPart(1));
+  check(Math.abs((await get("filter.cutoff")) - 4321) < 1, "…and the other part got it", `part 2 cutoff ${await get("filter.cutoff")}`);
+  check((await sent("param")).length === 0, "host automation of a part isn't sent back", `sent ${JSON.stringify(await sent("param"))}`);
+
+  // The DAW moves a part's level (mix parameter); the page's layout follows without echo.
+  await clear();
+  await page.evaluate(() => { const l = window.synthkit.model.layout(); l.parts[0].level = -9; window.__deliver({ t: "layout", json: l }); });
+  check(await page.evaluate(() => window.synthkit.model.layout().parts[0].level === -9) && (await sent("layout")).length === 0,
+    "a level moved by the DAW shows in the page, not echoed", `layout level ${await page.evaluate(() => window.synthkit.model.layout().parts[0].level)}, sent ${JSON.stringify((await sent()).map((m) => m.t))}`);
+  await clear();
+  await page.evaluate(() => { const l = window.synthkit.model.layout(); l.parts[0].level = -3; window.synthkit.model.setLayout(l); });
+  const lay14 = await sent("layout");
+  check(lay14.length === 1 && JSON.parse(lay14[0].json).parts[0].level === -3, "a layout edit in the page goes to the plugin", `sent ${JSON.stringify(lay14)}`);
+
+  // Multi files go through the plugin's dialogs, and are told apart from patches.
+  await clear();
+  await page.evaluate(() => window.synthkit.app.multiBar.exportFile());
+  const exm = (await sent("export")).pop();
+  check(exm && exm.kind === "multi" && JSON.parse(exm.json).format === "sk.multi", "exporting a multi sends it, marked as a multi", `export ${JSON.stringify(exm && exm.kind)}`);
+  await clear();
+  await page.evaluate((mu) => window.__deliver({ t: "imported", kind: "multi", file: "x.multi.json", text: JSON.stringify(mu) }), factoryMulti);
+  const mm = await sent("multi");
+  check(mm.length === 1 && JSON.parse(mm[0].json).format === "sk.multi", "an imported multi loads and goes to the plugin", `sent ${JSON.stringify((await sent()).map((m) => m.t))}`);
+  await page.waitForTimeout(500);
+  const meta14 = (await sent("meta")).pop();
+  check(meta14 && typeof meta14.ui.part === "number" && meta14.ui.currents && Array.isArray(meta14.ui.dirtyParts), "the plugin is told the part, presets and changes per part",
+    `meta ${JSON.stringify(meta14)}`);
+
   await page.screenshot({ path: path.join(outDir, "ui-plugin.png") });
   check(errors.length === 0, "no console errors in plugin mode", `console errors: ${errors.join(" | ")}`);
   await browser.close();

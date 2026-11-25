@@ -10,6 +10,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
 #include <synthkit/engine.h>
+#include <synthkit/multi.h>
 
 #include <cmath>
 #include <cstdio>
@@ -121,10 +122,12 @@ int main(int argc, char** argv) {
     sk::Json state;
     sk::Json::tryParse(getPluginState(*plugin), state);
     ref->loadPatch(preset);
-    const bool same = state["patch"].dump(0) == ref->savePatch().dump(0);
+    // A multi synth saves the whole multi (part 1 holds the patch).
+    const sk::Json& saved = state.contains("multi") ? state["multi"]["parts"][0]["patch"] : state["patch"];
+    const bool same = saved.dump(0) == ref->savePatch().dump(0);
     check(same && state["format"].string() == "synthkit-plugin-state",
           "preset \"" + juce::String(preset["name"].string()) + "\" loads as plugin state and saves back unchanged",
-          "state round trip differs:\n" + juce::String(state["patch"].dump(0)).substring(0, 400));
+          "state round trip differs:\n" + juce::String(saved.dump(0)).substring(0, 400));
   }
 
   // Sound ----------------------------------------------------------------------------
@@ -206,6 +209,54 @@ int main(int argc, char** argv) {
           "CC " + juce::String(c.cc) + " moves " + juce::String(store.spec(i).id.c_str()) + ", and the host hears it",
           "CC " + juce::String(c.cc) + " gave " + juce::String(now) + " (wanted " + juce::String(want) + "), host told " + juce::String(heard.count) + " times");
     break;
+  }
+
+  // A multi (API.md §5b): every part's parameters, the mix as host parameters,
+  // and the whole multi in the state.
+  if (info.features.multi) {
+    // (A host sees names; the VST3 wrapper hides our string IDs behind its own numbers.)
+    auto find = [&](const juce::String& name) {
+      for (int i = 0; i < params.size(); ++i) if (params[i]->getName(256) == name) return i;
+      return -1;
+    };
+    const juce::String firstName = juce::String::fromUTF8(store.spec(0).name.c_str());
+    const int parts = sk::makeMulti()->maxParts();
+    check(find("P2 " + firstName) == store.size() && find("P" + juce::String(parts) + " " + firstName) >= 0,
+          "parts 2…" + juce::String(parts) + " have their own parameters (\"P2 …\"), after part 1's", "prefixed part parameters missing or out of order");
+    check(find("P1 Level") >= 0 && find("P" + juce::String(parts) + " Solo") >= 0, "each part has level, pan, mute and solo parameters",
+          "mix parameters missing");
+
+    int nMultis = 0;
+    const auto* multis = sk::embeddedMultis(nMultis);
+    sk::Json factory;
+    for (int i = 0; i < nMultis && factory.isNull(); ++i) {
+      sk::Json j;
+      if (sk::Json::tryParse(multis[i].json, j) && j["parts"].isArray() && j["parts"].size() >= 2) factory = j;
+    }
+    if (!factory.isNull()) {
+      auto mu = sk::makeMulti();
+      const auto lr = mu->load(factory);
+      sk::Json wrapped = sk::Json::object();
+      wrapped["format"] = "synthkit-plugin-state";
+      wrapped["version"] = 2;
+      wrapped["multi"] = mu->save();
+      wrapped["ui"] = sk::Json::object();
+      setPluginState(*plugin, wrapped.dump(2));
+      sk::Json back;
+      sk::Json::tryParse(getPluginState(*plugin), back);
+      check(lr.ok && back["multi"].dump(0) == wrapped["multi"].dump(0), "a saved multi (parts, patches, zones) loads as plugin state and saves back unchanged",
+            "multi state round trip differs");
+
+      // The host mutes part 1; the plugin applies it to the layout (on its message thread).
+      const int mute = find("P1 Mute");
+      if (mute >= 0) params[mute]->setValueNotifyingHost(1.f);
+      { juce::MidiBuffer none; buf.clear(); plugin->processBlock(buf, none); }   // a host's parameter changes arrive with the next block
+      juce::MessageManager::getInstance()->runDispatchLoopUntil(250);
+      sk::Json after;
+      sk::Json::tryParse(getPluginState(*plugin), after);
+      check(mute >= 0 && after["multi"]["parts"][0]["mute"].isBool() && after["multi"]["parts"][0]["mute"].boolean(),
+            "a part muted from the host is muted in the saved multi", "host mute didn't reach the multi: " + juce::String(after["multi"]["parts"][0].dump(0)).substring(0, 200));
+    }
   }
 
   plugin->releaseResources();
