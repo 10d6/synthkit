@@ -1694,7 +1694,10 @@ pedal change. This plays random passages (fast repeats, chords, overlapping
 notes, sustain-pedal changes; every note-on gets its note-off) and reports any
 still above −80 dBFS 3 s after everything was released. Run it after any
 change to voice handling, notes or the pedal; healthy is 0 failures in both
-modes.
+modes. A delay or reverb keeps sounding after the last note by design, and a
+loud passage's repeats can still be above −80 dBFS 3 s later, so set the
+effect's mix to 0 for these runs (`delay.mix=0`); then anything still ringing
+is a voice that didn't stop.
 
 ```
 python3 synthkit/tools/stress.py build/<name>_render 300                  # balanced: a key is let go before it's struck again

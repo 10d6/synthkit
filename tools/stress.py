@@ -21,6 +21,10 @@ keys and the pedal were released. Every note-on gets its note-off.
     --out DIR         where failing passages are saved (default: the temp directory)
     param=value       settings for every passage, e.g. amp.release=0.5
 
+A delay or reverb keeps sounding after the last note by design, and on a loud passage its
+repeats can still be above --below when --tail is up. Turn the effect's mix to 0 for these runs
+(delay.mix=0), so that anything still ringing is a voice that didn't stop.
+
 A failing passage is saved as stuck_<seed>.json, a scenario to render and investigate:
 
     build/<synth>_render <dir>/stuck_<seed>.json --out stuck.wav
@@ -149,6 +153,9 @@ def main():
             print(f"seed {seed}: still {tail:.1f} dBFS {a.tail:g} s after everything was released "
                   f"({len(ev)} events): {out}")
     print(f"{a.mode}: {fails} of {a.count} passages left sound ringing {a.tail:g} s after release")
+    if fails:
+        print("If the synth has a delay or reverb, its tail may be what is ringing, not a note: run again with\n"
+              "its mix at 0 (e.g. delay.mix=0). The saved passage shows which: render it with and without.")
     sys.exit(1 if fails else 0)
 
 

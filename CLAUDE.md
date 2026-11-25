@@ -125,7 +125,7 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/synthkit_tests                                        # kit unit tests
 ./build/examples/basic/basic_render --check examples/basic --out build/renders
 ./build/examples/basic/basic_render examples/basic/tests/chord.json --out x.wav
-python3 tools/stress.py build/examples/basic/basic_render 100   # random playing; --mode overlap too
+python3 tools/stress.py build/examples/basic/basic_render 100 delay.mix=0   # random playing; --mode overlap too
 ```
 
 Browser build (`tools/ci/deps.sh web`):
@@ -194,6 +194,12 @@ The browser test emulates a real browser's autoplay rule. Playwright's
 `evaluate()` and `waitForFunction()` count as user gestures (for a few
 seconds), so a test of "nothing may start before a click" must not touch the
 page until it clicks.
+
+Stress runs set the delay's mix to 0: a delay or reverb keeps sounding after the
+last note, and a loud passage's echoes can still be above -80 dBFS 3 s later.
+That is not a stuck note. To tell, render the saved `stuck_<seed>.json` with the
+effect's mix at 0: if the tail is gone, it was the effect; anything still
+ringing then is a voice.
 
 Run the native checks before every PR. For DSP changes, also look at the renders
 (spectrograms show clicks as vertical lines) and run a sanitizer build:

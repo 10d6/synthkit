@@ -50,7 +50,7 @@ cmake -S . -B build -G Ninja && cmake --build build
 ./build/{{TARGET}}_render --check . --out build/renders
 ./build/{{TARGET}}_render tests/chord.json --out x.wav
 ./build/{{TARGET}}_render --params
-python3 synthkit/tools/stress.py build/{{TARGET}}_render 300   # random playing: every note must stop (API.md §10)
+python3 synthkit/tools/stress.py build/{{TARGET}}_render 300   # random playing: every note must stop (API.md §10; effects' mix at 0)
 
 # browser page (API.md §11)
 cmake -S . -B build-web -G Ninja -DCMAKE_TOOLCHAIN_FILE=synthkit/cmake/wasm32-wasi.cmake && cmake --build build-web
