@@ -1122,8 +1122,14 @@ voice layered over the keyboard (one voice becomes a multi); × removes a
 voice, and the ones after it move down a place. A voice in a multi is **the
 multi's own**: it holds a copy of the patch, not a link to the preset it came
 from, so editing it changes only that multi, and the sound bar's *Save* keeps
-it with the multi. Nothing else (another multi, the preset) changes. To swap a
-voice for another preset, remove it and use *Add voice*. *Save as new voice*,
+it with the multi. Nothing else (another multi, the preset) changes. Under
+each voice's name, a picker (‹ the presets ›) swaps the voice for another
+preset, keeping its zones, mute and solo (the volume, pan, transpose and so on
+are the new preset's, as they're its patch's); one undo step. A voice whose
+changes are kept nowhere (not as the multi was loaded or last saved, not as
+the preset it came from, not as a saved copy) asks first: *Save as new voice*,
+*Don't save* or *Cancel* (with *Don't ask again*, the same preference as for
+sounds). *Save as new voice*,
 on a multi's strips, keeps a copy of the voice as it is now as one of your
 presets (a name and a category; a name already taken by a preset gets a number
 after it: "Warm Pad 2"); the voice itself stays as it was, unlinked, and the
@@ -1516,7 +1522,8 @@ envelope and modulation panels.
 one for a plain synth, one per part of a multi (§5b). Each voice is an
 accordion whose **compact strip** is always there, left to right: *Show more*
 / *Compact view*; the voice's name (its patch's), with a pencil that turns it
-into a field with ✓ and ✗ (Enter and Escape too); M and S (mute and solo, in
+into a field with ✓ and ✗ (Enter and Escape too), and under it, in a multi,
+the voice's preset picker (‹ the list ›, §5b); M and S (mute and solo, in
 a multi); *Volume*, *Pan*, *Transpose* (semitones), *Scale* (with its key once
 it isn't Chromatic) and *Tune* (cents from A4 = 440 Hz); and, in a multi,
 *Save as new voice* (§5b) and × to remove the voice. These are the patch's `master`, `sk.pan`, `sk.transpose`,

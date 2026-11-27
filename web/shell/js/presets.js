@@ -378,6 +378,7 @@ class PresetBar {
     this.model.dirty = false;
     this.current = { kind: "user", name };
     if (this.model.history) this.model.history.saved(this.current);
+    if (this.app.rack) this.app.rack.keepAll();
     this.refresh();
     this.saveSession();
     this.app.toast(`Saved "${name}"`);

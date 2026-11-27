@@ -46,8 +46,9 @@ async function main() {
   }));
   check(await ev(() => window.synthkit.model.multi === true), "the synth is a multi (features.multi)");
   let rs = await rackState();
-  check(rs.voices === 1 && rs.open[0] && !rs.layers && !rs.flags && !rs.remove && await page.locator(".add-voice").isVisible(),
-    "one voice: open, no Layers and splits, mute/solo or ×; Add voice below it", rs);
+  check(rs.voices === 1 && rs.open[0] && !rs.layers && !rs.flags && !rs.remove && await page.locator(".add-voice").isVisible() &&
+    await ev(() => document.querySelector(".voice-pick").hidden),
+    "one voice: open, no Layers and splits, mute/solo, × or preset picker (the sound bar picks); Add voice below it", rs);
   check(await ev(() => window.synthkit.app.sound.factoryMultis.length) === 3, "factory multis are embedded in the page");
   // The strip, left to right.
   const order = await ev(() => {
@@ -90,8 +91,10 @@ async function main() {
   check(await ev(() => document.querySelectorAll(".voice-strip .voice-name")[1].textContent) === "Mono Bass" &&
     await ev(() => window.synthkit.model.getIn(1, "master")) === await ev(() => window.synthkit.app.presets.entries().find((e) => e.name === "Mono Bass").patch.params.master ?? 0),
     "the new voice is the preset, its own volume and all");
-  check(await ev(() => !document.querySelector(".voice .preset-select") && document.querySelectorAll(".voice-save-copy:not([hidden])").length === 2),
-    "in a multi, a voice has no preset picker of its own, and each strip has Save as new voice");
+  check(await ev(() => document.querySelectorAll(".voice-save-copy:not([hidden])").length === 2 && document.querySelectorAll(".voice-pick:not([hidden])").length === 2 &&
+    !document.querySelector(".voice-pick .btn[title^='More']")),
+    "in a multi, each strip has a preset picker under the name (no More) and Save as new voice");
+  check(await ev(() => document.querySelectorAll(".voice-pick-select")[1].selectedOptions[0].textContent) === "Mono Bass", "a voice's picker shows its preset");
 
   // Layers and splits selects a zone at first: the last voice added (nothing edited yet).
   const selPart = () => ev(() => { const l = window.synthkit.model.layout(), i = window.synthkit.app.rack.layers.sel; return i >= 0 ? l.zones[i].part : -1; });
@@ -127,6 +130,63 @@ async function main() {
   await page.waitForSelector(".sk-dialog");
   await page.keyboard.press("Escape");
   check(await ev(() => !document.querySelector(".sk-dialog") && Object.keys(window.synthkit.app.presets.user).length === 2), "Escape cancels");
+
+  // ---- another preset for a voice ---------------------------------------------------------
+  const pickOpt = (p, name) => ev(([p, name]) => [...document.querySelectorAll(".voice-pick-select")[p].options].find((o) => o.textContent === name).value, [p, name]);
+  const pickSel = (p) => `.voice:nth-child(${p + 1}) .voice-pick-select`;
+  const zones0 = await ev(() => JSON.stringify(window.synthkit.model.layout().zones));
+  // Kept as it is (it's the preset it came from, and a copy was just saved): no question.
+  await page.selectOption(pickSel(1), await pickOpt(1, "Warm Pad"));
+  await page.waitForTimeout(100);
+  check(await ev(() => !document.querySelector(".sk-dialog") && window.synthkit.model.nameOf(1) === "Warm Pad" && window.synthkit.model.part === 0) &&
+    await ev(() => JSON.stringify(window.synthkit.model.layout().zones)) === zones0,
+    "picking a preset for an unchanged voice replaces it straight away, keeping its zones; the open voice stays open");
+  await page.click(".voice:nth-child(2) .voice-pick-step[title='Next preset']");
+  await page.waitForTimeout(100);
+  check(await ev(() => window.synthkit.model.nameOf(1)) !== "Warm Pad", "› steps to the next preset");
+  await ev(() => window.synthkit.model.history.undo());
+  check(await ev(() => window.synthkit.model.nameOf(1)) === "Warm Pad", "replacing a voice is one undo step");
+  // Changed, and kept nowhere: it asks to save it as a new voice.
+  await ev(() => window.synthkit.model.setIn(1, "sk.transpose", -12, "ui"));
+  await page.selectOption(pickSel(1), await pickOpt(1, "Mono Bass"));
+  await page.waitForSelector(".sk-dialog");
+  check(await ev(() => [...document.querySelectorAll(".sk-dialog button")].map((b) => b.textContent).join()) === "Cancel,Don't save,Save as new voice",
+    "replacing a changed voice asks: Cancel, Don't save, Save as new voice");
+  await page.click(".sk-dialog button[data-value=cancel]");
+  check(await ev(() => window.synthkit.model.getIn(1, "sk.transpose") === -12 && document.querySelectorAll(".voice-pick-select")[1].selectedOptions[0].textContent === "Warm Pad"),
+    "Cancel keeps the voice and its changes");
+  await page.selectOption(pickSel(1), await pickOpt(1, "Mono Bass"));
+  await page.waitForSelector(".sk-dialog");
+  await page.click(".sk-dialog button[data-value=save]");
+  await page.waitForSelector(".sk-dialog .sk-field");
+  check(await ev(() => document.querySelector(".sk-dialog .sk-field").value) === "Warm Pad 2", "Save as new voice asks for the copy's name");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(100);
+  check(await ev(() => window.synthkit.app.presets.user["Warm Pad 2"].params["sk.transpose"] === -12 && window.synthkit.model.nameOf(1) === "Mono Bass"),
+    "…saves the changed voice as a preset, then replaces it");
+  await ev(() => window.synthkit.model.history.undo());
+  check(await ev(() => window.synthkit.model.getIn(1, "sk.transpose")) === -12, "undo brings the changed voice back");
+  // Now kept (as Warm Pad 2): no question.
+  await page.selectOption(pickSel(1), await pickOpt(1, "Mono Bass"));
+  await page.waitForTimeout(100);
+  check(await ev(() => !document.querySelector(".sk-dialog") && window.synthkit.model.nameOf(1) === "Mono Bass"), "a voice saved as a new voice doesn't ask");
+  await ev(() => window.synthkit.model.history.undo());
+  // Don't save: replaced, changes gone.
+  await ev(() => window.synthkit.model.setIn(1, "sk.pan", -0.5, "ui"));
+  await page.selectOption(pickSel(1), await pickOpt(1, "Mono Bass"));
+  await page.waitForSelector(".sk-dialog");
+  await page.click(".sk-dialog button[data-value=discard]");
+  check(await ev(() => window.synthkit.model.nameOf(1) === "Mono Bass" && !window.synthkit.app.presets.user["Warm Pad 3"]), "Don't save replaces it without saving");
+  await ev(() => window.synthkit.model.history.undo());
+  // Saved with the multi as it is: no question either.
+  await ev(() => window.synthkit.app.sound.storeAs("Kept voices"));
+  await page.selectOption(pickSel(1), await pickOpt(1, "Mono Bass"));
+  await page.waitForTimeout(100);
+  check(await ev(() => !document.querySelector(".sk-dialog") && window.synthkit.model.nameOf(1) === "Mono Bass"), "a voice saved with the multi as it is doesn't ask");
+  await ev(() => window.synthkit.model.history.undo());
+  for (let k = 0; k < 3; k++) await ev(() => window.synthkit.model.history.undo());   // the pan and transpose edits, and the first pick
+  check(await ev(() => window.synthkit.model.nameOf(1) === "Mono Bass" && window.synthkit.model.getIn(1, "sk.transpose") === 0), "…and undo goes back through all of it");
+  await ev(() => { delete window.synthkit.app.sound.userMultis["Kept voices"]; const p = window.synthkit.app.presets.user; delete p["Warm Pad 2"]; });
   await ev(() => window.synthkit.model.history.undo());
   check((await rackState()).voices === 1, "adding a voice is one undo step");
   await ev(() => window.synthkit.model.history.redo());

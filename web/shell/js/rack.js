@@ -60,6 +60,20 @@ class StripKnob extends Knob {
   }
 }
 
+// Fills a <select> with the presets, grouped by category (yours marked);
+// option values are indexes into `entries`.
+function skFillPresetSelect(select, pr, entries, first) {
+  select.textContent = "";
+  if (first) select.append(first);
+  const groups = new Map();
+  const group = (label) => { if (!groups.has(label)) groups.set(label, h("optgroup", { label })); return groups.get(label); };
+  entries.forEach((e, i) => {
+    const cat = pr.hasCategories() ? pr.catLabel(e.category) : "Presets";
+    group(cat + (e.kind === "user" ? " · yours" : "")).append(h("option", { value: String(i), text: e.name }));
+  });
+  for (const g of groups.values()) select.append(g);
+}
+
 class Rack {
   // panels: the synth's panels (Panels.build), shown in the open voice; none
   // for a synth's own page, whose controls follow sk.part instead.
@@ -71,6 +85,10 @@ class Rack {
     this.rows = [];
     this.openPart = 0;
     this.lastAdded = -1;            // the voice Add voice added last (-1: none since the sound loaded)
+    // Voices as they're kept somewhere (a patch's JSON): loaded or saved with
+    // the multi, loaded from a preset, or saved as a new voice. Replacing a
+    // voice that's one of these loses nothing, so it doesn't ask.
+    this.kept = new Set();
     this.layers = this.multi ? new LayersPanel(app) : null;
     this.list = h("div", { class: "rack-voices" });
     this.addVoice = this.multi ? new AddVoice(this) : null;
@@ -85,6 +103,7 @@ class Rack {
     this.model.onPart((p) => { if (this.busy) return; if (this.openPart >= 0 && this.openPart !== p) this.setOpen(p); else this.showOpen(); });
     this.model.onName((p) => { if (this.rows[p]) this.rows[p].showName(); });
     app.presets.listeners.add(() => { for (const r of this.rows) r.showName(); });
+    skStore.on(`synthkit:${this.model.info.synth.id}:presets`, () => { for (const r of this.rows) r.showName(); });
   }
 
   get parts() { return this.multi ? this.model.layout().parts.length : 1; }
@@ -142,11 +161,84 @@ class Rack {
   // A whole new sound (the sound bar, an import, the session): the defaults.
   soundLoaded() {
     this.lastAdded = -1;
+    this.keepClean();
     if (this.layers) this.layers.sel = -1;   // its default again (layers.defaultZone)
     this.wasMulti = this.isMulti();
     this.openPart = this.wasMulti ? -1 : 0;
     if (this.openPart === 0 && this.model.part !== 0) this.model.selectPart(0);
     this.build();
+  }
+
+  // ---- which voices are kept as they are ---------------------------------------------
+
+  sigOf(p, ms = this.model.multiSave()) { const pt = (ms.parts || [])[p]; return pt && pt.patch ? JSON.stringify(pt.patch) : ""; }
+  keep(p) { const s = this.sigOf(p); if (s) this.kept.add(s); }
+  // Every voice as it is now (the multi, or the one preset, was just saved).
+  keepAll() { const ms = this.model.multiSave(); (ms.parts || []).forEach((_, p) => this.kept.add(this.sigOf(p, ms))); }
+  // The voices not changed since the sound loaded (a session can bring back
+  // one with unsaved changes: that one isn't kept).
+  keepClean() {
+    if (!this.multi) return;
+    const ms = this.model.multiSave();
+    (ms.parts || []).forEach((_, p) => { if (!this.model.dirtyParts[p]) this.kept.add(this.sigOf(p, ms)); });
+  }
+  isKept(p) { return this.kept.has(this.sigOf(p)); }
+
+  // Before voice p is replaced: if it has changes kept nowhere, ask first:
+  // Save as new voice, Don't save or Cancel. True to go ahead.
+  async confirmReplace(p) {
+    if (this.isKept(p) || !skPrefs.get().warnUnsaved) return true;
+    const again = h("input", { type: "checkbox", class: "sk-dont-ask" });
+    const choice = await skDialog({
+      title: "Unsaved voice",
+      message: `“${this.model.nameOf(p) || "This voice"}” has changes that aren't saved in this multi or as a preset. Save it as a new voice before replacing it?`,
+      body: h("label", { class: "sk-check sk-check-small" }, again, h("span", { text: "Don't ask again" })),
+      className: "sk-dialog-unsaved",
+      buttons: [
+        { label: "Cancel", value: "cancel" },
+        { label: "Don't save", value: "discard" },
+        { label: "Save as new voice", value: "save", primary: true },
+      ],
+    });
+    if (choice === "cancel") return false;
+    if (again.checked) skPrefs.set({ warnUnsaved: false });
+    if (choice === "save") return await this.saveCopy(p);
+    return true;
+  }
+
+  // The picker under a voice's name: voice p plays preset `entry` instead.
+  // Its zones, mute and solo stay; everything in the patch (volume, pan,
+  // transpose…) is the preset's. One undo step; the open voice stays open.
+  async pickVoice(p, entry) {
+    const m = this.model, n = this.parts;
+    if (!this.multi || p < 0 || p >= n || !entry) return false;
+    if (!(await this.confirmReplace(p))) return false;
+    const patch = JSON.parse(JSON.stringify(entry.patch || { synth: m.info.synth.id, name: entry.name, params: {} }));
+    const pr = this.app.presets;
+    const currents = { ...pr.currents, [pr.shownPart]: pr.current };
+    const dirty = m.dirtyParts.slice(0, n);
+    const was = m.part, edited = m.lastEdited;
+    const ms = m.multiSave();
+    ms.parts[p] = { ...ms.parts[p], patch };
+    this.busy = true;
+    const res = m.loadMulti(ms, { label: `replacing voice ${p + 1} with “${entry.name}”` });
+    this.busy = false;
+    if (!res.ok) { this.app.toast(`Couldn't load "${entry.name}": ${res.error}`, "error"); return false; }
+    for (const w of res.warnings || []) this.app.toast(`${entry.name}: ${w}`, "warn");
+    dirty[p] = false;
+    m.dirtyParts = dirty;
+    m.lastEdited = edited === p ? -1 : edited;
+    this.keep(p);
+    pr.currents = { ...currents, [p]: pr.ref(entry) };
+    this.busy = true;
+    if (m.part !== was) m.selectPart(was, { quiet: true });
+    this.busy = false;
+    pr.shownPart = m.part;
+    pr.current = pr.currents[m.part] || pr.currentFor(m.savePatch());
+    pr.refresh();
+    pr.saveSession();
+    if (this.app.sound) this.app.sound.refresh();
+    return true;
   }
 
   // Opens voice p (selecting it), or closes them all (-1).
@@ -188,6 +280,7 @@ class Rack {
     m.dirtyParts = [...dirty, false];
     m.lastEdited = edited;
     this.lastAdded = n;
+    this.keep(n);
     if (this.layers) { this.layers.sel = -1; this.layers.renderZones(); }
     pr.currents = { ...currents, [n]: entry ? pr.ref(entry) : pr.currentFor(patch) };
     this.busy = true;
@@ -269,13 +362,15 @@ class Rack {
       extra: h("label", { class: "sk-field-row" }, h("span", { text: "Category" }), cat),
       ok: "Save copy",
     });
-    if (name === null) return;
+    if (name === null) return false;
     const copy = { ...JSON.parse(JSON.stringify(patch)), name };
     if (cat.value) copy.category = cat.value; else delete copy.category;
-    pr.storeCopy(copy);
+    if (!pr.storeCopy(copy)) return false;
+    this.keep(p);   // its changes are kept now (as the copy)
     if (this.addVoice) this.addVoice.refresh();
     if (this.app.sound) this.app.sound.refresh();
     this.app.toast(`Saved a copy as “${name}” in your presets`);
+    return true;
   }
 
   // A voice renamed from its strip: its patch's name. It's no longer the
@@ -336,6 +431,13 @@ class VoiceRow {
     for (const b of [this.okBtn, this.cancelBtn]) b.addEventListener("pointerdown", (e) => e.preventDefault());
     this.nameInput.addEventListener("blur", () => { if (!this.nameInput.hidden) this.finishRename(true); });
 
+    // Another preset for this voice (in a multi): ‹ the list ›.
+    this.pickSel = h("select", { class: "voice-pick-select", "aria-label": `Preset for voice ${p + 1}`, title: "Play another preset in this voice",
+      onchange: () => this.pick(Number(this.pickSel.value)) });
+    const arrow = (text, d, label) => h("button", { type: "button", class: "btn btn-quiet btn-icon voice-pick-step", title: label, "aria-label": `${label} for voice ${p + 1}`, onclick: () => this.step(d) }, text);
+    this.pickRow = h("div", { class: "voice-pick" }, arrow("‹", -1, "Previous preset"), this.pickSel, arrow("›", 1, "Next preset"));
+    this.pickSel.addEventListener("keydown", (e) => e.stopPropagation());
+
     this.muteBtn = h("button", { type: "button", class: "voice-flag", title: `Mute voice ${p + 1}`, "aria-label": `Mute voice ${p + 1}`, onclick: () => this.rack.setFlag(p, "mute") }, "M");
     this.soloBtn = h("button", { type: "button", class: "voice-flag", title: `Solo voice ${p + 1}`, "aria-label": `Solo voice ${p + 1}`, onclick: () => this.rack.setFlag(p, "solo") }, "S");
 
@@ -379,7 +481,9 @@ class VoiceRow {
     const field = (label, ...els) => h("label", { class: "voice-field" }, h("span", { class: "voice-field-label", text: label }), h("span", { class: "voice-field-input" }, ...els));
     this.strip = h("div", { class: "voice-strip" },
       this.toggle,
-      h("div", { class: "voice-id" }, this.nameEl, this.nameInput, this.editBtn, this.okBtn, this.cancelBtn),
+      h("div", { class: "voice-id" },
+        h("div", { class: "voice-id-name" }, this.nameEl, this.nameInput, this.editBtn, this.okBtn, this.cancelBtn),
+        this.pickRow),
       h("div", { class: "voice-flags" }, this.muteBtn, this.soloBtn),
       h("div", { class: "voice-ctls" },
         knob("volume", "Volume"),
@@ -404,6 +508,29 @@ class VoiceRow {
     const name = this.model.nameOf(this.part) || "Init";
     this.nameEl.textContent = name;
     this.nameEl.title = name;
+    if (this.pickRow && !this.pickRow.hidden) this.showPick();
+  }
+
+  // The list, showing the preset of the voice's name (else the name alone).
+  showPick() {
+    const pr = this.app.presets;
+    this.entries = pr.entries();
+    const name = this.model.nameOf(this.part);
+    const at = this.entries.findIndex((e) => e.name === name && e.kind === "user");
+    this.at = at >= 0 ? at : this.entries.findIndex((e) => e.name === name);
+    skFillPresetSelect(this.pickSel, pr, this.entries, this.at < 0 ? h("option", { value: "-1", text: name || "Voice" }) : null);
+    this.pickSel.value = String(this.at);
+  }
+  async pick(i) {
+    const e = this.entries[i];
+    if (e) await this.rack.pickVoice(this.part, e);
+    if (this.rack.rows[this.part] === this) this.showPick();   // (cancelled: back to what it was)
+  }
+  step(d) {
+    const n = this.entries.length;
+    if (!n) return;
+    const i = this.at < 0 ? (d > 0 ? 0 : n - 1) : (this.at + d + n) % n;
+    this.pick(i);
   }
   showTranspose() {
     if (!this.transpose || document.activeElement === this.transpose) return;
@@ -430,6 +557,8 @@ class VoiceRow {
     this.muteBtn.parentNode.hidden = !multi;
     this.removeBtn.hidden = !multi;
     this.saveCopyBtn.hidden = !multi;
+    this.pickRow.hidden = !multi;
+    if (multi) this.showPick();
   }
 
   setOpen(open) {
@@ -480,16 +609,8 @@ class AddVoice {
   refresh() {
     const pr = this.app.presets;
     const full = this.rack.parts >= this.model.maxParts;
-    this.select.textContent = "";
-    this.select.append(h("option", { value: "", text: full ? "No room for more voices" : "Choose a preset…" }));
-    const groups = new Map();
-    const group = (label) => { if (!groups.has(label)) groups.set(label, h("optgroup", { label })); return groups.get(label); };
     this.entries = pr.entries();
-    this.entries.forEach((e, i) => {
-      const cat = pr.hasCategories() ? pr.catLabel(e.category) : "Presets";
-      group(cat + (e.kind === "user" ? " · yours" : "")).append(h("option", { value: String(i), text: e.name }));
-    });
-    for (const g of groups.values()) this.select.append(g);
+    skFillPresetSelect(this.select, pr, this.entries, h("option", { value: "", text: full ? "No room for more voices" : "Choose a preset…" }));
     this.select.value = "";
     this.select.disabled = full;
     this.note.textContent = full ? `${this.model.maxParts} voices is the most a sound can have.` : "";

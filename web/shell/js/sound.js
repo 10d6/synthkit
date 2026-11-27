@@ -234,6 +234,7 @@ class SoundBar {
     if (!skStore.set(this.key("multis"), this.userMultis)) { this.app.toast("This browser isn't letting the page store multis. Use Export to keep a file instead.", "error"); return; }
     this.multiCurrent = { kind: "user", name };
     this.baseline = this.sig();
+    if (this.app.rack) this.app.rack.keepAll();   // every voice is saved with it now
     this.refresh();
     this.presets.refresh();
     this.presets.saveSession();
