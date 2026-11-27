@@ -365,6 +365,19 @@ size (the kit checks this, §10).
   returns to the previous held note. Mono retriggers envelopes. Legato
   retriggers only when no other key was held. `glide` applies in mono and
   legato, at a constant time per glide.
+- **A key pressed again while held.** A real key can't go down twice without
+  coming up, so in Poly a note-on for a key that came in (`MidiEvent::input`:
+  from the host, the page or a MIDI keyboard) whose voice is still held (same
+  note and channel, not held by a pedal) means its note-off never
+  arrived (lost by the keyboard, the OS or the browser) or the same press
+  came twice (a keyboard the browser sees as two MIDI inputs). Within 30 ms
+  it's the same press: ignored, and either note-off ends the note. Later, the
+  earlier voice is released first, so pressing a stuck key again clears it.
+  Other channels, keys held by the sustain or sostenuto pedal, the
+  arpeggiator's and sequencer's notes (which may overlap, §4b) and a synth's
+  own notes (`ctx.schedule`, a new event through `ctx.out`) still stack.
+  Mono and legato already restrike their one voice. Both cases are counted
+  and logged for diagnostics (§10a).
 - **Unison** voices are spread across `±unisonDetune` cents and panned across
   `unisonSpread`, each at 1/√n gain.
 - **Release velocity.** A note-off's velocity is how quickly the key came
@@ -492,8 +505,12 @@ void processEvents(EventContext& ctx) override {
 | `ctx.messages()`, `ctx.post(m, {values})` | messages from the page since the last block, and sending one back (§9b) |
 
 Events are `MidiEvent`s (`type`, `note`, `vel`, `gain` (§5b), `cc`, `value`, `channel`,
-`sample`, `beat`, `tag`, `arp` and `arpLane` (§4b), plus `isNoteOn()`, `isNoteOff()`, `isCC(n)`). Build
+`sample`, `beat`, `tag`, `arp` and `arpLane` (§4b), `input`, plus `isNoteOn()`, `isNoteOff()`, `isCC(n)`). Build
 them with `NoteOn{note, vel, ch}`, `NoteOff{note, ch}`, `CC{number, value, ch}`.
+`input` is true for an event that came in from outside (the host, the page, a
+MIDI keyboard): `ctx.in()`'s events have it, and `ctx.out(e)` keeps it; events
+a synth builds or schedules don't. The voice stage treats only these as keys
+(a key pressed again while held, §4).
 
 - **Beats are quarter notes**, like a host's PPQ position.
 - **The clock always runs.** When the host is stopped, the kit keeps counting
@@ -502,7 +519,9 @@ them with `NoteOn{note, vel, ch}`, `NoteOff{note, ch}`, `CC{number, value, ch}`.
 - Scheduled notes go through the normal voice stage: tuning, voice allocation
   and modulation all apply. Note-offs match the oldest held note with the same
   number and channel. Use a different channel for generated notes if they
-  must not collide with played keys.
+  must not collide with played keys. (The rule that a key pressed again while
+  held lets its earlier voice go, §4, is for keys that came in, `e.input`:
+  scheduled notes and a synth's own never trigger it.)
 - Pending events live in a fixed-size queue (`features.eventQueue`). If it
   fills, new events are dropped, except note-offs, which replace a pending
   non-note-off. Drops are counted, and the checks fail on any.

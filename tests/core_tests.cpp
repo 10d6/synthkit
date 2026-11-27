@@ -428,6 +428,97 @@ TEST(sostenuto_note_played_again_is_not_stuck) {
   CHECK(activeNow(h) == 0);
 }
 
+// A note-off lost on the way (the keyboard, the OS, the browser) leaves a key
+// held. Pressing it again used to start a second voice, and the next note-off
+// ended the oldest: the stuck voice went, the new one stuck. A real key can't
+// go down twice, so the second press lets the earlier voice go first.
+TEST(key_pressed_again_while_held_lets_the_earlier_voice_go) {
+  Harness h;
+  h.eng->params().set(h.param("env1.release"), 0.01);
+  h.run(24000, {{0, on(60)}});                                  // its note-off never arrives
+  h.run(24000, {{h.pos + 10, on(60)}, {h.pos + 12000, off(60)}});
+  CHECK(activeNow(h) == 0);
+  const Json d = h.eng->diagnostics();
+  CHECK(d["counts"]["represses"].number() == 1);
+  CHECK(d["counts"]["noteOns"].number() == 2);
+  CHECK(d["counts"]["noteOffs"].number() == 1);
+}
+
+// The same press arriving twice (a keyboard the browser sees as two MIDI
+// inputs): one voice, and either note-off ends it.
+TEST(doubled_note_on_is_one_voice) {
+  Harness h;
+  h.eng->params().set(h.param("env1.release"), 0.01);
+  h.run(2400, {{0, on(60)}, {96, on(60)}});                     // 2 ms apart
+  CHECK(h.eng->takeStats().activeVoices == 1);
+  h.run(2400, {{h.pos + 10, off(60)}, {h.pos + 106, off(60)}});
+  CHECK(activeNow(h) == 0);
+  CHECK(h.eng->diagnostics()["counts"]["doubled"].number() == 1);
+}
+
+// Another channel is another key (the kit pairs note-offs by note and
+// channel), and a held key under the sustain pedal is up: both still stack.
+TEST(other_channel_and_pedal_held_notes_still_stack) {
+  Harness h;
+  h.eng->params().set(h.param("env1.release"), 0.01);
+  MidiEvent ch2 = NoteOn{60, 0.8f, 1}, ch2off = NoteOff{60, 1};
+  h.run(4800, {{0, on(60)}, {2400, ch2}});
+  CHECK(h.eng->takeStats().activeVoices == 2);
+  h.run(4800, {{h.pos + 10, off(60)}, {h.pos + 20, ch2off}});
+  CHECK(activeNow(h) == 0);
+  MidiEvent ped = CC{64, 1.f}, up = CC{64, 0.f};
+  h.run(4800, {{h.pos, ped}, {h.pos + 10, on(62)}, {h.pos + 2400, off(62)}});
+  h.run(4800, {{h.pos + 10, on(62)}});                          // played again under the pedal
+  CHECK(h.eng->takeStats().activeVoices == 2);
+  CHECK(h.eng->diagnostics()["counts"]["represses"].number() == 0);
+  h.run(100, {{h.pos + 10, off(62)}, {h.pos + 20, up}});
+  CHECK(activeNow(h) == 0);
+}
+
+// A synth's own notes (ctx.schedule, a new event through ctx.out) aren't keys:
+// the same note as a held key still stacks, never counted as a re-press.
+TEST(synth_notes_on_a_held_key_still_stack) {
+  Harness h;
+  h.synth->scheduleFifth = true;
+  h.run(27000, {{0, on(67)}, {100, on(60)}});   // 60 schedules a 67 at beat 1 (24000) to 1.25, over the held 67
+  CHECK(h.eng->takeStats().activeVoices == 4);  // 67 and its own fifth, 60, and the scheduled 67
+  CHECK(h.eng->diagnostics()["counts"]["represses"].number() == 0);
+  CHECK(h.eng->diagnostics()["counts"]["doubled"].number() == 0);
+}
+
+// The diagnostics log: events in order, with their times before now, the
+// engine's own findings among them; it keeps the newest 512.
+TEST(diagnostics_log_keeps_the_newest_events) {
+  Harness h;
+  h.run(4800, {{0, on(60)}, {2400, off(61)}});                  // 61 was never on
+  Json d = h.eng->diagnostics();
+  CHECK(d["counts"]["unmatchedOffs"].number() == 1);
+  const Json& ev = d["events"];
+  CHECK(ev.size() == 3);
+  CHECK(std::string(ev[0]["kind"].string()) == "on" && ev[0]["note"].number() == 60 && ev[0]["ch"].number() == 1);
+  CHECK(std::string(ev[1]["kind"].string()) == "off" && ev[1]["note"].number() == 61);
+  CHECK(std::string(ev[2]["kind"].string()) == "unmatchedOff");
+  CHECK_NEAR(ev[0]["t"].number(), -0.1, 1e-3);                  // 4800 samples before the end
+  CHECK_NEAR(ev[1]["t"].number(), -0.05, 1e-3);
+  std::vector<std::pair<long, MidiEvent>> many;
+  for (int i = 0; i < 600; ++i) many.push_back({h.pos + i * 8, MidiEvent(CC{1, (i % 128) / 127.f})});
+  h.run(4800, many);
+  d = h.eng->diagnostics();
+  CHECK(d["events"].size() == 512);
+  CHECK(d["counts"]["eventsLogged"].number() == 603);
+  double last = -1e9;
+  bool ordered = true;
+  for (std::size_t i = 0; i < d["events"].size(); ++i) {
+    ordered = ordered && d["events"][i]["t"].number() >= last && d["events"][i]["t"].number() <= 0;
+    last = d["events"][i]["t"].number();
+  }
+  CHECK(ordered);
+  h.eng->panic();
+  h.run(256);
+  d = h.eng->diagnostics();
+  CHECK(std::string(d["events"][d["events"].size() - 1]["kind"].string()) == "panic");
+}
+
 TEST(sostenuto_is_cleared_by_all_notes_off) {
   Harness h;
   h.eng->params().set(h.param("env1.release"), 0.01);

@@ -117,6 +117,10 @@ class Multi {
   // Largest figures since the last call, summed voices.
   EngineStats takeStats();
 
+  // Diagnostics (API.md §10a), any thread but the audio thread:
+  // {"parts": [{"part": i, …Engine::diagnostics()}]} for the parts in use.
+  Json diagnostics() const;
+
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;

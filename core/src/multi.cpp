@@ -455,6 +455,20 @@ std::vector<std::string> Multi::setLayout(const MultiLayout& in) {
   return warnings;
 }
 
+Json Multi::diagnostics() const {
+  const Impl& m = *impl_;
+  Json parts = Json::array();
+  const int used = std::clamp(m.layout.parts, 1, static_cast<int>(m.engines.size()));
+  for (int i = 0; i < used; ++i) {
+    Json p = m.engines[static_cast<std::size_t>(i)]->diagnostics();
+    p["part"] = i + 1;
+    parts.push(std::move(p));
+  }
+  Json j = Json::object();
+  j["parts"] = std::move(parts);
+  return j;
+}
+
 EngineStats Multi::takeStats() {
   Impl& m = *impl_;
   EngineStats s;

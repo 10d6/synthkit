@@ -11,6 +11,7 @@
 #include "synthkit/error.h"
 
 #include "arp.h"
+#include "eventlog.h"
 #include "seq.h"
 #include "modulation.h"
 #include <unordered_set>
@@ -220,6 +221,7 @@ struct Slot {
   ModVoice mv;
   bool arp = false;                           // played by the arpeggiator or sequencer
   int arpLane = -1;                           // the sequencer's lane (-1: the arpeggiator)
+  bool played = false;                        // started by a key from outside (MidiEvent::input), not arp or synth
   dsp::Adsr arpEnv;                           // its note envelope
   std::array<float, kControlBlock> arpBuf{};
   // Crossfade (arp.envMode): an equal-power fade in, and out on release.
@@ -298,6 +300,16 @@ struct Core {
   std::atomic<int> tempoNum{4}, tempoDen{4};
   std::atomic<float> statPeak{0}, statLimDb{0};
   std::atomic<int> statDropped{0}, statSteals{0}, statActive{0}, statMsgDropped{0};
+
+  // Diagnostics (API.md §10a): the events this engine was given, and counts of
+  // what it did about the ones that can't be right. Read by diagnostics().
+  EventLog log;
+  uint64_t samplesDone = 0;                      // audio thread: samples since prepare
+  std::atomic<uint32_t> samplesNow{0};           // the same, for other threads (low 32 bits)
+  std::atomic<uint32_t> nNoteOns{0}, nNoteOffs{0}, nRepress{0}, nDoubled{0}, nUnmatched{0};
+  // A second note-on of a held key within this is the same press arriving
+  // twice (a keyboard the browser sees as two MIDI inputs), not a re-press.
+  static constexpr double kDoubledSec = 0.03;
 
   std::vector<std::string> messageIds;
   detail::MessageRing msgFromPage, msgToPage;
@@ -453,6 +465,9 @@ struct Core {
 
   void prepare(double rate, int block) {
     sr = rate > 0 ? rate : 48000;
+    log.clear();
+    samplesDone = 0;
+    samplesNow.store(0, std::memory_order_relaxed);
     maxBlock = std::max(block, 1);
     PrepareInfo pi{sr, maxBlock, store.get()};
     synth->prepare(pi);
@@ -533,6 +548,11 @@ struct Core {
       for (int c = 0; c < nOut; ++c) std::memset(outs[c], 0, sizeof(float) * static_cast<std::size_t>(total));
       return;
     }
+    for (int i = 0; i < nEv; ++i) {
+      log.record(ev[i], samplesDone + static_cast<uint64_t>(std::max(ev[i].sample, 0)));
+      if (ev[i].isNoteOn()) nNoteOns.fetch_add(1, std::memory_order_relaxed);
+      else if (ev[i].isNoteOff()) nNoteOffs.fetch_add(1, std::memory_order_relaxed);
+    }
     int done = 0, ei = 0;
     while (done < total) {
       int n = std::min(total - done, maxBlock);
@@ -541,6 +561,8 @@ struct Core {
       block(outs, nOut, done, n, ev + first, ei - first, host);
       done += n;
     }
+    samplesDone += static_cast<uint64_t>(total);
+    samplesNow.store(static_cast<uint32_t>(samplesDone), std::memory_order_relaxed);
   }
 
   // An idle part of a Multi: the clock moves as process() would move it.
@@ -553,6 +575,8 @@ struct Core {
       clock = blockEnd;
       done += n;
     }
+    samplesDone += static_cast<uint64_t>(total);
+    samplesNow.store(static_cast<uint32_t>(samplesDone), std::memory_order_relaxed);
   }
 
   void updateTransport(int offset, int n, const HostTransport& host, bool& jumped) {
@@ -605,6 +629,8 @@ struct Core {
     };
     if (reqPanic.load(std::memory_order_relaxed)) channelMode(120);
     if (reqAllOff.load(std::memory_order_relaxed)) channelMode(123);
+    if (reqPanic.load(std::memory_order_relaxed)) log.record(LogKind::Panic, 0, 0, 0.f, samplesDone + static_cast<uint64_t>(offset));
+    if (reqAllOff.load(std::memory_order_relaxed)) log.record(LogKind::AllNotesOff, 0, 0, 0.f, samplesDone + static_cast<uint64_t>(offset));
     if (reqPanic.exchange(0)) {
       for (auto& s : slots) resetSlot(s);
       heldCount = 0;
@@ -640,6 +666,7 @@ struct Core {
       MidiEvent e = ev[i];
       e.sample = std::clamp(e.sample < 0 ? 0 : e.sample - offset, 0, n - 1);
       e.beat = blockStart + e.sample / spb;
+      e.input = true;  // a key or controller from outside; the synth's own events aren't
       inEv[static_cast<std::size_t>(inCount++)] = e;
       // Controllers mapped to parameters (ParamDef::cc) move them at the
       // CC's own sample (below), so the result doesn't depend on the host's
@@ -1052,6 +1079,7 @@ struct Core {
     for (auto& env : s.envs) env.gate(true);
     s.arp = e.arp;
     s.arpLane = e.arpLane;
+    s.played = e.input && !e.arp && e.arpLane < 0;
     if (e.arp) { s.arpEnv.gate(true); startCrossfade(s); }
     else s.arpEnv.reset();
     if (mod.enabled()) mod.noteOn(s.mv, e.note, e.vel, transport, serial * 16 + static_cast<uint64_t>(u), first && u == 0);
@@ -1174,7 +1202,41 @@ struct Core {
       }
   }
 
+  // A played key's voice still held, not by a pedal: the key is down.
+  static bool keyDown(const Slot& s, const MidiEvent& e) {
+    return s.state == VoicePool::State::Held && !s.sustained && s.played && s.note == e.note && s.channel == e.channel;
+  }
+
   void noteOn(const MidiEvent& e) {
+    // A real key can't go down twice without coming up. A note-on for a key
+    // whose voice is still held (in Poly; Mono and Legato already restrike
+    // one voice) means its note-off never arrived, or the same press came
+    // twice (a keyboard the browser sees as two MIDI inputs). Within
+    // kDoubledSec it's the same press: ignored. Later, the earlier voice is
+    // let go first, so pressing a stuck key again clears it; otherwise the
+    // next note-off would end the oldest voice and leave the new one stuck.
+    // Only keys that came in (e.input): the arpeggiator's and sequencer's
+    // notes (§4b) and a synth's own may overlap.
+    if (mode == Poly && e.input && !e.arp && e.arpLane < 0) {
+      bool down = false, doubled = false;
+      for (auto& s : slots)
+        if (keyDown(s, e)) {
+          down = true;
+          if ((e.beat - s.startBeat) * spb / sr < kDoubledSec) doubled = true;
+        }
+      const uint64_t at = samplesDone + static_cast<uint64_t>(std::max(e.sample, 0));
+      if (doubled) {
+        nDoubled.fetch_add(1, std::memory_order_relaxed);
+        log.record(LogKind::Doubled, e.channel, e.note, e.vel, at);
+        return;
+      }
+      if (down) {
+        nRepress.fetch_add(1, std::memory_order_relaxed);
+        log.record(LogKind::Repress, e.channel, e.note, e.vel, at);
+        for (auto& s : slots)
+          if (keyDown(s, e)) { s.relVel = 64.f / 127.f; releaseSlot(s, false); }
+      }
+    }
     bool first = true;
     for (auto& s : slots) if (s.state == VoicePool::State::Held) { first = false; break; }
     uint64_t serial = ++serialCounter;
@@ -1259,7 +1321,13 @@ struct Core {
       for (auto& s : slots)
         if (s.state == VoicePool::State::Held && !s.sustained && s.note == e.note && s.channel == e.channel && s.arp == e.arp && s.arpLane == e.arpLane)
           oldest = std::min(oldest, s.serial);
-      if (oldest == UINT64_MAX) return;
+      if (oldest == UINT64_MAX) {
+        if (e.input && !e.arp && e.arpLane < 0) {
+          nUnmatched.fetch_add(1, std::memory_order_relaxed);
+          log.record(LogKind::Unmatched, e.channel, e.note, rv, samplesDone + static_cast<uint64_t>(std::max(e.sample, 0)));
+        }
+        return;
+      }
       for (auto& s : slots)
         if (s.state == VoicePool::State::Held && s.serial == oldest) { s.relVel = rv; releaseSlot(s, e.arp); }
       return;
@@ -1479,6 +1547,25 @@ void Engine::advanceClock(int frames, const HostTransport& transport) { core_->a
 void Engine::panic() { core_->reqPanic.store(1); }
 PatchMeta& Engine::patchMeta() { return core_->meta; }
 const Transport& Engine::transport() const { return core_->transport; }
+
+Json Engine::diagnostics() const {
+  const detail::Core& c = *core_;
+  const uint32_t now = c.samplesNow.load(std::memory_order_relaxed);
+  Json j = Json::object();
+  j["sampleRate"] = c.sr;
+  j["seconds"] = std::round(static_cast<double>(now) / c.sr * 1000.0) / 1000.0;
+  j["voices"] = c.statActive.load();
+  Json n = Json::object();
+  n["noteOns"] = c.nNoteOns.load(std::memory_order_relaxed);
+  n["noteOffs"] = c.nNoteOffs.load(std::memory_order_relaxed);
+  n["represses"] = c.nRepress.load(std::memory_order_relaxed);
+  n["doubled"] = c.nDoubled.load(std::memory_order_relaxed);
+  n["unmatchedOffs"] = c.nUnmatched.load(std::memory_order_relaxed);
+  n["eventsLogged"] = c.log.total();
+  j["counts"] = n;
+  j["events"] = c.log.snapshot(now, c.sr);
+  return j;
+}
 
 EngineStats Engine::takeStats() {
   EngineStats s;
