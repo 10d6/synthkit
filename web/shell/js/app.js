@@ -51,6 +51,7 @@ class App {
     this.resets = new SkResets(this);     // the panels' reset buttons (reset.js)
     this.presets.listeners.add(() => this.resets.queue());
     this.undoEl = skUndoButtons(this);
+    this.diag = new Diagnostics(this);   // before MIDI: it logs what comes in (API.md §10a)
     this.midi = new MidiInput(this);
     this.keyboard = new Keyboard(this);
     // A synth with features.multi (API.md §5b) picks whole sounds in the
@@ -183,12 +184,18 @@ class App {
   // (or satisfies a Learn waiting for one) instead of reaching the synth.
   controlMidi(bytes) {
     if (!this.host && (bytes[0] & 0xf0) === 0xb0 && this.midi.takeCC(bytes[1], bytes[2])) return;
+    this.diag.midi("page controls", bytes);
     this.sendMidi(bytes);
     this.keyboard.sync(bytes);
   }
-  noteOn(n, v) { this.keyboard.light(n, true, v); this.sendMidi([0x90, n, v]); }
+  noteOn(n, v) { this.keyboard.light(n, true, v); this.diag.midi("screen keys", [0x90, n, v]); this.sendMidi([0x90, n, v]); }
   // v: the key-up (release) velocity, 1–127; 64 means "none".
-  noteOff(n, v = 64) { this.keyboard.light(n, false); this.sendMidi([0x80, n, Math.max(0, Math.min(127, Math.round(v)))]); }
+  noteOff(n, v = 64) {
+    const bytes = [0x80, n, Math.max(0, Math.min(127, Math.round(v)))];
+    this.keyboard.light(n, false);
+    this.diag.midi("screen keys", bytes);
+    this.sendMidi(bytes);
+  }
 
   // ---- messages (API.md §9b) -----------------------------------------------
 
@@ -255,6 +262,11 @@ class App {
     this.levelEl = h("div", { class: "level", "aria-hidden": "true" }, this.levelFill);
     this.voices = h("span", { class: "voice-count", text: "0 voices" });
     this.panicBtn = h("button", { type: "button", class: "btn btn-quiet", title: "Silence everything right now", onclick: () => this.panic() }, "Stop all sound");
+    // Beside it, diagnostics (API.md §10a): a report of what the synth was
+    // given, made on demand or (if turned on) whenever Stop all sound is pressed.
+    this.diagBtn = h("button", { type: "button", class: "btn btn-quiet btn-icon diag-btn", title: "Diagnostics", "aria-label": "Diagnostics", "aria-haspopup": "menu",
+      onclick: () => this.diag.menu(this.diagBtn) }, "▾");
+    this.panicEl = h("span", { class: "panic-group" }, this.panicBtn, this.diagBtn);
     const icon = svg("svg", { viewBox: "0 0 16 16", width: 16, height: 16, "aria-hidden": "true" });
     icon.append(svg("circle", { cx: 8, cy: 8, r: 6.25, fill: "none", stroke: "currentColor", "stroke-width": 1.5 }),
                 svg("path", { d: "M8 1.75 A6.25 6.25 0 0 1 8 14.25 Z", fill: "currentColor" }));
@@ -271,7 +283,7 @@ class App {
     return h("div", { class: "tempo" }, this.play, h("label", { class: "bpm" }, this.bpm, h("span", { text: "BPM" })), this.sig, this.clockSel, this.beats);
   }
 
-  panic() { this.audio.send({ t: "panic" }); this.keyboard.clearLights(); }
+  panic() { this.audio.send({ t: "panic" }); this.keyboard.clearLights(); this.diag.panicked(); }
 
   header() {
     const info = this.model.info.synth;
@@ -286,7 +298,7 @@ class App {
       (this.sound || this.presets).root,
       this.undoEl,
       this.outputEl,
-      h("div", { class: "top-actions" }, this.panicBtn, this.themeBtn));
+      h("div", { class: "top-actions" }, this.panicEl, this.themeBtn));
   }
 
   buildBeats() {
@@ -337,7 +349,7 @@ class App {
     if (!this.host) parts.push(this.banner);
     if (!this.host && o.midi !== false && !this.midi.root.parentNode) parts.push(this.midi.root);
     if (o.tempo !== false && !this.noTempo && !this.tempoShown) parts.push(this.tempoEl());
-    if (o.panic !== false && !this.panicBtn.parentNode) parts.push(this.panicBtn);
+    if (o.panic !== false && !this.panicEl.parentNode) parts.push(this.panicEl);
     if (o.space === false) this.spacePlays = false;
     this.banner.classList.add("in-hostbar");
     const bar = h("div", { class: "sk-hostbar" }, ...parts);
@@ -390,6 +402,7 @@ class App {
     if (this.host) this.followHost(mtr);
     for (const fn of this.meterTaps || []) { try { fn(mtr); } catch (err) { console.error(err); } }
     this.modMeters.update(mtr.mod, mtr.voices > 0);
+    this.lastVoices = mtr.voices;
     this.voices.textContent = `${mtr.voices} ${mtr.voices === 1 ? "voice" : "voices"}`;
     const db = mtr.peak > 0 ? 20 * Math.log10(mtr.peak) : -100;
     const n = Math.max(0, Math.min(1, (db + 48) / 48));
@@ -641,7 +654,7 @@ class App {
         return el;
       case "multi": part = this.multiBar ? this.multiBar.root : null; break;   // parts, zones and saved multis (API.md §5b)
       case "output": part = this.outputEl; break;
-      case "panic": part = this.panicBtn; break;
+      case "panic": part = this.panicEl; break;
       case "undo": part = this.undoEl; break;
       case "theme": part = this.themeBtn; break;
       case "panels": {

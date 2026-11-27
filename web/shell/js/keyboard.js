@@ -284,6 +284,10 @@ class Keyboard {
   // Light keys for notes from the page (mouse, typing, a page's noteOn).
   // A lit key's colour follows the velocity it was played with.
   light(n, on, vel) {
+    // The page plays on channel 1: pressing a key the MIDI keyboard left lit
+    // on that channel (its release never arrived) ends that press in the
+    // engine (API.md §4), so its light goes too.
+    if (on) this.midiLit.delete(`0:${n}`);
     const c = (this.lit.get(n) || 0) + (on ? 1 : -1);
     if (c <= 0) this.lit.delete(n); else this.lit.set(n, c);
     if (on && vel) this.vel.set(n, vel);
@@ -302,6 +306,12 @@ class Keyboard {
       const [c, n] = id.split(":").map(Number);
       if (channel === undefined || c === channel) { this.midiLit.delete(id); this.refresh(n); }
     }
+  }
+  // Every lit key, low to high (for a diagnostics report).
+  litNotes() {
+    const notes = new Set(this.lit.keys());
+    for (const id of this.midiLit) notes.add(Number(id.split(":")[1]));
+    return [...notes].sort((a, b) => a - b);
   }
   isLit(n) {
     if (this.lit.get(n)) return true;

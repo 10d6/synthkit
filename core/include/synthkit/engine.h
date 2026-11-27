@@ -115,6 +115,13 @@ class Engine {
   EngineStats takeStats();
   const Transport& transport() const;
 
+  // Diagnostics (API.md §10a), any thread, not the audio thread (it builds
+  // JSON): the last events this engine was given, with their times before
+  // now, and counts of note-ons, note-offs and the ones that can't be right
+  // (a held key pressed again, the same press twice, a note-off with no held
+  // note). For a report when something goes wrong.
+  Json diagnostics() const;
+
  private:
   std::unique_ptr<detail::Core> core_;
 };

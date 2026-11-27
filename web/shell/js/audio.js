@@ -58,6 +58,7 @@ class Audio {
         if (m.t === "meter" && this.onMeter) this.onMeter(m);
         else if (m.t === "msgs" && this.onMessages) this.onMessages(m.list);
         else if (m.t === "params" && this.onParams) this.onParams(m.changes);
+        else if (m.t === "diag") this.diagReply(m);
         else if (m.t === "log") { console.error("[synth]", m.msg); if (this.onLog) this.onLog(m.msg); }
       };
       this.node.onprocessorerror = () => { if (this.onLog) this.onLog("The synth stopped with an error. Reload the page to restart it."); };
@@ -77,6 +78,25 @@ class Audio {
 
   send(msg) { if (this.node) this.node.port.postMessage(msg); }
   midi(bytes) { this.send({ t: "midi", d: bytes }); }
+
+  // Diagnostics (API.md §10a): the engine's recent events and counts, or
+  // null if the sound hasn't started (or doesn't answer within a second).
+  diagnostics() {
+    if (!this.node) return Promise.resolve(null);
+    this.diagWait = this.diagWait || new Map();
+    const id = (this.diagId = (this.diagId || 0) + 1);
+    return new Promise((resolve) => {
+      this.diagWait.set(id, resolve);
+      this.send({ t: "diag", id });
+      setTimeout(() => { if (this.diagWait.delete(id)) resolve(null); }, 1000);
+    });
+  }
+  diagReply(m) {
+    const resolve = this.diagWait && this.diagWait.get(m.id);
+    if (!resolve) return;
+    this.diagWait.delete(m.id);
+    try { resolve(JSON.parse(m.json)); } catch (e) { resolve(null); }
+  }
 
   // Sink interface used by Model.
   // part(): which part an edit is for (a multi's selected part).

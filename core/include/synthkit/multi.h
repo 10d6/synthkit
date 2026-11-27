@@ -117,6 +117,13 @@ class Multi {
   // Largest figures since the last call, summed voices.
   EngineStats takeStats();
 
+  // Diagnostics (API.md §10a), any thread but the audio thread:
+  // {"router": {represses, doubled, events}, "parts": [{"part": i,
+  // …Engine::diagnostics()}]} for the parts in use. The router deals with a
+  // key pressed again while held before the parts see it (they get its
+  // note-off, then the note-on), so its findings are here.
+  Json diagnostics() const;
+
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;

@@ -365,6 +365,19 @@ size (the kit checks this, §10).
   returns to the previous held note. Mono retriggers envelopes. Legato
   retriggers only when no other key was held. `glide` applies in mono and
   legato, at a constant time per glide.
+- **A key pressed again while held.** A real key can't go down twice without
+  coming up, so in Poly a note-on for a key that came in (`MidiEvent::input`:
+  from the host, the page or a MIDI keyboard) whose voice is still held (same
+  note and channel, not held by a pedal) means its note-off never
+  arrived (lost by the keyboard, the OS or the browser) or the same press
+  came twice (a keyboard the browser sees as two MIDI inputs). Within 30 ms
+  it's the same press: ignored, and either note-off ends the note. Later, the
+  earlier voice is released first, so pressing a stuck key again clears it.
+  Other channels, keys held by the sustain or sostenuto pedal, the
+  arpeggiator's and sequencer's notes (which may overlap, §4b) and a synth's
+  own notes (`ctx.schedule`, a new event through `ctx.out`) still stack.
+  Mono and legato already restrike their one voice. Both cases are counted
+  and logged for diagnostics (§10a).
 - **Unison** voices are spread across `±unisonDetune` cents and panned across
   `unisonSpread`, each at 1/√n gain.
 - **Release velocity.** A note-off's velocity is how quickly the key came
@@ -492,8 +505,12 @@ void processEvents(EventContext& ctx) override {
 | `ctx.messages()`, `ctx.post(m, {values})` | messages from the page since the last block, and sending one back (§9b) |
 
 Events are `MidiEvent`s (`type`, `note`, `vel`, `gain` (§5b), `cc`, `value`, `channel`,
-`sample`, `beat`, `tag`, `arp` and `arpLane` (§4b), plus `isNoteOn()`, `isNoteOff()`, `isCC(n)`). Build
+`sample`, `beat`, `tag`, `arp` and `arpLane` (§4b), `input`, plus `isNoteOn()`, `isNoteOff()`, `isCC(n)`). Build
 them with `NoteOn{note, vel, ch}`, `NoteOff{note, ch}`, `CC{number, value, ch}`.
+`input` is true for an event that came in from outside (the host, the page, a
+MIDI keyboard): `ctx.in()`'s events have it, and `ctx.out(e)` keeps it; events
+a synth builds or schedules don't. The voice stage treats only these as keys
+(a key pressed again while held, §4).
 
 - **Beats are quarter notes**, like a host's PPQ position.
 - **The clock always runs.** When the host is stopped, the kit keeps counting
@@ -502,7 +519,9 @@ them with `NoteOn{note, vel, ch}`, `NoteOff{note, ch}`, `CC{number, value, ch}`.
 - Scheduled notes go through the normal voice stage: tuning, voice allocation
   and modulation all apply. Note-offs match the oldest held note with the same
   number and channel. Use a different channel for generated notes if they
-  must not collide with played keys.
+  must not collide with played keys. (The rule that a key pressed again while
+  held lets its earlier voice go, §4, is for keys that came in, `e.input`:
+  scheduled notes and a synth's own never trigger it.)
 - Pending events live in a fixed-size queue (`features.eventQueue`). If it
   fills, new events are dropped, except note-offs, which replace a pending
   non-note-off. Drops are counted, and the checks fail on any.
@@ -1001,7 +1020,11 @@ Velocity layers are the same thing on the velocity axis: `[1, 90]` with
 notes it started, and its note-off goes to the same ones, whatever the zones,
 the layout or a transpose are by then. Editing zones while keys are held is
 safe: held notes finish where they began and new ones use the new layout. A
-key struck twice before it's let go needs two note-offs, as with an engine.
+key struck again before it's let go lets its earlier routes go first, as an
+engine lets a held key's earlier voice go (§4): a real key can't go down twice,
+so its note-off was lost (or, within 30 ms, the same press arrived twice, which
+is ignored). One note-off then ends it, so pressing a stuck key again clears
+it; the router counts and logs both for diagnostics (§10a).
 Taking a part out of use (`layout().parts` goes down) stops its notes at
 once. Poly pressure follows the key; CCs, pitch bend and channel pressure go
 to every part with a zone that listens to the event's channel (all, for a
@@ -1917,6 +1940,47 @@ python3 synthkit/tools/stress.py build/<name>_render 100 --multi multis/<multi>.
 
 `--multi` plays the passages through a multi (the keys go through its zones),
 with `id=value` set on every part.
+
+## 10a. Diagnostics: when something goes wrong while playing
+
+Tests play ideal MIDI. A player's keyboard, OS, browser or DAW can lose a
+note-off, deliver a key twice or send something unexpected, and that only
+shows up while playing. Diagnostics put what the synth was given, and what it
+made of it, in a report the player can copy and send. Nothing to declare:
+every synth has it.
+
+**For the player.** A small ▾ beside *Stop all sound* opens a menu:
+
+- **Diagnostics on / off** (off by default; remembered like the theme, in
+  the browser or the plugin's shared settings). On, pressing *Stop all
+  sound* also makes a report: that's the moment something just went wrong.
+- **Make a diagnostics report**, on or off.
+
+The report opens in a box, copied to the clipboard where the page may (in
+the plugin, the plugin copies it), selectable otherwise, with Download in the
+browser. It's JSON, one event per line:
+
+| Field | What |
+|---|---|
+| `trigger`, `time`, `synth`, `where`, `browser` | what made it, when, which synth and version, browser or plugin |
+| `midiInputs`, `midiInputChosen` | the page's MIDI inputs and the one chosen ("all" or an id): one keyboard listed twice means every key arrives twice |
+| `voicesShown`, `keysLit` | the voice count and the lit keys at the time |
+| `pageMidi` | the last 1000 messages the page got: `[seconds before, from, "status data1 data2" (hex), 1 if passed on]`. `from` is the input's name, `screen keys` (on-screen and computer keyboard) or `page controls` (wheels, pedals, knobs). Clock and active sensing are left out. In the plugin the DAW's MIDI doesn't pass the page: see `engine` |
+| `engine.parts[]` | per part in use: `counts` (`noteOns`, `noteOffs`, `represses`, `doubled`, `unmatchedOffs`, `eventsLogged`), `voices`, `seconds` since start, and `events`, the last 512 the part was given: `[seconds before, kind, channel 1–16, note or cc, value]`, with kinds `on`, `off`, `cc`, `bend`, `pressure`, `polyPressure`, and the engine's own findings `repress` (a key pressed again while held, §4), `doubled`, `unmatchedOff` (a note-off for no held voice: stolen, or never on), `allNotesOff`, `panic` |
+| `engine.router` | a Multi's (§5b): `represses`, `doubled` and their `events` (it deals with a re-press before the parts see it) |
+| `engine.plugin` | in the plugin: `format` (VST3, AU…), `host`, `sampleRate`, `blockSize` |
+
+**Cost.** The engine writes each event into a fixed ring of 32-bit atomics
+(no allocation, no locks; a few stores per event); a report reads it from
+another thread, skipping an entry overwritten meanwhile. The page keeps a
+small array per MIDI message. Neither costs anything measurable, so they're
+always kept: a report made after the fact still has what led up to it.
+
+**For adapters and tools.** `Engine::diagnostics()` and
+`Multi::diagnostics()` (`engine.h`, `multi.h`) return the JSON above
+(`engine` part), from any thread but the audio thread. The browser's worklet
+answers `{t: "diag"}` between blocks; the plugin's page bridge answers it on
+the message thread and also takes `{t: "clipboard", text}`.
 
 ## 11. The browser build
 

@@ -22,6 +22,21 @@ class HostAudio {
   send(msg) { window.__JUCE__.backend.emitEvent("sk", msg); }
   midi(bytes) { this.send({ t: "midi", d: bytes }); }
 
+  // Diagnostics (API.md §10a), as Audio.diagnostics(): the plugin answers
+  // with the engine's report and the host it runs in.
+  diagnostics() {
+    this.diagWait = this.diagWait || new Map();
+    const id = (this.diagId = (this.diagId || 0) + 1);
+    return new Promise((resolve) => {
+      this.diagWait.set(id, resolve);
+      this.send({ t: "diag", id });
+      setTimeout(() => { if (this.diagWait.delete(id)) resolve(null); }, 1000);
+    });
+  }
+  // The plugin puts text on the system clipboard (a plugin window's page may
+  // not be allowed to).
+  copyText(text) { this.send({ t: "clipboard", text }); return Promise.resolve(true); }
+
   sink(part = () => 0) {
     return {
       param: (i, v) => this.send({ t: "param", i, v, p: part() }),
@@ -47,6 +62,9 @@ class HostAudio {
       if (this.onLog) this.onLog(m.msg, m.kind);
     } else if (m.t === "msgs") {
       if (this.onMessages) this.onMessages(m.list || []);
+    } else if (m.t === "diag") {
+      const resolve = this.diagWait && this.diagWait.get(m.id);
+      if (resolve) { this.diagWait.delete(m.id); try { resolve(JSON.parse(m.json)); } catch (e) { resolve(null); } }
     } else if (this.onHost) {
       this.onHost(m);
     }

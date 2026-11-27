@@ -337,6 +337,19 @@ SK_EXPORT(sk_set_patch_tempo) void sk_set_patch_tempo(double bpm, int num, int d
 SK_EXPORT(sk_all_notes_off) void sk_all_notes_off() { if (gMulti) gMulti->allNotesOff(); else gEngine->allNotesOff(); }
 SK_EXPORT(sk_panic) void sk_panic() { if (gMulti) gMulti->panic(); else gEngine->panic(); }
 
+// Diagnostics (API.md §10a): the engine's recent events and counts, as JSON.
+// A Multi's is {"parts": [...]}; a plain engine's is put in the same form.
+SK_EXPORT(sk_diagnostics) const char* sk_diagnostics() {
+  if (gMulti) return ret(gMulti->diagnostics().dump(0));
+  sk::Json d = gEngine->diagnostics();
+  d["part"] = 1;
+  sk::Json parts = sk::Json::array();
+  parts.push(std::move(d));
+  sk::Json j = sk::Json::object();
+  j["parts"] = std::move(parts);
+  return ret(j.dump(0));
+}
+
 // ---- Multis (API.md §5b) -------------------------------------------------------------
 
 // The part the single-engine exports act on (0 for a synth without multis).

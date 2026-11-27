@@ -48,7 +48,13 @@ class MidiInput {
     for (const i of inputs) this.select.append(h("option", { value: i.id, text: i.name || i.id }));
     if (![...this.select.options].some((o) => o.value === this.choice)) this.choice = "all";
     this.select.value = this.choice;
-    for (const i of inputs) i.onmidimessage = (e) => { if (this.choice === "all" || this.choice === i.id) this.message(e.data, e.timeStamp); };
+    for (const i of inputs) i.onmidimessage = (e) => {
+      const used = this.choice === "all" || this.choice === i.id;
+      // Diagnostics (API.md §10a): every message from every input, and whether
+      // it was passed on (clock and active sensing would crowd the rest out).
+      if (e.data[0] < 0xf0) this.app.diag.midi(i.name || i.id, e.data, used, e.timeStamp);
+      if (used) this.message(e.data, e.timeStamp);
+    };
   }
   choose(id) { this.choice = id; skStore.set("synthkit:midi:input", id); }
 
