@@ -2676,14 +2676,12 @@ TEST(multi_scale_snaps_to_nearest) {
   CHECK(multiScaleSnap(127, major, 1) == 127 || multiScaleSnap(127, major, 1) == 126);
   CHECK(multiScaleSnap(127, penta, 0) <= 127 && multiScaleSnap(0, penta, 1) >= 0);   // stays in MIDI range
 
-  // A part in a scale: a key out of it plays the snapped note, the off finds it,
-  // and two keys landing on one note keep it until both are up.
+  // A part in a scale is its patch's sk.scale: a key out of it plays the
+  // snapped note, the off finds it, and two keys landing on one note keep it
+  // until both are up.
   MultiRig r(1);
-  MultiLayout l;
-  l.parts = 1;
-  l.part[0].scale = major;
-  l.zones = {zone(0, 0, 127)};
-  r.m->setLayout(l);
+  r.layout(1, {zone(0, 0, 127)});
+  r.m->part(0).params().set(r.m->part(0).params().find("sk.scale"), major);
   r.run(2000, {{0, on(61)}});
   CHECK(r.active(0) == 1);
   r.run(2000, {{0, on(60)}});                                  // C as well: retriggers the same note
@@ -2692,37 +2690,95 @@ TEST(multi_scale_snaps_to_nearest) {
   r.run(96000, {{0, off(60)}});
   r.run(96000);
   CHECK(r.active(0) == 0);
-
-  // Saved by name, with the key; an unknown name warns and plays every note.
-  r.m->setLayout(l);
-  Json j = r.m->layoutJson();
-  CHECK(j["parts"][0]["scale"].string() == "Major" && j["parts"][0]["scaleKey"].number(-1) == 0);
-  j["parts"][0]["scaleKey"] = 9;
-  CHECK(r.m->setLayoutJson(j).empty() && r.m->layout().part[0].scaleKey == 9);
-  j["parts"][0]["scale"] = "Martian";
-  auto w = r.m->setLayoutJson(j);
-  CHECK(w.size() == 1 && r.m->layout().part[0].scale == 0);
-  CHECK(!r.m->layoutJson()["parts"][0].contains("scale"));    // Chromatic isn't written
 }
 
-TEST(multi_mix_level_pan_mute_solo) {
-  auto level = [](std::function<void(MultiLayout&)> edit) {
+// The patch's transpose, scale and pan (sk.transpose, sk.scale, sk.scaleKey,
+// sk.pan): every engine has them, so a voice keeps them wherever it plays.
+TEST(engine_transpose_scale_pan) {
+  Harness h;
+  h.eng->params().set(h.param("sk.transpose"), 7);
+  h.run(2000, {{0, on(60)}});
+  CHECK(gLog.starts.size() == 1 && gLog.starts[0].note == 67);
+  // The note-off finds the note its key started, even after the setting moved.
+  h.eng->params().set(h.param("sk.transpose"), -5);
+  h.run(96000, {{0, off(60)}});
+  CHECK(activeNow(h) == 0);
+
+  // A scale: C# in C major plays C; with C held too, the note lasts until both keys are up.
+  Harness s;
+  s.eng->params().set(s.param("sk.scale"), multiScaleIndex("Major"));
+  s.run(2000, {{0, on(61)}});
+  CHECK(gLog.starts.size() == 1 && gLog.starts[0].note == 60);
+  s.run(2000, {{0, on(60)}});                                  // the same note again: retriggered
+  CHECK(gLog.starts.size() == 2 && gLog.starts[1].note == 60);
+  s.run(2000, {{0, off(61)}});
+  CHECK(activeNow(s, 0) >= 1);                                 // C still down
+  s.run(96000, {{0, off(60)}});
+  CHECK(activeNow(s) == 0);
+  // The key moves the scale: D major has C#, so C# plays.
+  s.eng->params().set(s.param("sk.scaleKey"), 2);
+  s.run(2000, {{0, on(61)}});
+  CHECK(gLog.starts.back().note == 61);
+  s.run(96000, {{0, off(61)}});
+
+  // Settings at their defaults change nothing: a re-press is still the engine's own.
+  Harness d;
+  d.run(2000, {{0, on(60)}});
+  d.run(4800, {{0, on(60)}});
+  d.run(96000, {{0, off(60)}});
+  CHECK(activeNow(d) == 0 && d.eng->diagnostics()["counts"]["represses"].number() == 1);
+
+  // Pan is a balance: hard right silences the left side, centre leaves it alone.
+  auto left = [](double pan) {
+    Harness p;
+    p.eng->params().set(p.param("sk.pan"), pan);
+    auto out = p.run(12000, {{0, on(60)}});
+    return rmsDb(out, 4000, 12000);
+  };
+  const double base = left(0);
+  CHECK(left(1) < base - 60);
+  CHECK_NEAR(left(-1) - base, 0, 0.01);
+  CHECK_NEAR(left(0.5) - base, 20 * std::log10(std::cos(0.25 * 3.14159265)), 0.1);
+}
+
+TEST(multi_mix_mute_solo) {
+  auto level = [](std::function<void(MultiRig&, MultiLayout&)> edit) {
     MultiRig r(2);
     MultiLayout l;
     l.parts = 2;
     l.zones = {zone(0, 0, 127)};
-    edit(l);
+    edit(r, l);
     r.m->setLayout(l);
     auto out = r.run(12000, {{0, on(60)}});
     return rmsDb(out, 4000, 12000);
   };
-  double base = level([](MultiLayout&) {});
-  CHECK_NEAR(level([](MultiLayout& l) { l.part[0].levelDb = -6; }) - base, -6, 0.05);
-  CHECK_NEAR(level([](MultiLayout& l) { l.part[0].pan = 1; }), -200, 200);   // hard right: the left channel is (nearly) silent
-  CHECK(level([](MultiLayout& l) { l.part[0].pan = 1; }) < base - 60);
-  CHECK(level([](MultiLayout& l) { l.part[0].mute = true; }) < -100);
-  CHECK(level([](MultiLayout& l) { l.part[1].solo = true; }) < -100);        // soloing the other part
-  CHECK_NEAR(level([](MultiLayout& l) { l.part[0].solo = true; }) - base, 0, 0.01);
+  double base = level([](MultiRig&, MultiLayout&) {});
+  CHECK_NEAR(level([](MultiRig& r, MultiLayout&) { r.m->part(0).params().set(r.m->part(0).params().find("master"), -6); }) - base, -6, 0.05);
+  CHECK(level([](MultiRig& r, MultiLayout&) { r.m->part(0).params().set(r.m->part(0).params().find("sk.pan"), 1); }) < base - 60);
+  CHECK(level([](MultiRig&, MultiLayout& l) { l.part[0].mute = true; }) < -100);
+  CHECK(level([](MultiRig&, MultiLayout& l) { l.part[1].solo = true; }) < -100);        // soloing the other part
+  CHECK_NEAR(level([](MultiRig&, MultiLayout& l) { l.part[0].solo = true; }) - base, 0, 0.01);
+}
+
+// Multis saved when a part's level, pan and scale were the part's own: they
+// move into its patch.
+TEST(multi_old_part_settings_move_into_the_patch) {
+  MultiRig r(2);
+  auto res = r.m->load(Json::parse(R"({"format":"sk.multi","parts":[
+    {"patch":{"name":"A","params":{"master":-3}},"level":-4.5,"pan":0.25,"scale":"Major Pentatonic","scaleKey":2},
+    {"patch":{"name":"B","params":{"master":3}},"level":9},
+    {"patch":{"name":"C"},"scale":"Martian"}]})"));
+  CHECK(res.ok);
+  ParamStore& a = r.m->part(0).params();
+  CHECK_NEAR(a.get(a.find("master")), -7.5, 1e-4);
+  CHECK_NEAR(a.get(a.find("sk.pan")), 0.25, 1e-6);
+  CHECK(std::lround(a.get(a.find("sk.scale"))) == multiScaleIndex("Major Pentatonic") && std::lround(a.get(a.find("sk.scaleKey"))) == 2);
+  ParamStore& b = r.m->part(1).params();
+  CHECK_NEAR(b.get(b.find("master")), 6, 1e-4);                 // 3 + 9 doesn't fit: the most it can be, and a warning
+  int clipped = 0;
+  for (auto& w : res.warnings) clipped += w.find("level") != std::string::npos;
+  CHECK(clipped == 1);
+  CHECK(!r.m->save()["parts"][0].contains("level") && !r.m->save()["parts"][0].contains("scale"));
 }
 
 TEST(multi_layout_is_corrected) {
@@ -2760,11 +2816,14 @@ TEST(multi_save_and_load) {
   MultiLayout l;
   l.parts = 2;
   l.zones = {z, y};
-  l.part[1].levelDb = -4.5f;
-  l.part[1].pan = 0.25f;
   l.part[1].mute = true;
   a.m->setLayout(l);
+  // The page's own state rides along with the layout.
+  Json ui = a.m->layoutJson();
+  ui["ui"] = Json::parse(R"({"layersOpen":false})");
+  CHECK(a.m->setLayoutJson(ui).empty());
   Json saved = a.m->save("Split");
+  CHECK(saved["ui"]["layersOpen"].isBool() && !saved["ui"]["layersOpen"].boolean());
   CHECK(saved["format"].string() == "sk.multi" && saved["name"].string() == "Split" && saved["parts"].size() == 2);
 
   MultiRig b(3);
@@ -2788,6 +2847,7 @@ TEST(multi_save_and_load) {
   CHECK(hand.ok && hand.warnings.size() == 1);
   CHECK(b.m->layout().parts == 2 && b.m->layout().zones.size() == 2);
   CHECK(b.m->part(1).patchMeta().name == "Two");
+  CHECK(!b.m->save().contains("ui"));                            // a multi without one starts afresh
 }
 
 TEST(multi_needs_the_feature) {

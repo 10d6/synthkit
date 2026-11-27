@@ -6,7 +6,9 @@ const KIT_PANELS = {
     ["voiceMode", "Mode"], ["glide", "Glide"], ["unison", "Unison"], ["unisonDetune", "Detune"],
     ["unisonSpread", "Spread"], ["bendRange", "Bend"],
     ["sk.halfPedal", "Half pedal", "For a continuous sustain pedal: part way down, notes you let go of fade slowly instead of stopping or ringing on, like a piano's dampers. Off: the pedal is simply down past half way. On/off pedals work the same either way."]] },
-  master: { title: "Output", controls: [["master", "Level"], ["sk.a4", "A4"]] },
+  master: { title: "Output", controls: [["master", "Level"], ["sk.pan", "Pan"], ["sk.transpose", "Transpose"],
+    ["sk.scale", "Scale", "Keeps the keys you play in a scale: a key outside it plays the nearest note of the scale (ties go down). The sequencer's own notes follow its own scale."],
+    ["sk.scaleKey", "Key"], ["sk.a4", "A4"]] },
   // The arpeggiator (features.arp, API.md §4b).
   arp: { title: "Arp / Sequencer", feature: "arp.on",
     info: "Arp plays the keys you hold one after another, locked to the tempo. Sequencer lets each key play as usual and adds its own copy of the pattern below: notes at intervals from that key. Latch keeps it going after you let go; the next key you press starts afresh.",

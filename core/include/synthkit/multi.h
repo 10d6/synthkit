@@ -39,18 +39,13 @@ struct Zone {
   float gainDb = 0;                   // on top of the fades (-120…+12)
 };
 
+// A part's level, pan, transpose and scale are its patch's (master, sk.pan,
+// sk.transpose, sk.scale, sk.scaleKey: API.md §3), so they go with the patch.
 struct PartSettings {
-  float levelDb = 0;                  // -120…+12
-  float pan = 0;                      // balance, -1…1; 0 leaves the part as it is
   bool mute = false, solo = false;
-  // Keeps the part in a scale: each note (after the zone's transpose) moves
-  // to the nearest note of the scale, ties going down. 0 is Chromatic (off);
-  // the list is the sequencer's (multiScaleName). Saved by name.
-  int scale = 0;
-  int scaleKey = 0;                   // the scale's root, 0 = C … 11 = B
 };
 
-// The scales a part can be kept in (the sequencer's list; 0 is Chromatic).
+// The scales a patch can be kept in (sk.scale: the sequencer's list; 0 is Chromatic).
 int multiScaleCount();
 const char* multiScaleName(int index);
 int multiScaleIndex(const std::string& name);   // -1 if there's no such scale
@@ -101,10 +96,12 @@ class Multi {
   // Presets named in a multi's parts ("preset": "pads/warm") come from here.
   void setPresetResolver(PresetResolver r);
 
-  // Just the layout as JSON, `{"parts":[{level, pan, mute, solo}…], "zones":[…]}`
+  // Just the layout as JSON, `{"parts":[{mute, solo}…], "zones":[…], "ui":{…}}`
   // in the form save() uses, for a page or plugin that edits it. setLayoutJson
   // is setLayout() from that form; fields left out take their defaults, and a
-  // missing "zones" is one zone per part (every part plays every key).
+  // missing "zones" is one zone per part (every part plays every key). "ui" is
+  // the page's own state for this multi (any object, kept as it is; left out,
+  // the current one stays).
   Json layoutJson() const;
   std::vector<std::string> setLayoutJson(const Json& layout);
 

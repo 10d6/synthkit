@@ -44,23 +44,23 @@ class Parameter : public juce::AudioProcessorParameterWithID {
   int part_;
 };
 
-// A part's level, balance, mute or solo (part of the multi's layout, not of
-// any engine). The host sets the value here; the message thread applies it to
+// A part's mute or solo (part of the multi's layout, not of any engine; a
+// part's level and pan are its patch's master and sk.pan, host parameters
+// like the rest of its patch). The host sets the value here; the message thread applies it to
 // the layout, and a change made in the window shows up here (Processor::syncMix).
 class MixParameter : public juce::AudioProcessorParameterWithID {
  public:
-  enum Kind { Level, Pan, Mute, Solo, kinds };
-  static constexpr float kMinDb = -60, kMaxDb = 12;
+  enum Kind { Mute, Solo, kinds };
   MixParameter(int part, Kind kind);
 
   float getValue() const override { return norm_.load(std::memory_order_relaxed); }
   void setValue(float norm) override { norm_.store(juce::jlimit(0.f, 1.f, norm), std::memory_order_relaxed); }
-  float getDefaultValue() const override;
+  float getDefaultValue() const override { return 0; }
   juce::String getText(float norm, int maxLen) const override;
   float getValueForText(const juce::String& text) const override;
-  int getNumSteps() const override { return kind_ >= Mute ? 2 : AudioProcessorParameter::getNumSteps(); }
-  bool isDiscrete() const override { return kind_ >= Mute; }
-  bool isBoolean() const override { return kind_ >= Mute; }
+  int getNumSteps() const override { return 2; }
+  bool isDiscrete() const override { return true; }
+  bool isBoolean() const override { return true; }
 
   int part() const { return part_; }
   Kind kind() const { return kind_; }

@@ -9,6 +9,7 @@
 #include <stdexcept>
 
 #include "synthkit/error.h"
+#include "synthkit/multi.h"   // multiScaleSnap (the patch's scale, sk.scale)
 
 #include "arp.h"
 #include "eventlog.h"
@@ -239,6 +240,13 @@ struct Core {
   std::vector<std::unique_ptr<CustomSlotBase>> customs;
 
   int pMaster = -1, pVoiceMode = -1, pGlide = -1, pBend = -1, pUnison = -1, pUniDetune = -1, pUniSpread = -1, pA4 = -1;
+  int pPan = -1, pTranspose = -1, pScale = -1, pScaleKey = -1;
+  // The patch's transpose and scale (sk.transpose, sk.scale, sk.scaleKey),
+  // applied to keys as they arrive. Each key remembers the note it started,
+  // so its note-off finds it whatever the settings are by then, and a note
+  // two keys share (a scale sends both to it) stops with the last of them.
+  std::vector<int8_t> keyNote = std::vector<int8_t>(16 * 128, -1);
+  std::vector<uint8_t> noteKeys = std::vector<uint8_t>(16 * 128, 0);
   struct EnvP { int a, d, s, r, vel, relVel; };
   int pHalfPedal = -1;
   std::vector<EnvP> envP;
@@ -416,6 +424,14 @@ struct Core {
       pUniSpread = b.count(); b.addKit("unisonSpread").name("Unison Spread").range(0, 1).def(0.5).group("Voices");
     }
     pA4 = b.count(); b.addKit("sk.a4").name("A4 Tuning").range(400, 480).def(440).unit("Hz").group("Tuning");
+    pPan = b.count(); b.addKit("sk.pan").name("Pan").range(-1, 1).def(0).group("Master");
+    pTranspose = b.count(); b.addKit("sk.transpose").name("Transpose").range(-48, 48).integer().def(0).unit("st").group("Tuning");
+    {
+      std::vector<std::string> scales;
+      for (int i = 0; i < detail::arpScaleCount(); ++i) scales.emplace_back(detail::arpScale(i).name);
+      pScale = b.count(); b.addKit("sk.scale").name("Scale").choices(scales).group("Tuning");
+      pScaleKey = b.count(); b.addKit("sk.scaleKey").name("Scale Key").choices({"C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"}).group("Tuning");
+    }
     for (int e = 1; e <= f.standardEnvelopes; ++e) {
       std::string p = "env" + std::to_string(e) + ".";
       std::string n = "Env " + std::to_string(e) + " ";
@@ -640,9 +656,11 @@ struct Core {
       for (auto& q : queue) q.used = false;
       arp.reset();
       sequencer.reset();
+      clearKeyMap();
     }
     if (reqAllOff.exchange(0)) {
       allNotesOff();
+      clearKeyMap();
       arp.requestAllOff();
       sequencer.requestAllOff();
     }
@@ -667,6 +685,7 @@ struct Core {
       e.sample = std::clamp(e.sample < 0 ? 0 : e.sample - offset, 0, n - 1);
       e.beat = blockStart + e.sample / spb;
       e.input = true;  // a key or controller from outside; the synth's own events aren't
+      if (!mapKey(e, n)) continue;
       inEv[static_cast<std::size_t>(inCount++)] = e;
       // Controllers mapped to parameters (ParamDef::cc) move them at the
       // CC's own sample (below), so the result doesn't depend on the host's
@@ -887,11 +906,15 @@ struct Core {
     synth->processGlobal(gctx, io);
 
     Ramp master{dsp::dbToGain(gprev[pMaster]), dsp::dbToGain(gvals[pMaster]), len};
+    // sk.pan: a balance, as a Multi's parts had (centre leaves both sides alone).
+    auto side = [](float pan, bool right) { return (right ? pan < 0 : pan > 0) ? std::cos(std::fabs(pan) * 1.5707963f) : 1.f; };
+    const float pan0 = std::clamp(gprev[pPan], -1.f, 1.f), pan1 = std::clamp(gvals[pPan], -1.f, 1.f);
+    Ramp panL{side(pan0, false), side(pan1, false), len}, panR{side(pan0, true), side(pan1, true), len};
     float peak = 0;
     const bool limit = limiterOn.load(std::memory_order_relaxed);
     for (int i = 0; i < len; ++i) {
       float g = master.at(i);
-      float l = io.left[i] * g, r = io.right[i] * g;
+      float l = io.left[i] * g * panL.at(i), r = io.right[i] * g * panR.at(i);
       if (!std::isfinite(l)) l = 0;
       if (!std::isfinite(r)) r = 0;
       peak = std::max(peak, std::max(std::fabs(l), std::fabs(r)));
@@ -900,6 +923,72 @@ struct Core {
       io.right[i] = r;
     }
     atomicMax(statPeak, peak);
+  }
+
+  // The patch's transpose and scale for one incoming event (in place).
+  // False: drop it (a key let go while another still holds its note). Before
+  // a retrigger (a second key reaching a sounding note) it adds that note's
+  // note-off to the input, so the synth sees one note, as with any re-press.
+  bool mapKey(MidiEvent& e, int n) {
+    const bool on = e.isNoteOn(), off = e.isNoteOff();
+    if (!on && !off && e.type != MidiEvent::Type::PolyPressure) return true;
+    const int ch = e.channel & 15;
+    int8_t& kn = keyNote[static_cast<std::size_t>(ch * 128 + (e.note & 127))];
+    auto keysOn = [&](int note) -> uint8_t& { return noteKeys[static_cast<std::size_t>(ch * 128 + (note & 127))]; };
+    if (e.type == MidiEvent::Type::PolyPressure) {
+      if (kn >= 0) e.note = kn;
+      else e.note = mapNote(e.note);
+      return true;
+    }
+    if (off) {
+      if (kn < 0) return true;           // pressed before anything was remembered: as it is
+      const int note = kn;
+      kn = -1;
+      uint8_t& h = keysOn(note);
+      if (h > 0) --h;
+      if (h > 0) return false;           // another key still holds this note
+      e.note = note;
+      return true;
+    }
+    const int note = mapNote(e.note);
+    if (kn >= 0) {
+      // The same key again before its note-off: the engine deals with that
+      // (a re-press, or the same press arriving twice), as without a map.
+      if (kn == note) { e.note = note; return true; }
+      // The settings changed while it was held: let its old note go.
+      const int old = kn;
+      uint8_t& h = keysOn(old);
+      if (h > 0) --h;
+      if (h == 0) pushInput(e, old, n);
+    }
+    uint8_t& h = keysOn(note);
+    if (h > 0) pushInput(e, note, n);    // another key is sounding it: retrigger
+    if (h < 255) ++h;
+    kn = static_cast<int8_t>(note);
+    e.note = note;
+    return true;
+  }
+  // A note-off ahead of `like`, for the note given.
+  void pushInput(const MidiEvent& like, int note, int) {
+    if (inCount >= static_cast<int>(inEv.size())) { statDropped.fetch_add(1); return; }
+    MidiEvent o = like;
+    o.type = MidiEvent::Type::NoteOff;
+    o.vel = 0;
+    o.note = note;
+    inEv[static_cast<std::size_t>(inCount++)] = o;
+  }
+  int mapNote(int key) const {
+    // Stepped parameters: values[] already holds this block's setting.
+    int note = std::clamp(key + static_cast<int>(std::lround(values[static_cast<std::size_t>(pTranspose)])), 0, 127);
+    const int sc = static_cast<int>(std::lround(values[static_cast<std::size_t>(pScale)]));
+    if (sc > 0) note = std::clamp(multiScaleSnap(note, sc, static_cast<int>(std::lround(values[static_cast<std::size_t>(pScaleKey)]))), 0, 127);
+    {
+    }
+    return note;
+  }
+  void clearKeyMap() {
+    std::fill(keyNote.begin(), keyNote.end(), int8_t{-1});
+    std::fill(noteKeys.begin(), noteKeys.end(), uint8_t{0});
   }
 
   // How much longer (or shorter) a released note's envelopes take: the key-up

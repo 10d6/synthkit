@@ -41,9 +41,6 @@ struct Rt {
   std::array<Z, kMaxZones> zones{};
   std::array<float, kMaxParts> gainL{}, gainR{};
   std::array<uint32_t, kMaxParts> listens{};   // input channels (bit n) whose CCs, bend and pressure reach the part
-  std::array<bool, kMaxParts> snaps{};          // the part is kept in a scale
-  std::array<std::array<int8_t, 12>, kMaxParts> snap{};   // semitones to move a note, by its degree above the key
-  std::array<uint8_t, kMaxParts> scaleKey{};
 };
 
 Rt makeRt(const MultiLayout& l) {
@@ -59,15 +56,9 @@ Rt makeRt(const MultiLayout& l) {
   for (int p = 0; p < kMaxParts; ++p) {
     const PartSettings& s = l.part[static_cast<std::size_t>(p)];
     const bool audible = anySolo ? s.solo : !s.mute;
-    const float g = audible && p < l.parts ? dsp::dbToGain(s.levelDb) : 0.f;
-    const float pan = std::clamp(s.pan, -1.f, 1.f);
-    rt.gainL[static_cast<std::size_t>(p)] = g * (pan > 0 ? std::cos(pan * kPi * 0.5f) : 1.f);
-    rt.gainR[static_cast<std::size_t>(p)] = g * (pan < 0 ? std::cos(-pan * kPi * 0.5f) : 1.f);
-    if (s.scale > 0) {
-      rt.snaps[static_cast<std::size_t>(p)] = true;
-      rt.scaleKey[static_cast<std::size_t>(p)] = static_cast<uint8_t>(((s.scaleKey % 12) + 12) % 12);
-      for (int d = 0; d < 12; ++d) rt.snap[static_cast<std::size_t>(p)][static_cast<std::size_t>(d)] = static_cast<int8_t>(multiScaleSnap(60 + d, s.scale, 0) - (60 + d));
-    }
+    const float g = audible && p < l.parts ? 1.f : 0.f;
+    rt.gainL[static_cast<std::size_t>(p)] = g;
+    rt.gainR[static_cast<std::size_t>(p)] = g;
     uint32_t mask = 0;
     for (const Zone& z : l.zones)
       if (z.part == p) mask |= z.channel < 0 ? 0xFFFFu : 1u << z.channel;
@@ -128,12 +119,13 @@ struct Multi::Impl {
   Rt* rt = nullptr;                 // what the audio thread is using (slots[front])
 
   PresetResolver resolver;
+  Json ui = Json::object();         // the page's own state for this multi (layoutJson "ui")
 
   // Audio thread state.
   std::vector<Key> keys = std::vector<Key>(16 * 128);
-  // Notes held on each part's engine, by channel and pitch. When a scale
-  // sends two keys to one note, the second retriggers it and the note stops
-  // with the last key released, so the engine sees one note.
+  // Notes held on each part's engine, by channel and pitch. When zones send
+  // two keys to one note, the second retriggers it and the note stops with
+  // the last key released, so the engine sees one note.
   std::vector<uint8_t> held = std::vector<uint8_t>(kMaxParts * 16 * 128);
   uint8_t& heldOf(int part, int channel, int note) { return held[static_cast<std::size_t>((part * 16 + (channel & 15)) * 128 + (note & 127))]; }
   uint32_t serial = 0;
@@ -244,12 +236,7 @@ struct Multi::Impl {
       const float g = kf * vf * rz.gain;
       if (g < 1e-4f || k.count >= kMaxRoutes) continue;
       MidiEvent o = e;
-      o.note = std::clamp(e.note + z.transpose, 0, 127);
-      const auto ps = static_cast<std::size_t>(z.part);
-      if (rt->snaps[ps]) {
-        const int d = (o.note - rt->scaleKey[ps] + 120) % 12;
-        o.note = std::clamp(o.note + rt->snap[ps][static_cast<std::size_t>(d)], 0, 127);
-      }
+      o.note = std::clamp(e.note + z.transpose, 0, 127);   // (the part's own transpose and scale are its engine's)
       o.gain = e.gain * g;
       uint8_t& h = heldOf(z.part, e.channel, o.note);
       if (h > 0) {   // already sounding: retrigger
@@ -453,12 +440,7 @@ std::vector<std::string> Multi::setLayout(const MultiLayout& in) {
   l.parts = std::clamp(in.parts, 1, maxParts());
   if (l.parts != in.parts) warnings.push_back("parts limited to " + std::to_string(l.parts));
   for (int p = 0; p < kMaxParts; ++p) {
-    PartSettings s = in.part[static_cast<std::size_t>(p)];
-    s.levelDb = std::clamp(std::isfinite(s.levelDb) ? s.levelDb : 0.f, -120.f, 12.f);
-    s.pan = std::clamp(std::isfinite(s.pan) ? s.pan : 0.f, -1.f, 1.f);
-    if (s.scale < 0 || s.scale >= multiScaleCount()) s.scale = 0;
-    s.scaleKey = ((s.scaleKey % 12) + 12) % 12;
-    l.part[static_cast<std::size_t>(p)] = s;
+    l.part[static_cast<std::size_t>(p)] = in.part[static_cast<std::size_t>(p)];
   }
   int index = 0;
   for (Zone z : in.zones) {
@@ -558,6 +540,32 @@ Zone zoneFromJson(const Json& jz) {
   return z;
 }
 
+// Multis saved before a part's level, pan and scale moved into its patch
+// (master, sk.pan, sk.scale, sk.scaleKey) had them on the part: fold them in.
+void migratePart(Engine& e, const Json& jp, int p, std::vector<std::string>& warnings) {
+  ParamStore& ps = e.params();
+  const std::string part = "part " + std::to_string(p + 1) + ": ";
+  const double level = jp["level"].number(0);
+  const int iMaster = ps.find("master");
+  if (level != 0 && iMaster >= 0) {
+    const double want = ps.get(iMaster) + level;
+    ps.set(iMaster, want);
+    if (std::fabs(ps.get(iMaster) - want) > 0.01) warnings.push_back(part + "its level didn't fit in the patch's master level (now " + std::to_string(static_cast<int>(std::lround(ps.get(iMaster)))) + " dB)");
+  }
+  const double pan = jp["pan"].number(0);
+  const int iPan = ps.find("sk.pan");
+  if (pan != 0 && iPan >= 0) ps.set(iPan, std::clamp(ps.get(iPan) + pan, -1.0, 1.0));
+  const int iScale = ps.find("sk.scale"), iKey = ps.find("sk.scaleKey");
+  if (jp["scale"].isString() && iScale >= 0) {
+    const int i = multiScaleIndex(jp["scale"].string());
+    if (i < 0) warnings.push_back(part + "no scale \"" + jp["scale"].string() + "\"; playing every note");
+    else if (i > 0) {
+      ps.set(iScale, i);
+      if (iKey >= 0) ps.set(iKey, ((static_cast<int>(jp["scaleKey"].number(0)) % 12) + 12) % 12);
+    }
+  }
+}
+
 }  // namespace
 
 Json Multi::layoutJson() const {
@@ -567,17 +575,15 @@ Json Multi::layoutJson() const {
   for (int p = 0; p < l.parts; ++p) {
     const PartSettings& s = l.part[static_cast<std::size_t>(p)];
     Json o = Json::object();
-    o["level"] = s.levelDb;
-    o["pan"] = s.pan;
     if (s.mute) o["mute"] = true;
     if (s.solo) o["solo"] = true;
-    if (s.scale > 0) { o["scale"] = multiScaleName(s.scale); o["scaleKey"] = s.scaleKey; }
     parts.push(o);
   }
   j["parts"] = parts;
   Json zones = Json::array();
   for (const Zone& z : l.zones) zones.push(zoneToJson(z));
   j["zones"] = zones;
+  if (impl_->ui.isObject() && impl_->ui.size() > 0) j["ui"] = impl_->ui;
   return j;
 }
 
@@ -588,17 +594,10 @@ std::vector<std::string> Multi::setLayoutJson(const Json& in) {
   for (int p = 0; p < std::min(l.parts, kMaxParts); ++p) {
     const Json& jp = in["parts"][p];
     PartSettings& s = l.part[static_cast<std::size_t>(p)];
-    s.levelDb = static_cast<float>(jp["level"].number(0));
-    s.pan = static_cast<float>(jp["pan"].number(0));
     s.mute = jp["mute"].boolean(false);
     s.solo = jp["solo"].boolean(false);
-    if (jp["scale"].isString()) {
-      const int i = multiScaleIndex(jp["scale"].string());
-      if (i < 0) bad.push_back("part " + std::to_string(p + 1) + ": no scale \"" + jp["scale"].string() + "\"; playing every note");
-      s.scale = std::max(0, i);
-      s.scaleKey = ((static_cast<int>(jp["scaleKey"].number(0)) % 12) + 12) % 12;
-    }
   }
+  if (in["ui"].isObject()) impl_->ui = in["ui"];
   if (in["zones"].isArray()) {
     for (auto& jz : in["zones"].items()) l.zones.push_back(zoneFromJson(jz));
   } else {
@@ -625,6 +624,7 @@ Json Multi::save(const std::string& name) const {
   }
   j["parts"] = parts;
   j["zones"] = lay["zones"];
+  if (lay.contains("ui")) j["ui"] = lay["ui"];
   return j;
 }
 
@@ -667,6 +667,7 @@ LoadResult Multi::load(const Json& in) {
       e.loadPatch(init);
     }
     for (auto& w : pr.warnings) r.warnings.push_back("part " + std::to_string(p + 1) + ": " + w);
+    migratePart(e, jp, p, r.warnings);
   }
   // One tempo for the multi: the first part's.
   double bpm = 0;
@@ -674,6 +675,7 @@ LoadResult Multi::load(const Json& in) {
   if (m.engines[0]->patchTempo(bpm, num, den))
     for (int p = 1; p < maxParts(); ++p) m.engines[static_cast<std::size_t>(p)]->setPatchTempo(bpm, num, den);
 
+  m.ui = Json::object();   // a multi without "ui" starts the page's state afresh
   for (auto& w : setLayoutJson(in)) r.warnings.push_back(w);
   return r;
 }

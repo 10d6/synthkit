@@ -223,6 +223,10 @@ element.
 | `unisonDetune` | `unison: true` | 0…100 ct | 12 |
 | `unisonSpread` | `unison: true` | 0…1 | 0.5 |
 | `sk.a4` | always | 400…480 Hz | 440 |
+| `sk.pan` | always | −1…1: a balance after `master` (§4) | 0 |
+| `sk.transpose` | always | −48…+48 st, integer: moves every key (below) | 0 |
+| `sk.scale` | always | choices: Chromatic, then the sequencer's scales (§4b); out-of-scale keys play the nearest scale note | 0 (Chromatic) |
+| `sk.scaleKey` | always | choices: C … B, the scale's root | 0 (C) |
 | `envN.attack` | per standard envelope | 0.0005…10 s | 0.005 (amp env), 0.01 |
 | `envN.decay` | | 0.001…20 s | 0.3 (amp env), 0.5 |
 | `envN.sustain` | | 0…1 | 0.8 (amp env), 0.3 |
@@ -411,7 +415,21 @@ size (the kit checks this, §10).
   notes off reach `processEvents` as CC120 and CC123 too, so a synth keeping
   its own note state (a coupler, a held phrase) can let go. Pitch bend is smoothed over ~4 ms. Every
   CC's last value is readable with `cc(n)`.
-- **Output.** `master` gain, then a safety limiter (−0.3 dBFS ceiling). NaN or
+- **Keys in.** `sk.transpose` and `sk.scale` act on keys and their note-offs and
+  poly pressure as they arrive, before `processEvents` and the arpeggiator, as
+  if the keyboard itself were transposed: the synth, the arp and the sequencer
+  only ever see the note a key now plays. A key is transposed first, then moved
+  to the nearest note of the scale (ties go down: in C major, C♯ plays C and F♯
+  plays F; `sk::multiScaleSnap()` computes it). Each key remembers the note it
+  started, so its note-off finds that note whatever the settings are by then.
+  When two keys land on one note the second retriggers it and it stops with the
+  last of them released, so the synth sees a single note. At their defaults
+  nothing changes. The notes the sequencer adds follow its own scale, not this
+  one. A synth that wants the keys as played can read `sk.transpose` and undo
+  it, or leave these off its page.
+- **Output.** `master` gain, then `sk.pan` (a balance: −1 is the left side
+  only, centre leaves both sides as they are, and a side turns down by
+  cos(|pan|·90°)), then a safety limiter (−0.3 dBFS ceiling). NaN or
   infinite samples are replaced with silence. Denormals are flushed.
 
 **Tuning.** Notes default to 12-TET, with A4 set by `sk.a4`. To change that,
@@ -977,15 +995,11 @@ arpeggiator and clock, reached with `multi->part(i)` (an `Engine`: load a
 patch, set parameters, custom state). Voices aren't shared, so a part's
 `voices` is its own limit and a busy part never steals from another. The
 parts in use are `layout().parts`; the others are idle and cost almost
-nothing. Each part has a level (dB), a balance pan (−1…1) and mute and solo.
-A part can also be kept in a scale (`PartSettings::scale`, `scaleKey`): each
-note it gets, after its zone's transpose, moves to the nearest note of the
-scale, ties going down (in C major, C♯ plays C and F♯ plays F). The scales
-are the sequencer's (§4b: `sk::multiScaleName(i)`, 0 is Chromatic, which
-leaves notes alone and is the default); `sk::multiScaleSnap()` computes it.
-When two keys land on one note, the second retriggers it and it stops with
-the last key released, so the part sees a single note. Zones still match the
-key played, not the note it moves to.
+nothing. Each part has mute and solo. Its level, pan, transpose and scale are
+its patch's (`master`, `sk.pan`, `sk.transpose`, `sk.scale`, `sk.scaleKey`:
+§3, §4), so they go with the patch: a preset brings them into the multi, and
+a part saved as a preset keeps them. Zones still match the key played, not the
+note it moves to; a zone's own `transpose` comes first, then the part's.
 The mix goes through one limiter, as an engine's own does; the parts' limiters
 are off. All parts follow the same transport.
 
@@ -1055,25 +1069,32 @@ to the synth's default patch; tempo follows part 1's patch).
   "format": "sk.multi", "version": 1, "synth": "my-synth", "name": "Bass and pad",
   "parts": [
     { "preset": "Bass/mono-bass", "level": 0, "pan": 0 },
-    { "patch": { "…": "a full patch (§5)" }, "level": -3, "pan": 0.2, "mute": false, "solo": false,
-      "scale": "Major Pentatonic", "scaleKey": 2 }
+    { "patch": { "…": "a full patch (§5)" }, "mute": false, "solo": false }
   ],
   "zones": [
     { "part": 0, "key": [0, 62], "keyFade": [0, 4] },
     { "part": 1, "key": [59, 127], "keyFade": [4, 0], "vel": [1, 127],
       "curve": "linear", "channel": 1, "transpose": -12, "gain": -3 }
-  ]
+  ],
+  "ui": { "layersOpen": true }
 }
 ```
 
 A part is a `patch` (what `save()` writes) or a `preset` named as the factory
 presets are (`"Bass/mono-bass"`, the path under `presets/` without `.json`)
-for a hand-written multi. `scale` is the scale's name and `scaleKey` its key
-(0 = C … 11 = B); a part without `scale` plays every note, and an unknown
-name warns and does the same. Fields left out take the defaults above; a multi
-with no `zones` plays every part from every key. `load()` fails for another
-synth's multi or a file that isn't a multi, and warns about a missing preset
-or a patch problem.
+for a hand-written multi. A part may also give `level` (dB, added to the
+patch's `master`), `pan` (added to `sk.pan`), and `scale` (a scale's name) with
+`scaleKey` (0 = C … 11 = B): they're applied to the part's patch as the multi
+loads, which is how a hand-written multi adjusts a preset, and how multis
+saved before these moved into the patch load. `save()` writes them into the
+patches instead. An unknown scale name warns and plays every note; a level that
+takes `master` past its range warns and stops at the end of it. `ui` is the
+page's own state for the multi (any object: the kit's page keeps whether
+*Layers and splits* is open); the engine keeps it as it is, and a multi without
+one starts without one. Fields left out take the defaults above; a multi with
+no `zones` plays every part from every key. `load()` fails for another synth's
+multi or a file that isn't a multi, and warns about a missing preset or a
+patch problem.
 
 **Factory multis** live in `multis/*.json` beside `presets/`, and `--check`
 (§10) loads each one, checks it round-trips, plays every zone, and plays
@@ -1094,7 +1115,8 @@ Export, Import (a preset or a multi file) and Start from Init.
 header (open, the button and the bar share an accent, like a tab and its page): a tab per part (its patch's name, with mute, solo and
 × to remove it; the parts after it move down a place), *+ Part*, and the
 selected part's row: its patch (the kit's preset bar, which loads, saves and
-steps through presets for that part only), level, balance, scale and key.
+steps through presets for that part only), level, balance, scale and key (the
+patch's `master`, `sk.pan`, `sk.scale` and `sk.scaleKey`).
 Under that is the zone editor. Closed, the bar shows just the part tabs when
 there's more than one part, so it's clear which part the panels edit.
 Everything else on the page (panels, modulation, the arp, undo) edits **the
@@ -1116,11 +1138,11 @@ editing. The scales' names are in the page's info (`scales`).
 `"multi": true` becomes a multi there with nothing to change in it. The host
 sees every part's parameters: part 1 keeps the synth's own IDs and names
 (so a project made before the multi still finds its automation), part *n* is
-`p<n>.` + the ID, named `P<n> ` + the name, listed after part 1's. Each part
-also has host parameters `mix.p<n>.level` (−60…+12 dB), `.pan`, `.mute` and
-`.solo` ("P<n> Level" …), kept in step with the layout: the host moving one
-changes the layout (the page follows), and the window changing it moves the
-parameter. Zones, fades and channels are not host parameters; they are saved
+`p<n>.` + the ID, named `P<n> ` + the name, listed after part 1's, so a
+part's level and pan are `p<n>.master` and `p<n>.sk.pan`. Each part also has
+host parameters `mix.p<n>.mute` and `.solo` ("P<n> Mute", "P<n> Solo"), kept
+in step with the layout: the host moving one changes the layout (the page
+follows), and the window changing it moves the parameter. Zones, fades and channels are not host parameters; they are saved
 with the project. The project stores a whole multi (see Plugins, below), and
 a project saved before the multi loads into part 1 alone. Removing a part in
 the window moves the parts after it down a place, and their host parameters

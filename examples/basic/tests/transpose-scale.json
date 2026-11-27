@@ -1,0 +1,14 @@
+{
+  "patch": "init",
+  "params": { "sk.transpose": -12, "sk.scale": 1, "sk.scaleKey": 0, "sk.pan": -0.5 },
+  "length": 5,
+  "events": [
+    { "t": 0, "on": 61, "vel": 100 },
+    { "t": 0.25, "on": 60, "vel": 100 },
+    { "t": 0.5, "off": 61 },
+    { "t": 1, "off": 60 },
+    { "t": 1.25, "on": 66, "vel": 100 },
+    { "t": 1.75, "off": 66 }
+  ],
+  "expect": { "soundBy": 0.05, "silentAfter": 4.5, "limiterBelow": 1 }
+}

@@ -223,15 +223,15 @@ async function main() {
   check(Math.abs((await get("filter.cutoff")) - 4321) < 1, "…and the other part got it", `part 2 cutoff ${await get("filter.cutoff")}`);
   check((await sent("param")).length === 0, "host automation of a part isn't sent back", `sent ${JSON.stringify(await sent("param"))}`);
 
-  // The DAW moves a part's level (mix parameter); the page's layout follows without echo.
+  // The DAW mutes a part (mix parameter); the page's layout follows without echo.
   await clear();
-  await page.evaluate(() => { const l = window.synthkit.model.layout(); l.parts[0].level = -9; window.__deliver({ t: "layout", json: l }); });
-  check(await page.evaluate(() => window.synthkit.model.layout().parts[0].level === -9) && (await sent("layout")).length === 0,
-    "a level moved by the DAW shows in the page, not echoed", `layout level ${await page.evaluate(() => window.synthkit.model.layout().parts[0].level)}, sent ${JSON.stringify((await sent()).map((m) => m.t))}`);
+  await page.evaluate(() => { const l = window.synthkit.model.layout(); l.parts[0].mute = true; window.__deliver({ t: "layout", json: l }); });
+  check(await page.evaluate(() => window.synthkit.model.layout().parts[0].mute === true) && (await sent("layout")).length === 0,
+    "a mute set by the DAW shows in the page, not echoed", `layout ${JSON.stringify(await page.evaluate(() => window.synthkit.model.layout().parts[0]))}, sent ${JSON.stringify((await sent()).map((m) => m.t))}`);
   await clear();
-  await page.evaluate(() => { const l = window.synthkit.model.layout(); l.parts[0].level = -3; window.synthkit.model.setLayout(l); });
+  await page.evaluate(() => { const l = window.synthkit.model.layout(); l.parts[0].mute = false; window.synthkit.model.setLayout(l); });
   const lay14 = await sent("layout");
-  check(lay14.length === 1 && JSON.parse(lay14[0].json).parts[0].level === -3, "a layout edit in the page goes to the plugin", `sent ${JSON.stringify(lay14)}`);
+  check(lay14.length === 1 && !JSON.parse(lay14[0].json).parts[0].mute, "a layout edit in the page goes to the plugin", `sent ${JSON.stringify(lay14)}`);
 
   // Multi files go through the plugin's dialogs, and are told apart from patches.
   await clear();

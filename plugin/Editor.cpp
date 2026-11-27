@@ -314,7 +314,7 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
       send(stateMessage("state"));
       resyncBaseline();
     }
-    // The host moved a part's level, pan, mute or solo.
+    // The host moved a part's mute or solo.
     if (proc_.layoutSerial() != lastLayoutSerial_) {
       lastLayoutSerial_ = proc_.layoutSerial();
       send(obj({{"t", "layout"}, {"json", toJuce(proc_.layoutJson())}}));

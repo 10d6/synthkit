@@ -76,66 +76,29 @@ juce::StringArray Parameter::getAllValueStrings() const {
 
 // ---- MixParameter -----------------------------------------------------------------
 
-static const char* const kMixIds[] = {"level", "pan", "mute", "solo"};
-static const char* const kMixNames[] = {"Level", "Pan", "Mute", "Solo"};
+static const char* const kMixIds[] = {"mute", "solo"};
+static const char* const kMixNames[] = {"Mute", "Solo"};
 
 MixParameter::MixParameter(int part, Kind kind)
     : juce::AudioProcessorParameterWithID(juce::ParameterID{"mix.p" + juce::String(part + 1) + "." + kMixIds[kind], 1},
-                                          "P" + juce::String(part + 1) + " " + kMixNames[kind],
-                                          juce::AudioProcessorParameterWithIDAttributes().withLabel(kind == Level ? "dB" : "")),
+                                          "P" + juce::String(part + 1) + " " + kMixNames[kind]),
       part_(part),
       kind_(kind) {
   norm_.store(getDefaultValue());
 }
 
-float MixParameter::getDefaultValue() const {
-  switch (kind_) {
-    case Level: return (0 - kMinDb) / (kMaxDb - kMinDb);
-    case Pan: return 0.5f;
-    default: return 0;
-  }
-}
-
-juce::String MixParameter::getText(float norm, int) const {
-  switch (kind_) {
-    case Level: return juce::String(kMinDb + norm * (kMaxDb - kMinDb), 1) + " dB";
-    case Pan: {
-      const int v = static_cast<int>(std::lround((norm * 2 - 1) * 100));
-      return v == 0 ? "C" : (v < 0 ? "L" : "R") + juce::String(std::abs(v));
-    }
-    default: return norm >= 0.5f ? "On" : "Off";
-  }
-}
+juce::String MixParameter::getText(float norm, int) const { return norm >= 0.5f ? "On" : "Off"; }
 
 float MixParameter::getValueForText(const juce::String& text) const {
-  switch (kind_) {
-    case Level: return juce::jlimit(0.f, 1.f, (text.getFloatValue() - kMinDb) / (kMaxDb - kMinDb));
-    case Pan: {
-      const auto t = text.trim().toUpperCase();
-      if (t.startsWith("C")) return 0.5f;
-      const float v = t.substring(1).getFloatValue() / 100.f;
-      return juce::jlimit(0.f, 1.f, (t.startsWith("L") ? -v : v) * 0.5f + 0.5f);
-    }
-    default: return text.trim().toLowerCase().startsWith("on") || text.getIntValue() > 0 ? 1.f : 0.f;
-  }
+  return text.trim().toLowerCase().startsWith("on") || text.getIntValue() > 0 ? 1.f : 0.f;
 }
 
 float MixParameter::fromLayout(const sk::PartSettings& s) const {
-  switch (kind_) {
-    case Level: return juce::jlimit(0.f, 1.f, (s.levelDb - kMinDb) / (kMaxDb - kMinDb));
-    case Pan: return juce::jlimit(0.f, 1.f, s.pan * 0.5f + 0.5f);
-    case Mute: return s.mute ? 1.f : 0.f;
-    default: return s.solo ? 1.f : 0.f;
-  }
+  return (kind_ == Mute ? s.mute : s.solo) ? 1.f : 0.f;
 }
 
 void MixParameter::toLayout(float norm, sk::PartSettings& s) const {
-  switch (kind_) {
-    case Level: s.levelDb = kMinDb + norm * (kMaxDb - kMinDb); break;
-    case Pan: s.pan = norm * 2 - 1; if (std::fabs(s.pan) < 0.005f) s.pan = 0; break;
-    case Mute: s.mute = norm >= 0.5f; break;
-    default: s.solo = norm >= 0.5f; break;
-  }
+  (kind_ == Mute ? s.mute : s.solo) = norm >= 0.5f;
 }
 
 // ---- Processor ------------------------------------------------------------------
@@ -210,7 +173,7 @@ void Processor::timerCallback() {
   syncMix();
 }
 
-// The host's level/pan/mute/solo and the layout are two copies of one thing;
+// The host's mute/solo and the layout are two copies of one thing;
 // whichever moved since they last agreed wins.
 void Processor::syncMix() {
   if (!multi_) return;
@@ -446,7 +409,7 @@ void Processor::setLayoutFromUi(const sk::Json& layout) {
     std::lock_guard<std::mutex> g(engineMutex_);
     multi_->setLayoutJson(layout);
   }
-  // The host's level/pan/mute/solo follow on the next tick (syncMix).
+  // The host's mute/solo follow on the next tick (syncMix).
 }
 
 sk::LoadResult Processor::loadMultiFromUi(const sk::Json& multi) {
