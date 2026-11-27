@@ -181,16 +181,18 @@ async function main() {
   await ev(() => window.synthkit.app.multiBar.setOpen(true));
 
   // ---- a part in a scale -----------------------------------------------------------------------------
-  check(await ev(() => document.querySelector(".mix-scale").value === "Chromatic" && document.querySelector(".mix-key").disabled), "parts start chromatic");
-  await page.selectOption(".mix-scale", "Major Pentatonic");
-  await page.selectOption(".mix-key", "2");
-  lay = await ev(() => window.synthkit.model.layout());
-  const sp = await ev(() => window.synthkit.model.part);
-  check(lay.parts[sp].scale === "Major Pentatonic" && lay.parts[sp].scaleKey === 2, "a scale and key for the selected part", lay.parts[sp]);
-  check(await ev(() => !window.synthkit.app.sound.plain()), "a part in a scale makes the sound a multi");
+  // (The part's patch's own sk.scale and sk.scaleKey.)
+  const scaleSel = '.multi-mix [data-param="sk.scale"] select', keySel = '.multi-mix [data-param="sk.scaleKey"] select';
+  check(await ev((q) => document.querySelector(q).selectedOptions[0].textContent === "Chromatic", scaleSel), "parts start chromatic");
+  const penta = await ev((q) => [...document.querySelector(q).options].find((o) => o.textContent === "Major Pentatonic").value, scaleSel);
+  await page.selectOption(scaleSel, penta);
+  await page.selectOption(keySel, "2");
+  check(await ev(() => window.synthkit.model.format("sk.scale") === "Major Pentatonic" && Math.round(window.synthkit.model.get("sk.scaleKey")) === 2),
+    "a scale and key for the selected part's patch", await ev(() => window.synthkit.model.format("sk.scale")));
   const snapped = await ev(async () => {
     const sk = window.synthkit;
     const patch = sk.model.savePatch();
+    patch.params["sk.scale"] = 0;                               // (the part's own scale, set above, out of the way)
     const one = (scale) => ({ format: "sk.multi", version: 1, synth: sk.model.info.synth.id, parts: [{ patch, ...(scale ? { scale, scaleKey: 0 } : {}) }] });
     const play = async (multi, note) => (await sk.renderOffline({ multi: JSON.stringify(multi), seconds: 0.6, events: [{ t: 0, d: [0x90, note, 100] }, { t: 0.4, d: [0x80, note, 64] }] })).left;
     const a = await play(one("Major"), 61), b = await play(one(null), 60), c = await play(one(null), 61);
@@ -198,7 +200,7 @@ async function main() {
     for (let i = 0; i < a.length; i++) { dab = Math.max(dab, Math.abs(a[i] - b[i])); dac = Math.max(dac, Math.abs(a[i] - c[i])); e = Math.max(e, Math.abs(b[i])); }
     return { dab, dac, e };
   });
-  check(snapped.e > 0.01 && snapped.dab < 1e-6 && snapped.dac > 1e-3, "in C major, C♯ plays C (rendered in the worklet)", snapped);
+  check(snapped.e > 0.01 && snapped.dab < 1e-6 && snapped.dac > 1e-3, "in C major, C♯ plays C (rendered in the worklet; an older multi's part scale moves into its patch)", snapped);
 
   // ---- saving ----------------------------------------------------------------------------------
   await ev(() => window.synthkit.app.sound.storeAs("My split"));

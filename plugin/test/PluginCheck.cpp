@@ -211,7 +211,7 @@ int main(int argc, char** argv) {
     break;
   }
 
-  // A multi (API.md §5b): every part's parameters, the mix as host parameters,
+  // A multi (API.md §5b): every part's parameters, mute and solo as host parameters,
   // and the whole multi in the state.
   if (info.features.multi) {
     // (A host sees names; the VST3 wrapper hides our string IDs behind its own numbers.)
@@ -223,8 +223,10 @@ int main(int argc, char** argv) {
     const int parts = sk::makeMulti()->maxParts();
     check(find("P2 " + firstName) == store.size() && find("P" + juce::String(parts) + " " + firstName) >= 0,
           "parts 2…" + juce::String(parts) + " have their own parameters (\"P2 …\"), after part 1's", "prefixed part parameters missing or out of order");
-    check(find("P1 Level") >= 0 && find("P" + juce::String(parts) + " Solo") >= 0, "each part has level, pan, mute and solo parameters",
-          "mix parameters missing");
+    check(find("P1 Mute") >= 0 && find("P" + juce::String(parts) + " Solo") >= 0 && find("P1 Level") < 0,
+          "each part has mute and solo parameters (its level and pan are its patch's)", "mix parameters missing, or the old level/pan still there");
+    check(find("P2 Pan") >= 0 && find("P2 Transpose") >= 0, "a part's pan and transpose are host parameters (P2 Pan, P2 Transpose)",
+          "P2 Pan / P2 Transpose missing");
 
     int nMultis = 0;
     const auto* multis = sk::embeddedMultis(nMultis);

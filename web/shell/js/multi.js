@@ -16,7 +16,6 @@ class MultiBar {
     this.key = (k) => `synthkit:${this.model.info.synth.id}:${k}`;
     this.sel = -1;                                   // the zone selected in the editor
     this.open = !!skStore.get(this.key("multiOpen"), false);
-    this.scales = this.model.info.scales || ["Chromatic"];
     this.l = this.model.layout();
     this.openListeners = new Set();
     this.build();
@@ -43,38 +42,24 @@ class MultiBar {
     });
     this.addBtn = h("button", { type: "button", class: "btn part-add", title: "Add a part (layered over the keyboard)", onclick: () => this.addPart() }, "+ Part");
 
-    // The selected part's mix.
+    // The selected part's level, balance and scale: its patch's own
+    // parameters (master, sk.pan, sk.scale, sk.scaleKey), so they follow the
+    // selected part like every other control.
     this.partLabel = h("span", { class: "mix-part" });
-    this.level = h("input", { type: "range", min: -60, max: 12, step: 0.5, "aria-label": "Part level",
-      oninput: () => this.edit((l) => { l.parts[m.part].level = Number(this.level.value); }, true) });
-    this.levelOut = h("output", { class: "mix-out" });
-    this.pan = h("input", { type: "range", min: -1, max: 1, step: 0.01, "aria-label": "Part balance",
-      oninput: () => this.edit((l) => { l.parts[m.part].pan = Number(this.pan.value); }, true) });
-    this.panOut = h("output", { class: "mix-out" });
-    for (const r of [this.level, this.pan]) {
-      r.addEventListener("pointerdown", () => m.history && m.history.begin("mix"));
-      r.addEventListener("change", () => m.history && m.history.end("mix"));
-      r.addEventListener("dblclick", () => { r.value = 0; r.dispatchEvent(new Event("input")); });   // back to 0 dB / centre
-    }
-    // Keeping the part in a scale: out-of-scale notes move to the nearest scale note.
-    this.scaleSel = h("select", { class: "mix-scale", "aria-label": "Part scale", title: "Keep this part's notes in a scale (out-of-scale keys play the nearest scale note)",
-      onchange: () => this.edit((l) => {
-        const pt = l.parts[m.part];
-        if (this.scaleSel.value === "Chromatic") { delete pt.scale; delete pt.scaleKey; }
-        else { pt.scale = this.scaleSel.value; pt.scaleKey = pt.scaleKey || 0; }
-      }) });
-    for (const sc of this.scales) this.scaleSel.append(h("option", { value: sc, text: sc }));
-    this.keySel = h("select", { class: "mix-key", "aria-label": "Scale key", title: "The scale's key",
-      onchange: () => this.edit((l) => { l.parts[m.part].scaleKey = Number(this.keySel.value); }) });
-    SK_KEY_NAMES.forEach((n, i) => this.keySel.append(h("option", { value: i, text: n })));
+    const ctl = (id, label, type) => {
+      const p = m.param(id);
+      if (!p) return null;
+      const c = makeControl(this.app, p, { label, type });
+      this.app.controls.push(c);
+      return c.root;
+    };
     // The selected part's patch: the kit's preset bar (presets.js), here rather
     // than at the top of the page, which picks whole sounds.
     this.patchSlot = h("div", { class: "mix-patch" });
     this.mix = h("div", { class: "multi-mix" },
       this.partLabel, this.patchSlot,
-      h("label", { class: "mix-field" }, h("span", { text: "Level" }), this.level, this.levelOut),
-      h("label", { class: "mix-field" }, h("span", { text: "Balance" }), this.pan, this.panOut),
-      h("label", { class: "mix-field" }, h("span", { text: "Scale" }), this.scaleSel, this.keySel));
+      ctl("master", "Level", "slider"), ctl("sk.pan", "Balance", "slider"),
+      ctl("sk.scale", "Scale", "menu"), ctl("sk.scaleKey", "Key", "menu"));
 
     this.zones = this.buildZones();
 
@@ -190,18 +175,9 @@ class MultiBar {
   }
 
   renderMix() {
-    const p = this.model.part, pt = this.l.parts[p] || {};
+    const p = this.model.part;
     this.mix.style.setProperty("--part", skPartColor(p));
     this.partLabel.textContent = `Part ${p + 1}`;
-    const sc = this.scales.includes(pt.scale) ? pt.scale : "Chromatic";
-    this.scaleSel.value = sc;
-    this.keySel.value = String(pt.scaleKey || 0);
-    this.keySel.disabled = sc === "Chromatic";
-    if (document.activeElement !== this.level) this.level.value = pt.level || 0;
-    if (document.activeElement !== this.pan) this.pan.value = pt.pan || 0;
-    const lv = Number(pt.level || 0), pn = Number(pt.pan || 0);
-    this.levelOut.textContent = `${lv > 0 ? "+" : ""}${lv.toFixed(1)} dB`;
-    this.panOut.textContent = Math.abs(pn) < 0.005 ? "centre" : `${Math.round(Math.abs(pn) * 100)}% ${pn < 0 ? "left" : "right"}`;
   }
 
   renderZones() {

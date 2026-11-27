@@ -44,12 +44,12 @@ class SoundBar {
 
   // ---- what the sound is -------------------------------------------------------------
 
-  // One part across every key and velocity, at 0 dB, centred, all notes:
-  // the same as playing its patch, so it's a preset.
+  // One part across every key and velocity, not muted or soloed: the same as
+  // playing its patch (whose level, pan and scale are its own), so it's a preset.
   plain(l = this.model.layout()) {
     if (l.parts.length !== 1 || l.zones.length !== 1) return false;
     const p = l.parts[0], z = l.zones[0];
-    if ((p.level || 0) !== 0 || (p.pan || 0) !== 0 || p.mute || p.solo || p.scale) return false;
+    if (p.mute || p.solo) return false;
     const [kl, kh] = z.key || [0, 127], [vl, vh] = z.vel || [1, 127];
     return z.part === 0 && kl === 0 && kh === 127 && vl === 1 && vh === 127 &&
       Object.keys(z).every((k) => k === "part" || k === "key" || k === "vel");
