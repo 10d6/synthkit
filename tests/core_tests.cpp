@@ -2633,15 +2633,23 @@ TEST(multi_held_notes_follow_their_note_on) {
   CHECK(r.active(0) == 0 && r.active(1) == 1);                         // new notes use the new layout
   r.run(2000, {{0, off(62)}});
 
-  // A key struck twice needs two releases, as with an engine.
+  // A key struck again while held: a real key can't go down twice, so its
+  // release was lost (or the press arrived twice). One release ends it, as
+  // with an engine (API.md §4); before, it took two, so a lost release stuck.
   MultiRig q(1);
   q.layout(1, {zone(0, 0, 127)});
-  q.run(2000, {{0, on(60)}, {100, on(60)}});
+  q.m->part(0).params().set(q.m->part(0).params().find("env1.release"), 0.01);
+  q.run(2000, {{0, on(60)}, {100, on(60)}});                           // 2 ms apart: the same press twice
   q.run(96000, {{0, off(60)}});
-  CHECK(q.active(0) == 1);
-  q.run(96000, {{0, off(60)}});
-  q.run(96000);
   CHECK(q.active(0) == 0);
+  q.run(96000, {{0, off(60)}});                                        // its double: harmless
+  q.run(4800, {{0, on(62)}});                                          // its release is lost…
+  q.run(4800, {{0, on(62)}});                                          // …so the key is pressed again
+  CHECK(q.active(0) == 1);
+  q.run(96000, {{0, off(62)}});
+  CHECK(q.active(0) == 0);
+  const Json d = q.m->diagnostics();
+  CHECK(d["router"]["doubled"].number() == 1 && d["router"]["represses"].number() == 1);
 
   // Taking a part away stops its notes.
   MultiRig p(2);

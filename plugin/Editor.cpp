@@ -237,6 +237,30 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
       exportPreset(m["name"].toString(), m["json"].toString(), m["kind"].toString());
     } else if (t == "import") {
       importPreset(m["kind"].toString());
+    } else if (t == "diag") {
+      // Diagnostics (API.md §10a): the engine's recent events and counts
+      // (lock-free reads), and where it runs.
+      sk::Json d;
+      if (proc_.isMulti()) {
+        d = proc_.multi()->diagnostics();
+      } else {
+        sk::Json e = proc_.engine().diagnostics();
+        e["part"] = 1;
+        sk::Json parts = sk::Json::array();
+        parts.push(std::move(e));
+        d = sk::Json::object();
+        d["parts"] = std::move(parts);
+      }
+      sk::Json host = sk::Json::object();
+      host["format"] = wrapperName(proc_.wrapperType).toStdString();
+      host["host"] = juce::String(juce::PluginHostType().getHostDescription()).toStdString();
+      host["sampleRate"] = proc_.getSampleRate();
+      host["blockSize"] = proc_.getBlockSize();
+      d["plugin"] = std::move(host);
+      send(obj({{"t", "diag"}, {"id", m["id"]}, {"json", juce::String::fromUTF8(d.dump(0).c_str())}}));
+    } else if (t == "clipboard") {
+      // The page's own clipboard may be closed to it in a plugin window.
+      juce::SystemClipboard::copyTextToClipboard(m["text"].toString());
     }
   }
 

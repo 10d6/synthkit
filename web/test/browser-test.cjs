@@ -782,6 +782,57 @@ async function main() {
         await page.selectOption(P + ".preset-category", { label: "All" });
         await ev(() => window.synthkit.app.multiBar && window.synthkit.app.multiBar.setOpen(false));
       }
+
+      // Diagnostics (API.md §10a). A key whose release never arrives (sent
+      // straight to the engine, as from a DAW), then the same key pressed
+      // again on the page: one voice, and letting go ends it (§4). With
+      // diagnostics on, Stop all sound then shows a report with the re-press.
+      {
+        const app = () => window.synthkit.app;
+        // Poly with a short release (earlier steps may have left a mono or pad preset).
+        await page.evaluate(() => { const m = window.synthkit.model; m.set("voiceMode", 0); m.set("env1.release", 0.05); m.set("unison", 1); });
+        await page.waitForTimeout(100);
+        await page.evaluate(() => { const a = window.synthkit.app; a.panic(); a.sendMidi([0x90, 62, 100]); });   // its note-off is lost
+        await page.waitForTimeout(400);
+        await page.evaluate(() => window.synthkit.app.noteOn(62, 100));
+        await page.waitForTimeout(400);
+        const held = await page.evaluate(() => window.synthkit.app.lastVoices);
+        await page.evaluate(() => window.synthkit.app.noteOff(62));
+        await page.waitForTimeout(1500);
+        const after = await page.evaluate(() => window.synthkit.app.lastVoices);
+        if (held !== 1 || after !== 0) fail(`a key pressed again after a lost release: ${held} voice(s) while held, ${after} after letting go (want 1, 0)`);
+        else pass("a key pressed again after its release was lost: one voice, and letting go ends it");
+        await page.click(".diag-btn");
+        await page.click('.menu-item:text-is("Diagnostics off")');
+        const on = await page.evaluate(() => window.synthkit.app.diag.on);
+        await page.evaluate(() => { const a = window.synthkit.app; a.noteOn(64, 90); a.noteOff(64); });
+        await page.click('.panic-group > .btn:first-child');   // Stop all sound
+        await page.waitForSelector(".diag-pop .diag-text", { timeout: 3000 }).catch(() => {});
+        const text = await page.evaluate(() => (document.querySelector(".diag-pop .diag-text") || {}).value || "");
+        let rep = null;
+        try { rep = JSON.parse(text); } catch (e) {}
+        const parts = rep && rep.engine && rep.engine.parts;
+        const router = rep && rep.engine && rep.engine.router;   // a Multi deals with re-presses before its parts
+        const represses = parts ? parts[0].counts.represses + (router ? router.represses : 0) : 0;
+        const kinds = parts ? parts[0].events.map((e) => e[1]).concat(router ? router.events.map((e) => e[1]) : []) : [];
+        const fromScreen = rep ? rep.pageMidi.filter((e) => e[1] === "screen keys").length : 0;
+        if (!on || !rep || rep.trigger !== "Stop all sound" || !parts || represses < 1 || !kinds.includes("repress") ||
+            !kinds.includes("panic") || fromScreen < 4 || !Array.isArray(rep.keysLit))
+          fail(`diagnostics report on Stop all sound: on ${on}, ${rep ? JSON.stringify({ trigger: rep.trigger, counts: parts && parts[0].counts, kinds: kinds.slice(-6), fromScreen }) : "no report: " + text.slice(0, 120)}`);
+        else pass(`Stop all sound with diagnostics on: a report with the re-press (${represses}), panic, ${fromScreen} page notes`);
+        await page.click('.diag-pop .btn:text-is("Close")');
+        await page.click(".diag-btn");
+        await page.click('.menu-item:has-text("Diagnostics on")');   // back off
+        await page.click(".diag-btn");
+        await page.click('.menu-item:text-is("Make a diagnostics report")');
+        await page.waitForSelector(".diag-pop .diag-text", { timeout: 3000 }).catch(() => {});
+        const onDemand = await page.evaluate(() => ({ off: !window.synthkit.app.diag.on, open: !!document.querySelector(".diag-pop"), stored: localStorage.getItem("synthkit:diagnostics") }));
+        await page.screenshot({ path: path.join(outDir, "ui-diagnostics.png") });
+        if (!onDemand.off || !onDemand.open) fail(`diagnostics off, report on demand: ${JSON.stringify(onDemand)}`);
+        else pass("diagnostics off again; a report on demand from the menu");
+        await page.keyboard.press("Escape");
+        if (await page.evaluate(() => !!document.querySelector(".diag-pop"))) fail("Escape doesn't close the diagnostics report");
+      }
       }  // kitUi
     }
     if (errors.length) fail(`${name}: console errors: ${errors.join(" | ")}`); else pass(`${name}: boots with no console errors`);

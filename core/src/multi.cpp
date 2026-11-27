@@ -18,6 +18,8 @@ using sk::detail::ArpScale;
 using sk::detail::arpScale;
 using sk::detail::arpScaleCount;
 
+#include "eventlog.h"
+
 namespace sk {
 
 namespace {
@@ -110,7 +112,7 @@ float zoneFade(int pos, int lo, int hi, int in, int out, bool linear) {
 
 struct Multi::Impl {
   struct Route { uint8_t part = 0, note = 0; uint32_t serial = 0; };
-  struct Key { uint8_t count = 0; std::array<Route, kMaxRoutes> r{}; };
+  struct Key { uint8_t count = 0; uint64_t lastPress = 0; std::array<Route, kMaxRoutes> r{}; };
 
   std::vector<std::unique_ptr<Engine>> engines;
   SynthInfo info;
@@ -143,6 +145,12 @@ struct Multi::Impl {
   std::atomic<int> reqAllOff{0}, reqPanic{0};
   std::atomic<float> statPeak{0}, statLimDb{0};
   std::atomic<int> statDropped{0};
+  // A key pressed again while its routes are held (API.md §4, §10a).
+  uint64_t samples = 0;                       // audio thread: samples since prepare, at the current sub-block
+  std::atomic<uint32_t> samplesNow{0};        // the same, for other threads (low 32 bits)
+  std::atomic<uint32_t> nRepress{0}, nDoubled{0};
+  detail::EventLog log;                       // the router's findings (re-presses, doubled presses)
+  static constexpr double kDoubledSec = 0.03;
 
   void publish() {
     slots[static_cast<std::size_t>(back)] = makeRt(layout);
@@ -207,6 +215,25 @@ struct Multi::Impl {
   void noteOn(const MidiEvent& e, int sample) {
     const int vel = std::clamp(static_cast<int>(std::lround(e.vel * 127.f)), 1, 127);
     Key& k = key(e);
+    // The same key again while its routes are held: a real key can't go down
+    // twice. Within kDoubledSec it's the same press arriving twice (a keyboard
+    // the browser sees as two MIDI inputs): ignored. Later, its note-off never
+    // arrived: its routes are let go first, as that note-off would have. (The
+    // held count below would otherwise keep the note on after the one
+    // release that does come: a stuck note that pressing the key again can't
+    // clear.) Two different keys a scale sends to one note still count twice.
+    const uint64_t at = samples + static_cast<uint64_t>(std::max(sample, 0));
+    if (k.count > 0) {
+      if (static_cast<double>(at - k.lastPress) < kDoubledSec * sr) {
+        nDoubled.fetch_add(1, std::memory_order_relaxed);
+        log.record(detail::LogKind::Doubled, e.channel, e.note, e.vel, at);
+        return;
+      }
+      nRepress.fetch_add(1, std::memory_order_relaxed);
+      log.record(detail::LogKind::Repress, e.channel, e.note, e.vel, at);
+      release(k, e, sample, false);
+    }
+    k.lastPress = at;
     ++serial;
     for (int i = 0; i < rt->zoneCount; ++i) {
       const Rt::Z& rz = rt->zones[static_cast<std::size_t>(i)];
@@ -238,15 +265,18 @@ struct Multi::Impl {
 
   // Releases the oldest note held on this key: all the parts it started, like
   // an engine pairing a note-off with its oldest held voice.
-  void noteOff(const MidiEvent& e, int sample) {
-    Key& k = key(e);
+  void noteOff(const MidiEvent& e, int sample) { release(key(e), e, sample, true); }
+
+  // Lets go of a key's routes: the oldest press's (a note-off), or all of them
+  // (a re-press, whose earlier note-off never came).
+  void release(Key& k, const MidiEvent& e, int sample, bool oldestOnly) {
     if (k.count == 0) return;
     uint32_t oldest = k.r[0].serial;
     for (int i = 1; i < k.count; ++i) oldest = std::min(oldest, k.r[static_cast<std::size_t>(i)].serial);
     int w = 0;
     for (int i = 0; i < k.count; ++i) {
       const Route r = k.r[static_cast<std::size_t>(i)];
-      if (r.serial == oldest) {
+      if (!oldestOnly || r.serial == oldest) {
         uint8_t& h = heldOf(r.part, e.channel, r.note);
         if (h > 0) --h;
         if (h > 0) continue;   // another key still holds this note (dropped from the table all the same)
@@ -294,6 +324,10 @@ void Multi::prepare(double sampleRate, int maxBlock) {
   Impl& m = *impl_;
   m.sr = sampleRate;
   m.maxBlock = std::max(1, maxBlock);
+  m.samples = 0;
+  m.samplesNow.store(0, std::memory_order_relaxed);
+  m.log.clear();
+  m.clearRoutes();
   for (auto& e : m.engines) e->prepare(sampleRate, m.maxBlock);
   const std::size_t n = static_cast<std::size_t>(m.maxBlock);
   m.partL.assign(n, 0.f);
@@ -404,6 +438,8 @@ void Multi::process(float* const* outs, int nOut, int frames, const MidiEvent* e
       }
     }
     for (int c = 2; c < nOut; ++c) std::memset(outs[c] + done, 0, sizeof(float) * static_cast<std::size_t>(n));
+    m.samples += static_cast<uint64_t>(n);
+    m.samplesNow.store(static_cast<uint32_t>(m.samples), std::memory_order_relaxed);
     done += n;
   }
   atomicMax(m.statPeak, peak);
@@ -465,6 +501,11 @@ Json Multi::diagnostics() const {
     parts.push(std::move(p));
   }
   Json j = Json::object();
+  Json router = Json::object();
+  router["represses"] = m.nRepress.load(std::memory_order_relaxed);
+  router["doubled"] = m.nDoubled.load(std::memory_order_relaxed);
+  router["events"] = m.log.snapshot(m.samplesNow.load(std::memory_order_relaxed), m.sr);
+  j["router"] = std::move(router);
   j["parts"] = std::move(parts);
   return j;
 }

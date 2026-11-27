@@ -83,6 +83,8 @@ class SynthkitProcessor extends AudioWorkletProcessor {
       }
       case "allOff": x.sk_all_notes_off(); break;
       case "panic": x.sk_panic(); break;
+      // Diagnostics (API.md §10a): between blocks, so the engine is idle.
+      case "diag": this.port.postMessage({ t: "diag", id: m.id, json: this.w.str(x.sk_diagnostics()) }); break;
     }
   }
 

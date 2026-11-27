@@ -146,6 +146,10 @@ button, input, select { font: inherit; color: inherit; }
 .undo .btn:disabled { opacity: 0.35; }
 .undo-icon.is-redo { transform: scaleX(-1); }
 .theme-btn { display: inline-flex; align-items: center; justify-content: center; }
+/* Stop all sound with its diagnostics menu (API.md §10a) */
+.panic-group { display: inline-flex; gap: 0; }
+.panic-group > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.panic-group > .diag-btn { border-top-left-radius: 0; border-bottom-left-radius: 0; min-width: 24px; padding: 5px 6px; margin-left: -1px; font-size: 10px; }
 
 .start-banner {
   display: flex; align-items: center; gap: 10px; justify-content: center;
@@ -496,6 +500,19 @@ button, input, select { font: inherit; color: inherit; }
 .pick-btn:hover { border-color: var(--ink-soft); }
 .pick-btn-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pick-btn-chev { color: var(--ink-soft); font-size: 10px; }
+/* the diagnostics report (API.md §10a) */
+.diag-pop {
+  position: fixed; z-index: 26; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(720px, calc(100vw - 24px)); max-height: calc(100vh - 24px); display: flex; flex-direction: column; gap: 8px;
+  padding: 14px 16px; background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+}
+.diag-title { margin: 0; font-size: 15px; }
+.diag-help, .diag-status { margin: 0; font-size: 12px; color: var(--ink-soft); }
+.diag-text {
+  width: 100%; box-sizing: border-box; height: min(52vh, 420px); resize: vertical; font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--field); color: inherit; border: 1px solid var(--edge); border-radius: 7px; padding: 8px;
+}
+.diag-buttons { display: flex; gap: 6px; justify-content: flex-end; }
 .pick-pop {
   position: fixed; z-index: 25; width: min(460px, calc(100vw - 16px)); display: flex; flex-direction: column;
   background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; box-shadow: 0 10px 32px rgba(0, 0, 0, 0.22);
