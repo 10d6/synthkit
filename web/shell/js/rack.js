@@ -70,6 +70,7 @@ class Rack {
     this.multi = this.model.multi;
     this.rows = [];
     this.openPart = 0;
+    this.lastAdded = -1;            // the voice Add voice added last (-1: none since the sound loaded)
     this.layers = this.multi ? new LayersPanel(app) : null;
     this.list = h("div", { class: "rack-voices" });
     this.addVoice = this.multi ? new AddVoice(this) : null;
@@ -140,6 +141,8 @@ class Rack {
 
   // A whole new sound (the sound bar, an import, the session): the defaults.
   soundLoaded() {
+    this.lastAdded = -1;
+    if (this.layers) this.layers.sel = -1;   // its default again (layers.defaultZone)
     this.wasMulti = this.isMulti();
     this.openPart = this.wasMulti ? -1 : 0;
     if (this.openPart === 0 && this.model.part !== 0) this.model.selectPart(0);
@@ -160,10 +163,6 @@ class Rack {
     this.rows.forEach((r, p) => r.setOpen(p === this.openPart));
     const row = this.rows[this.openPart];
     if (!row) return;
-    // The voice's preset bar (a multi's voice; one voice uses the sound bar).
-    const pr = this.app.presets;
-    if (this.multi && this.isMulti()) { if (pr.root.parentNode !== row.presetSlot) row.presetSlot.append(pr.root); }
-    else if (this.multi && pr.root.parentNode === row.presetSlot) pr.root.remove();
     if (this.panels && this.panels.parentNode !== row.panelSlot) row.panelSlot.append(this.panels);
   }
 
@@ -177,7 +176,7 @@ class Rack {
     const pr = this.app.presets;
     const currents = { ...pr.currents, [pr.shownPart]: pr.current };
     const dirty = m.dirtyParts.slice(0, n);
-    const was = m.part;
+    const was = m.part, edited = m.lastEdited;
     const ms = m.multiSave();
     ms.parts.push({ patch });
     ms.zones = [...(ms.zones || []), { part: n, key: [0, 127], vel: [1, 127] }];
@@ -187,6 +186,9 @@ class Rack {
     if (!res.ok) { this.app.toast(`Couldn't add the voice: ${res.error}`, "error"); return false; }
     for (const w of res.warnings || []) this.app.toast(w, "warn");
     m.dirtyParts = [...dirty, false];
+    m.lastEdited = edited;
+    this.lastAdded = n;
+    if (this.layers) { this.layers.sel = -1; this.layers.renderZones(); }
     pr.currents = { ...currents, [n]: entry ? pr.ref(entry) : pr.currentFor(patch) };
     this.busy = true;
     if (m.part !== was) m.selectPart(was, { quiet: true });
@@ -212,6 +214,8 @@ class Rack {
     const pr = this.app.presets;
     const currents = { ...pr.currents, [pr.shownPart]: pr.current };
     const dirty = m.dirtyParts.slice(0, n);
+    const edited = m.lastEdited, added = this.lastAdded;
+    const shift = (k) => (k === i ? -1 : k > i ? k - 1 : k);
     const open = this.openPart;
     this.openPart = open === i ? -1 : open > i ? open - 1 : open;
     this.busy = true;
@@ -221,6 +225,9 @@ class Rack {
     // Each voice keeps its preset name and "changed" mark.
     dirty.splice(i, 1);
     m.dirtyParts = dirty;
+    m.lastEdited = shift(edited);
+    this.lastAdded = shift(added);
+    if (this.layers) { this.layers.sel = -1; this.layers.renderZones(); }
     const shifted = {};
     for (let p = 0; p < n; p++) if (p !== i && currents[p]) shifted[p > i ? p - 1 : p] = currents[p];
     pr.currents = shifted;
@@ -241,6 +248,34 @@ class Rack {
     l.parts[p][flag] = !l.parts[p][flag];
     if (!l.parts[p][flag]) delete l.parts[p][flag];
     this.model.setLayout(l);
+  }
+
+  // Save as new voice: a copy of voice p's patch, as it is now, becomes one of
+  // your presets under a name not taken yet (a taken one gets a number). The
+  // voice stays the multi's own: it isn't linked to the copy and keeps its name.
+  async saveCopy(p) {
+    const m = this.model, pr = this.app.presets;
+    const patch = (m.multiSave().parts[p] || {}).patch;
+    if (!patch) return;
+    const cats = pr.categories().filter((c) => c !== "");
+    const cat = h("select", { class: "sk-field", "aria-label": "Category" },
+      h("option", { value: "", text: "None" }), ...cats.map((c) => h("option", { value: c, text: c })));
+    cat.value = cats.includes(patch.category) ? patch.category : "";
+    const name = await this.app.askName({
+      title: "Save as new voice",
+      label: "Name",
+      initial: m.nameOf(p) || "Voice",
+      taken: (n) => pr.nameTaken(n),
+      extra: h("label", { class: "sk-field-row" }, h("span", { text: "Category" }), cat),
+      ok: "Save copy",
+    });
+    if (name === null) return;
+    const copy = { ...JSON.parse(JSON.stringify(patch)), name };
+    if (cat.value) copy.category = cat.value; else delete copy.category;
+    pr.storeCopy(copy);
+    if (this.addVoice) this.addVoice.refresh();
+    if (this.app.sound) this.app.sound.refresh();
+    this.app.toast(`Saved a copy as “${name}” in your presets`);
   }
 
   // A voice renamed from its strip: its patch's name. It's no longer the
@@ -334,6 +369,11 @@ class VoiceRow {
     if (sp) this.unsubs.push(m.onIn(p, sp.index, () => this.showScale()));
     if (kp) this.unsubs.push(m.onIn(p, kp.index, () => this.showScale()));
 
+    // A copy of this voice as one of your presets (multi only: a single voice
+    // saves with the sound bar's Save).
+    this.saveCopyBtn = h("button", { type: "button", class: "btn btn-quiet voice-save-copy", title: "Save a copy of this voice as a new preset",
+      "aria-label": `Save voice ${p + 1} as a new voice preset`, onclick: () => this.rack.saveCopy(p) },
+      icon("M3 2.5h8l2.5 2.5v8.5h-10.5Z M5.5 2.5v3.5h5v-3.5 M5.5 13.5v-4h5v4"), h("span", { class: "voice-save-copy-text", text: "Save as new voice" }));
     this.removeBtn = h("button", { type: "button", class: "btn btn-quiet btn-icon voice-remove", title: `Remove voice ${p + 1}`, "aria-label": `Remove voice ${p + 1}`, onclick: () => this.rack.removePart(p) }, icon("M4 4 12 12 M12 4 4 12"));
 
     const field = (label, ...els) => h("label", { class: "voice-field" }, h("span", { class: "voice-field-label", text: label }), h("span", { class: "voice-field-input" }, ...els));
@@ -347,11 +387,10 @@ class VoiceRow {
         this.transpose ? field("Transpose", this.transpose) : null,
         this.scale ? field("Scale", this.scale, this.key) : null,
         knob("tune", "Tune", { origin: 440, info: "Fine tuning, in cents (A4 = 440 Hz at 0)." })),
-      this.removeBtn);
+      h("div", { class: "voice-end" }, this.saveCopyBtn, this.removeBtn));
 
-    this.presetSlot = h("div", { class: "voice-preset" });
     this.panelSlot = h("div", { class: "voice-panels" });
-    this.body = h("div", { class: "voice-body", id: id + "-body" }, this.presetSlot, this.panelSlot);
+    this.body = h("div", { class: "voice-body", id: id + "-body" }, this.panelSlot);
     this.root = h("section", { class: "voice", id, style: `--part:${skPartColor(p)}`, "aria-label": `Voice ${p + 1}` }, this.strip, this.body);
     this.isOpen = null;
     this.showName();
@@ -390,6 +429,7 @@ class VoiceRow {
   showMulti(multi) {
     this.muteBtn.parentNode.hidden = !multi;
     this.removeBtn.hidden = !multi;
+    this.saveCopyBtn.hidden = !multi;
   }
 
   setOpen(open) {

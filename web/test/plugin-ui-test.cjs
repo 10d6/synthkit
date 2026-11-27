@@ -41,6 +41,8 @@ async function main() {
 
   await page.goto("file://" + path.resolve(html));
   await page.waitForFunction(() => window.synthkit && window.synthkit.model, null, { timeout: 15000 });
+  // (The unsaved-changes question would stop the imports and loads below; multi-test.cjs tests it.)
+  await page.evaluate(() => window.synthkit.prefs.set({ warnUnsaved: false }));
   await page.waitForTimeout(200);
   const sent = (t) => page.evaluate((t) => window.__sent.filter((m) => !t || m.t === t), t);
   const clear = () => page.evaluate(() => { window.__sent.length = 0; });

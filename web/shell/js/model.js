@@ -22,6 +22,7 @@ class Model {
     this.byId = new Map(this.params.map((p) => [p.id, p]));
     this.listeners = new Map();   // index -> Set(fn)
     this.anyListeners = new Set();
+    this.lastEdited = -1;
     this.partParamListeners = new Map();   // "part:index" -> Set(fn): one part's parameter, selected or not
     this.nameListeners = new Set();        // (part) after a part's patch was renamed
     this.customListeners = new Map();
@@ -41,7 +42,12 @@ class Model {
   }
 
   get dirty() { return !!this.dirtyParts[this.part]; }
-  set dirty(v) { this.dirtyParts[this.part] = !!v; }
+  // A change to the selected part (a control, the mod matrix, custom state…)
+  // also makes it the last part edited.
+  set dirty(v) { this.dirtyParts[this.part] = !!v; if (v) this.edited(this.part); }
+  // The part last changed by hand (Layers and splits selects its zone first);
+  // -1 when nothing has been, since the sound loaded.
+  edited(part) { this.lastEdited = part; }
 
   param(id) { return typeof id === "number" ? this.params[id] : this.byId.get(id); }
   get(id) { const p = this.param(id); return p ? this.x.sk_get_param(p.index) : NaN; }
@@ -86,7 +92,7 @@ class Model {
     const before = this.get(p.index);
     this.x.sk_set_param(p.index, v);
     const now = this.get(p.index);
-    if (now !== before) { this.dirty = true; this.emit(p.index, now, "host"); }
+    if (now !== before) { this.dirtyParts[this.part] = true; this.emit(p.index, now, "host"); }
   }
   // Start/end of a drag, so a DAW records the change as one gesture.
   gesture(id, on) {
@@ -131,6 +137,7 @@ class Model {
     if (now === before) return;
     if (this.history) this.history.record("p", before, now, { i: p.index, part, strip: true });
     this.dirtyParts[part] = true;
+    this.edited(part);
     if (this.sink && this.sink.paramAt) this.sink.paramAt(part, p.index, now);
     this.emitIn(part, p.index, now, source);
     for (const fn of this.anyListeners) fn(-1, 0, "part");   // (something changed: the sound bar's "changed" dot)
@@ -176,6 +183,7 @@ class Model {
     else { this.x.sk_select_part(part); this.setName(name); this.x.sk_select_part(this.part); }
     if (this.history) this.history.record("name", before, name, { part, label: "renaming the voice" });
     this.dirtyParts[part] = true;
+    this.edited(part);
     if (this.sink && this.sink.name) this.sink.name(part, name);
     this.emitName(part);
     for (const fn of this.anyListeners) fn(-1, 0, "part");
@@ -273,6 +281,7 @@ class Model {
     if (this.sink && !fromHost && this.sink.multi) this.sink.multi(JSON.stringify(saved));
     this.dirtyParts = [];
     this.multiDirty = false;
+    this.lastEdited = -1;
     const layout = this.layout();
     if (this.part >= layout.parts.length) this.part = this.x.sk_select_part(0);
     this.emitAll();

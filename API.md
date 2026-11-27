@@ -1083,7 +1083,8 @@ to the synth's default patch; tempo follows part 1's patch).
 A part is a `patch` (what `save()` writes) or a `preset` named as the factory
 presets are (`"Bass/mono-bass"`, the path under `presets/` without `.json`)
 for a hand-written multi. A part may also give `level` (dB, added to the
-patch's `master`), `pan` (added to `sk.pan`), and `scale` (a scale's name) with
+patch's `master`), `pan` (added to `sk.pan`), `transpose` (semitones, added
+to `sk.transpose`), and `scale` (a scale's name) with
 `scaleKey` (0 = C … 11 = B): they're applied to the part's patch as the multi
 loads, which is how a hand-written multi adjusts a preset, and how multis
 saved before these moved into the patch load. `save()` writes them into the
@@ -1118,9 +1119,15 @@ page (panels, modulation, the arp, undo) edits **the selected part**, so a
 synth's panels need no change for multis. A strip edits its own part whether
 or not it's open. *Add voice*, under the voices, adds a preset as another
 voice layered over the keyboard (one voice becomes a multi); × removes a
-voice, and the ones after it move down a place. In a multi the open voice
-also has its own preset bar (the kit's, which loads, saves and steps through
-presets for that voice only). With more than one voice, or one voice that
+voice, and the ones after it move down a place. A voice in a multi is **the
+multi's own**: it holds a copy of the patch, not a link to the preset it came
+from, so editing it changes only that multi, and the sound bar's *Save* keeps
+it with the multi. Nothing else (another multi, the preset) changes. To swap a
+voice for another preset, remove it and use *Add voice*. *Save as new voice*,
+on a multi's strips, keeps a copy of the voice as it is now as one of your
+presets (a name and a category; a name already taken by a preset gets a number
+after it: "Warm Pad 2"); the voice itself stays as it was, unlinked, and the
+multi isn't marked changed. With more than one voice, or one voice that
 doesn't cover every key and velocity, *Layers and splits* is at the top of
 the rack, open unless closed (which is saved with the multi, as its `ui`).
 It's the zone editor: zones are rectangles on a map of keys (across) and
@@ -1129,8 +1136,12 @@ it, drag an edge to resize, or use the numbers below (key and velocity
 ranges, fades, curve, MIDI channel, transpose, gain). Arrow keys nudge the
 focused zone (Shift resizes, Alt steps by an octave). *Set up…* arranges the
 voices as layers, a split, velocity layers or one MIDI channel each, in one
-undoable step. The session restores the sound, its name, its selected part and
-each part's preset. A synth's own page (§9a) mounts the sound bar with
+undoable step. A zone is always selected: at first the zone of the voice last
+edited (its panels, its strip, its name), else of the voice last added, else
+of the last voice. A voice's own *Transpose* (its strip) is the one to use;
+the editor shows a zone's `transpose` only when it has one (from an older or
+hand-written multi), so it can be seen and set back to 0. The session restores
+the sound, its name, its selected part and each part's preset. A synth's own page (§9a) mounts the sound bar with
 `sk.mount(el, "presets")` and the rack with `sk.mount(el, "rack")`;
 `sk.presets` works on the selected part's patch, and `sk.part` /
 `sk.onPart(fn)` / `sk.selectPart(i)` say which part its own controls are
@@ -1507,8 +1518,8 @@ accordion whose **compact strip** is always there, left to right: *Show more*
 / *Compact view*; the voice's name (its patch's), with a pencil that turns it
 into a field with ✓ and ✗ (Enter and Escape too); M and S (mute and solo, in
 a multi); *Volume*, *Pan*, *Transpose* (semitones), *Scale* (with its key once
-it isn't Chromatic) and *Tune* (cents from A4 = 440 Hz); and × to remove the
-voice (in a multi). These are the patch's `master`, `sk.pan`, `sk.transpose`,
+it isn't Chromatic) and *Tune* (cents from A4 = 440 Hz); and, in a multi,
+*Save as new voice* (§5b) and × to remove the voice. These are the patch's `master`, `sk.pan`, `sk.transpose`,
 `sk.scale`, `sk.scaleKey` and `sk.a4` (§3), so they're saved with the patch.
 *Show more* opens the voice's full interface under the strip: the panels
 below. One voice is open at a time; a single voice starts open, a multi's
@@ -1518,6 +1529,22 @@ voices start closed. The strip takes the place of the Output panel
 splits* at the top (§5b). `"voiceStrip": false` (top level) turns the rack off
 for a synth without multis: the panels are the page, with the Output panel
 (level, pan, transpose, scale, key, A4).
+
+**Unsaved changes.** Before something replaces a sound that has changes not
+yet saved (picking another sound or preset, the ‹ › arrows, *Start from
+Init*, *Import*), the page asks: *Save*, *Don't save* or *Cancel*. *Save*
+saves in place when it's one of yours; otherwise it asks for a name first (a
+taken one gets a number after it). The dialog's *Don't ask again* turns the
+question off. Adding or removing voices doesn't ask (both are undo steps), nor
+does the host loading a project; closing the page loses nothing, as the
+session keeps the edits. The dialogs are the page's own, not the browser's
+(a plugin's web view may not show those).
+
+**Preferences** (the gear beside the theme switch): settings for the whole
+page, not part of any sound, kept like the theme (in this browser, shared by
+every synthkit synth on the site; in the plugin, the synth's settings file).
+For now: *Warn before leaving unsaved changes* (on by default). *Cancel* or
+*Save*.
 
 ```json
 {
@@ -1760,9 +1787,9 @@ export function mount(sk, root) {
   |---|---|
   | `presets` | the preset bar (pick, step, save, rename, delete, import, export); for a synth with `features.multi`, the sound bar (§5b) |
   | `keyboard` | the on-screen keyboard, wheels, pedals and knobs; computer keys play while it's on the page (`typing: false` to stop that). Its bar also takes the tempo and MIDI controls unless the page placed them (`tempo: false`, `midi: false`). `controllers: false` leaves out the pedals and knobs, for a page with controls of its own (the reed example has treadles). |
-  | `midi`, `tempo`, `output`, `panic`, `theme` | the Connect MIDI control, tempo controls (a readout in the plugin; `space: false` if the page uses Space itself), scope and level, Stop all sound, light/dark switch |
+  | `midi`, `tempo`, `output`, `panic`, `theme`, `preferences` | the Connect MIDI control, tempo controls (a readout in the plugin; `space: false` if the page uses Space itself), scope and level, Stop all sound, light/dark switch, the Preferences button (§9) |
   | `undo` | the undo and redo buttons (§9). Ctrl/⌘+Z works on every page, mounted or not |
-  | `rack` | the rack (§9): each voice's strip, *Layers and splits* and *Add voice* (§5b). The page's own controls follow `sk.part`, so an open voice shows only its preset bar (in a multi). `multi` is the same part, by its old name |
+  | `rack` | the rack (§9): each voice's strip, *Layers and splits* and *Add voice* (§5b). The page's own controls follow `sk.part`, so an open voice shows nothing more under its strip. `multi` is the same part, by its old name |
   | `hostbar` | the host bar (below), here instead of at the top of the page |
   | `panels` | panels for a whole layout (`{ sections: [...] }` as in layout.json; default: `ui/layout.json`) |
   | `section` | one panel, from one layout section (`{ title, controls }` or `{ kit: "env1" }`, `"modMatrix"`, `"shape1"`, …); without its reset button, which comes with `panels` |

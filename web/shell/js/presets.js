@@ -346,12 +346,17 @@ class PresetBar {
     return true;
   }
 
-  pick(v) {
+  // (Picking, stepping, Init and Import ask about unsaved changes first,
+  // app.confirmLeave; for a multi synth the sound bar does the asking.)
+  async pick(v) {
     const e = this.entries().find((x) => this.value(x) === v);
-    if (e) this.load(e);
+    if (!e) return;
+    if (!this.model.multi && !(await this.app.confirmLeave())) { this.refresh(); return; }
+    this.load(e);
   }
   // The next or previous preset in the category picked.
-  step(d) {
+  async step(d) {
+    if (!this.model.multi && !(await this.app.confirmLeave())) return;
     const list = this.visible();
     if (!list.length) return;
     const cur = this.current.kind === "session" ? null : this.find(this.current);
@@ -376,6 +381,15 @@ class PresetBar {
     this.refresh();
     this.saveSession();
     this.app.toast(`Saved "${name}"`);
+  }
+
+  // A patch kept as one of your presets as it is (the rack's Save as new
+  // voice), without loading it or changing what's showing.
+  storeCopy(patch) {
+    this.user[patch.name] = patch;
+    if (!skStore.set(this.key("presets"), this.user)) { this.app.toast("This browser isn't letting the page store presets. Use Export to keep a file instead.", "error"); return false; }
+    this.refresh();
+    return true;
   }
 
   startNaming(mode, initial) {
@@ -429,6 +443,8 @@ class PresetBar {
 
   // The Init to start from: the category's own (presets/<category>/init.json,
   // or a factory preset named "Init" in it), else presets/init.json, else any.
+  // A preset of that name already (yours or a factory one).
+  nameTaken(name) { return this.entries().some((e) => e.name === name); }
   initFor(category) {
     const factory = this.entries().filter((e) => e.kind === "factory");
     const isInit = (e) => /(^|\/)init\.json$/.test(e.file);
@@ -438,7 +454,8 @@ class PresetBar {
     }
     return factory.find((e) => e.file === "presets/init.json") || factory.find(isInit) || null;
   }
-  init() {
+  async init() {
+    if (!this.model.multi && !(await this.app.confirmLeave())) return;
     const init = this.initFor(this.category);
     this.load(init || { kind: "factory", name: "Init", patch: { synth: this.model.info.synth.id, name: "Init", params: {} } });
   }
@@ -488,7 +505,8 @@ class PresetBar {
     if (!f) return;
     this.importText(await f.text(), f.name);
   }
-  startImport() {
+  async startImport() {
+    if (!this.model.multi && !(await this.app.confirmLeave())) return;
     if (skHost) this.app.audio.send({ t: "import" });   // the plugin shows a file dialog
     else this.fileInput.click();
   }

@@ -20,6 +20,21 @@ class LayersPanel {
   }
 
   get parts() { return this.l.parts.length; }
+
+  // The zone selected when none is: the first zone of the voice last edited,
+  // else of the voice last added, else of the last voice; else the last zone.
+  defaultZone() {
+    const zs = this.l.zones;
+    if (!zs.length) return -1;
+    const rack = this.app.rack;
+    const want = [this.model.lastEdited, rack ? rack.lastAdded : -1, this.parts - 1];
+    for (const p of want) {
+      if (p < 0) continue;
+      const i = zs.findIndex((z) => z.part === p);
+      if (i >= 0) return i;
+    }
+    return zs.length - 1;
+  }
   get open() { const ui = this.l.ui || {}; return ui.layersOpen !== false; }
 
   build() {
@@ -67,8 +82,9 @@ class LayersPanel {
         this.editZone((z) => set(z, v));
       });
       const out = note ? h("span", { class: "zf-note" }) : null;
-      this.f[id] = { input, out, get, note };
-      return h("label", { class: "zf" }, h("span", { text: label }), input, out);
+      const wrap = h("label", { class: "zf" }, h("span", { text: label }), input, out);
+      this.f[id] = { input, out, get, note, wrap };
+      return wrap;
     };
     const choice = (id, label, options, get, set) => {
       const sel = h("select", { class: "zf-sel", "aria-label": label, onchange: () => this.editZone((z) => set(z, sel.value)) });
@@ -88,7 +104,9 @@ class LayersPanel {
       num("vfo", "Velocity fade out", 0, 127, (z) => (z.velFade || [0, 0])[1], (z, v) => { z.velFade = [(z.velFade || [0, 0])[0], v]; }),
       choice("curve", "Fade curve", () => [["power", "Equal power"], ["linear", "Linear"]], (z) => z.curve === "linear" ? "linear" : "power", (z, v) => { z.curve = v === "linear" ? "linear" : undefined; }),
       choice("channel", "MIDI channel", () => [["any", "Any"], ...Array.from({ length: 16 }, (_, i) => [String(i), `${i + 1}`])], (z) => (typeof z.channel === "number" ? String(z.channel) : "any"), (z, v) => { z.channel = v === "any" ? undefined : Number(v); }),
-      num("transpose", "Transpose", -48, 48, (z) => z.transpose || 0, (z, v) => { z.transpose = v || undefined; }),
+      // A voice's own Transpose (its strip) is the one to use; a zone's shows
+      // only when it has one (older multis), so it can be seen and cleared.
+      num("transpose", "Zone transpose", -48, 48, (z) => z.transpose || 0, (z, v) => { z.transpose = v || undefined; }),
       num("gain", "Gain (dB)", -60, 12, (z) => z.gain || 0, (z, v) => { z.gain = v || undefined; }));
 
     return h("div", { class: "zones" },
@@ -109,7 +127,7 @@ class LayersPanel {
 
   renderZones() {
     const zs = this.l.zones;
-    if (this.sel >= zs.length) this.sel = zs.length - 1;
+    if (this.sel < 0 || this.sel >= zs.length) this.sel = this.defaultZone();
     this.rects.textContent = "";
     this.list.textContent = "";
     zs.forEach((z, i) => {
@@ -142,6 +160,7 @@ class LayersPanel {
 
   // Which zone is selected changed (not the layout).
   syncSelection() {
+    if (this.sel < 0) this.sel = this.defaultZone();   // there's always a zone selected, when there are zones
     this.rects.querySelectorAll(".zrect").forEach((r, i) => { r.classList.toggle("is-selected", i === this.sel); r.setAttribute("aria-selected", String(i === this.sel)); });
     this.list.querySelectorAll(".zchip").forEach((c, i) => { c.classList.toggle("is-selected", i === this.sel); c.setAttribute("aria-selected", String(i === this.sel)); });
     this.syncForm();
@@ -167,6 +186,8 @@ class LayersPanel {
         f.select.value = f.get(z);
       }
     }
+    const t = this.f.transpose;
+    t.wrap.hidden = !z.transpose && document.activeElement !== t.input;
   }
 
   // ---- editing the layout --------------------------------------------------------------
