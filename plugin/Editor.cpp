@@ -196,6 +196,10 @@ class WebEditor : public juce::AudioProcessorEditor, private juce::Timer {
       proc_.gesture(part, m["i"], static_cast<bool>(m["on"]));
     } else if (t == "select") {
       selected_ = part;
+    } else if (t == "name") {
+      // A voice renamed in the rack: the patch's name, saved with the project.
+      std::lock_guard<std::mutex> g(proc_.engineLock());
+      engine.patchMeta().name = m["name"].toString().toStdString();
     } else if (t == "patch") {
       auto r = proc_.loadPatchFromUi(part, toSk(m["json"].toString()));
       if (!r.ok) send(obj({{"t", "log"}, {"msg", juce::String::fromUTF8(r.error.c_str())}}));

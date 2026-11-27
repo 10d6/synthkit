@@ -2,7 +2,7 @@
 // parameter groups when a synth has no layout.
 
 const KIT_PANELS = {
-  voices: { title: "Voices", controls: [
+  voices: { title: "Voicing", controls: [
     ["voiceMode", "Mode"], ["glide", "Glide"], ["unison", "Unison"], ["unisonDetune", "Detune"],
     ["unisonSpread", "Spread"], ["bendRange", "Bend"],
     ["sk.halfPedal", "Half pedal", "For a continuous sustain pedal: part way down, notes you let go of fade slowly instead of stopping or ringing on, like a piano's dampers. Off: the pedal is simply down past half way. On/off pedals work the same either way."]] },
@@ -158,7 +158,7 @@ class Panels {
         { title: shapes.length > 1 ? "Shapes" : "Shape", sections: shapes }] });
     } else out.push(...lfos, ...shapes);
     if (this.model.mod.slots) out.push({ kit: "modMatrix" });
-    out.push({ kit: "master" });
+    if (!this.app.rackOn) out.push({ kit: "master" });
     return out;
   }
 
@@ -312,6 +312,8 @@ class Panels {
       this.app.matrix = new MatrixPanel(this.app);
       return this.app.matrix.root;
     }
+    // The rack's voice strips have the Output panel's controls (rack.js).
+    if (spec.kit === "master" && this.app.rackOn) return null;
     if (spec.kit) {
       const m = /^env(\d+)$/.exec(spec.kit);
       if (m) s = envPanel(Number(m[1]), this.model);

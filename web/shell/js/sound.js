@@ -2,9 +2,9 @@
 // It picks a whole sound, either one of the presets (played as one part across
 // the keyboard) or a saved multi (listed under "Multis"), and saves what you
 // have: one plain part saves as a preset, anything more as a multi. The
-// patch of each part is picked in the multi bar (multi.js), which this bar
-// opens ("Layers and splits"). Presets themselves stay in the preset bar
-// (presets.js), which this bar uses for them.
+// patch of each voice is picked in its own preset bar, in the rack (rack.js).
+// Presets themselves stay in the preset bar (presets.js), which this bar uses
+// for them.
 
 const SK_MULTIS = "Multis";
 
@@ -55,7 +55,7 @@ class SoundBar {
       Object.keys(z).every((k) => k === "part" || k === "key" || k === "vel");
   }
   // The multi without its name, to tell whether it changed.
-  sig() { const m = this.model.multiSave(); delete m.name; return JSON.stringify(m); }
+  sig() { const m = this.model.multiSave(); delete m.name; delete m.ui; return JSON.stringify(m); }
 
   // What the bar shows: {type: "patch"|"multi", kind, name, file?}.
   shown() {
@@ -121,15 +121,12 @@ class SoundBar {
     const btn = (label, title, fn, cls = "") => h("button", { type: "button", class: "btn " + cls, title, "aria-label": title, onclick: fn }, label);
     this.saveBtn = btn("Save", "Save sound", () => this.save());
     this.moreBtn = btn("More", "More sound actions", (e) => this.moreMenu(e), "btn-quiet");
-    // Opens the multi bar under the header; styled as that drawer's tab.
-    this.multiBtn = h("button", { type: "button", class: "btn sound-multi", "aria-expanded": "false", "aria-controls": "sk-multi", title: "Edit this sound's parts and zones",
-      onclick: () => this.toggleMulti() }, h("span", { text: "Layers and splits" }), h("span", { class: "sound-multi-caret", "aria-hidden": "true", text: "▾" }));
     this.root = h("div", { class: "presets sound" },
       this.catSelect,
       btn("‹", "Previous sound", () => this.step(-1), "btn-icon"),
       h("div", { class: "preset-field" }, this.select, this.nameInput, this.dirtyDot),
       btn("›", "Next sound", () => this.step(1), "btn-icon"),
-      this.tag, this.multiBtn, this.saveBtn, this.moreBtn, this.fileInput);
+      this.tag, this.saveBtn, this.moreBtn, this.fileInput);
     this.refresh();
   }
 
@@ -161,18 +158,8 @@ class SoundBar {
     this.dirtyDot.hidden = !this.dirty;
     this.tag.hidden = cur.type !== "multi";
 
-    const open = !!(this.app.multiBar && this.app.multiBar.open);
-    this.multiBtn.setAttribute("aria-expanded", String(open));
-    this.multiBtn.classList.toggle("is-on", open);
     const state = { ...cur, dirty: this.dirty };
     for (const fn of this.listeners) { try { fn(state); } catch (err) { console.error(err); } }
-  }
-
-  toggleMulti() {
-    const mb = this.app.multiBar;
-    if (!mb) return;
-    mb.setOpen(!mb.open);
-    this.refresh();
   }
 
   pickCategory(v) {
@@ -215,6 +202,7 @@ class SoundBar {
       this.multiCurrent = e.kind === "factory" ? { kind: "factory", name: e.name, file: e.file } : { kind: e.kind, name: e.name };
     }
     this.baseline = this.sig();
+    this.app.soundLoaded();
     this.presets.refresh();
     this.refresh();
     this.presets.saveSession();
@@ -331,6 +319,7 @@ class SoundBar {
     if (!res.ok) { this.app.toast(`Couldn't import ${fileName}: ${res.error}`, "error"); return; }
     for (const w of res.warnings || []) this.app.toast(`${fileName}: ${w}`, "warn");
     this.presets.multiLoaded();
+    this.app.soundLoaded();
     if (isMulti || !this.plain()) this.storeMulti(name);
     else { this.presets.store(name); this.multiCurrent = { kind: "session", name: `${name} multi` }; this.baseline = this.sig(); this.refresh(); }
   }

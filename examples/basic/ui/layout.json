@@ -133,15 +133,8 @@
       "kit": "arpPhrase"
     },
     {
-      "accordion": [
-        {
-          "kit": "voices",
-          "collapsed": true
-        },
-        {
-          "kit": "master"
-        }
-      ]
+      "kit": "voices",
+      "collapsed": true
     },
     {
       "tabs": [

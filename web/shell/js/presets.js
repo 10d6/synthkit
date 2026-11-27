@@ -292,6 +292,7 @@ class PresetBar {
     this.current = this.currents[this.shownPart] || ui.current || this.currentFor(this.model.savePatch());
     this.model.dirtyParts = ui.dirtyParts || [];
     this.restoreSound(ui.sound);
+    this.app.soundLoaded();
     if (this.model.history) this.model.history.clear();
     this.refresh();
     return true;
