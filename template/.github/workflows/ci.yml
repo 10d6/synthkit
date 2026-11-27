@@ -2,6 +2,10 @@ name: CI
 
 # Generated from synthkit/template. The heavy lifting is in synthkit/tools/ci,
 # pinned with the synthkit submodule.
+#
+# Actions are on their Node 24 majors (checkout v5, upload-artifact v6,
+# download-artifact v7: GitHub retired Node 20 for actions). Every job has a
+# timeout, so a hang fails in minutes instead of GitHub's 6 hours.
 
 on:
   push:
@@ -20,8 +24,9 @@ jobs:
   native:
     name: Native build + checks
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - run: synthkit/tools/ci/deps.sh native
@@ -31,7 +36,7 @@ jobs:
         run: ./build/${SYNTH}_render --check . --out renders
       - name: Upload renders
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: renders
           path: |
@@ -44,8 +49,9 @@ jobs:
   web:
     name: Browser build
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - run: synthkit/tools/ci/deps.sh web
@@ -69,7 +75,7 @@ jobs:
           python3 synthkit/web/test/compare.py web-test/web-render.f32 web-test/native.wav
       - name: Upload the page
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: web
           path: |
@@ -82,6 +88,7 @@ jobs:
     name: Plugin (${{ matrix.name }})
     needs: web
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -90,10 +97,10 @@ jobs:
           - { name: macOS, os: macos-15, slug: macos }
           - { name: Linux, os: ubuntu-24.04, slug: linux }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: web
           path: page
@@ -104,7 +111,7 @@ jobs:
         shell: bash
         run: synthkit/tools/ci/plugin.sh . "$SYNTH" . page/build-web/web plugin.zip
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: plugin-${{ matrix.slug }}
           path: plugin.zip
@@ -115,11 +122,12 @@ jobs:
     needs: plugin
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
         with:
           pattern: plugin-*
       - name: Publish
@@ -140,12 +148,17 @@ jobs:
     needs: web
     if: ${{ !github.event.repository.private && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
-    concurrency: pages-branch
+    # No concurrency group: with one, a third run waiting on it cancels the
+    # second's preview (GitHub keeps one pending job per group), leaving a
+    # cancelled run and a stale preview. Each run writes its own directory,
+    # so pushes only race on the branch tip: the push retries on top of
+    # whatever landed first.
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: web
           path: page
@@ -161,14 +174,19 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          if git fetch -q --depth 1 origin gh-pages; then git checkout -q gh-pages; else git checkout -q --orphan gh-pages; fi
-          mkdir -p "$dest"
-          cp "../page/build-web/web/${SYNTH}.html" "$dest/index.html"
-          touch .nojekyll
-          git add -A
           what="main"; [ -n "$PR" ] && what="PR #$PR"
-          git commit -q -m "Preview for $what (${{ github.sha }})" || exit 0
-          git push -q origin gh-pages
+          for attempt in 1 2 3 4 5; do
+            if git fetch -q --depth 1 origin gh-pages; then git checkout -q -B gh-pages FETCH_HEAD; else git checkout -q --orphan gh-pages; fi
+            mkdir -p "$dest"
+            cp "../page/build-web/web/${SYNTH}.html" "$dest/index.html"
+            touch .nojekyll
+            git add -A
+            git commit -q -m "Preview for $what (${{ github.sha }})" || exit 0   # unchanged
+            if git push -q origin gh-pages; then exit 0; fi
+            echo "gh-pages moved (another preview landed first): retrying ($attempt)"
+            sleep $((attempt * 3))
+          done
+          exit 1
       - name: Link the preview on the PR
         if: github.event_name == 'pull_request'
         env:
