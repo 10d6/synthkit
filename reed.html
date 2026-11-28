@@ -560,39 +560,73 @@ button, input, select { font: inherit; color: inherit; }
 /* Dragging controls must never start a text selection. */
 .shape-area, .amt, .knob-dial, .slider-track, .wheel, .xy-pad, .keys, .seg { -webkit-user-select: none; user-select: none; }
 
-/* ---- multi: parts, mix, zones (API.md \0000a75b) ---------------------------------------- */
-.multi { margin: 0 auto; max-width: 1180px; padding: 8px 16px 0; }
-.multi-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.parts { display: flex; gap: 6px; flex-wrap: wrap; flex: 1 1 auto; }
-.part { display: flex; align-items: stretch; border: 1px solid var(--edge); border-radius: 8px; background: var(--panel); overflow: hidden; box-shadow: var(--shadow); }
-.part.is-selected { border-color: var(--part); box-shadow: 0 0 0 1px var(--part); }
-.part.is-muted .part-name { opacity: 0.5; text-decoration: line-through; }
-.part-tab { display: flex; gap: 6px; align-items: center; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 0.8125rem; padding: 6px 8px; cursor: pointer; max-width: 15em; }
-.part-num { display: inline-grid; place-items: center; min-width: 1.4em; height: 1.4em; border-radius: 50%; background: var(--part); color: #fff; font-size: 0.75rem; font-weight: 600; }
-.part-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.part-flag { border: 0; border-left: 1px solid var(--edge); background: transparent; color: var(--ink-soft); font: inherit; font-size: 0.6875rem; font-weight: 600; width: 1.9em; cursor: pointer; }
-.part-flag.is-on { background: var(--part); color: #fff; }
-.part-remove { font-size: 0.875rem; font-weight: 400; }
-.part-remove:hover { color: var(--bad, #d55); }
-/* "Layers and splits" is the drawer's tab: open, it takes the accent and the drawer
-   below carries the same accent along its top edge. */
-.sound-multi { display: inline-flex; align-items: center; gap: 6px; }
-.sound-multi-caret { font-size: 0.75em; transition: transform 0.15s; }
-.sound-multi.is-on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-bottom-left-radius: 0; border-bottom-right-radius: 0; box-shadow: inset 0 -2px 0 var(--accent); }
-.sound-multi.is-on .sound-multi-caret { transform: rotate(180deg); }
-.multi.is-open { border-top: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 4%, transparent); }
+/* ---- the rack: voices, Layers and splits, Add voice (API.md \0000a79, \0000a75b) --------------- */
+.rack { display: flex; flex-direction: column; gap: 12px; }
+.rack > .panel { flex: none; }
+.voice {
+  --part: var(--accent);
+  background: var(--panel); border: 1px solid var(--edge); border-left: 4px solid var(--part);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.voice.is-open { box-shadow: var(--shadow), 0 0 0 1px color-mix(in srgb, var(--part) 55%, transparent); }
+.voice-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 8px 10px 8px 12px; }
+.voice-toggle {
+  display: inline-flex; align-items: center; gap: 6px; flex: none; width: 8.2em; white-space: nowrap;
+  border: 0; background: none; padding: 4px 2px; cursor: pointer; font: inherit; font-size: 12px; color: var(--ink-soft); text-align: left;
+}
+.voice-toggle:hover { color: var(--ink); }
+.voice-toggle .panel-chevron { transform: rotate(-90deg); }
+.voice.is-open .voice-toggle .panel-chevron { transform: none; }
+/* A fixed width, so every voice's knobs line up down the rack. */
+.voice-id { display: flex; align-items: center; gap: 2px; flex: 0 0 14em; width: 14em; min-width: 0; }
+.voice-name {
+  font-size: 16px; font-weight: 700; color: var(--ink); font-variation-settings: "wdth" 85;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.voice.is-muted .voice-name { opacity: 0.5; text-decoration: line-through; }
+.voice-name-input { flex: 1; min-width: 0; padding: 3px 6px; border: 1px solid var(--part); border-radius: 6px; background: var(--field); color: var(--ink); font: inherit; font-size: 15px; font-weight: 700; }
+.voice-id .btn-icon { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; padding: 4px 6px; color: var(--ink-soft); border-color: transparent; }
+.voice-id .btn-icon:hover { color: var(--ink); }
+.voice-flags { display: flex; gap: 4px; }
+.voice-flags[hidden] { display: none; }
+.voice-flag {
+  width: 26px; height: 24px; border: 1px solid var(--edge); border-radius: 6px; background: var(--field);
+  color: var(--ink-soft); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+}
+.voice-flag.is-on { background: var(--part); border-color: var(--part); color: #fff; }
+.voice-ctls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.voice-ctls .ctl { min-width: 54px; }
+.voice-ctls .ctl-label { font-size: 11px; }
+.voice-ctls .ctl-value { font-size: 11px; }
+.voice-field { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; font-size: 11px; color: var(--ink-soft); }
+.voice-field-input { display: flex; gap: 4px; }
+.voice-num, .voice-sel { padding: 4px 6px; border: 1px solid var(--edge); border-radius: 7px; background: var(--field); color: var(--ink); font: inherit; font-size: 13px; }
+.voice-num { width: 4.2em; font-variant-numeric: tabular-nums; }
+.voice-scale { max-width: 11em; }
+.voice-remove { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; color: var(--ink-soft); }
+.voice-remove:hover { color: var(--error); }
+.voice-remove[hidden] { display: none; }
+.voice-body { padding: 4px 12px 14px; border-top: 1px solid var(--edge); }
+.voice-body[hidden] { display: none; }
+.voice-preset:empty { display: none; }
+.voice-preset { display: flex; align-items: center; gap: 10px; padding: 8px 0 10px; }
+.voice-preset .presets { margin: 0; }
+.voice-panels { padding-top: 8px; }
+.add-voice-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.add-voice-select { min-width: 16em; }
+.add-voice-note { font-size: 12px; color: var(--ink-soft); }
+.layers[hidden] { display: none; }
+.layers .zones { margin-top: 0; padding: 0; border: 0; background: none; }
 .sound-tag { font-size: 0.6875rem; padding: 2px 6px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
-.multi.is-open { padding-bottom: 8px; border-bottom: 1px solid var(--edge); }
-.mix-patch { display: flex; align-items: center; }
-.mix-patch .presets { margin: 0; }
-.mix-scale, .mix-key { padding: 4px 6px; border: 1px solid var(--edge); border-radius: 7px; background: var(--field); color: var(--ink); font: inherit; font-size: 0.8125rem; }
-.mix-key { margin-left: 4px; }
-.multi-mix { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; padding: 6px 2px 0; font-size: 0.8125rem; color: var(--ink-soft); }
-.mix-part { font-weight: 600; color: var(--ink); border-left: 4px solid var(--part); padding-left: 8px; }
-.mix-field { display: flex; gap: 8px; align-items: center; }
-.mix-field input[type="range"] { width: 9em; accent-color: var(--part); }
-.mix-out { min-width: 5.5em; font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) {
+  .voice-strip { gap: 8px 12px; }
+  .voice-toggle { width: auto; }
+  .voice-toggle-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .voice-id { flex: 1 1 0; width: auto; }
+  .voice-ctls { order: 5; flex-basis: 100%; }
+  .voice-remove { margin-left: 0; }
+  .voice-body { padding: 4px 8px 12px; }
+}
 .zones { margin-top: 8px; padding: 10px; border: 1px solid var(--edge); border-radius: var(--radius); background: var(--panel); }
 .zones[hidden] { display: none; }
 .zones-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
@@ -841,6 +875,7 @@ class SynthkitProcessor extends AudioWorkletProcessor {
       case "multi": this.w.withStrings([m.json], (p) => x.sk_multi_load(p)); this.part = x.sk_select_part(this.part); break;
       case "midi": this.queue.push(m.d); break;
       case "param": x.sk_set_param(m.i, m.v); break;
+      case "name": this.w.withStrings([m.name], (p) => x.sk_set_name(p)); break;
       case "patch": this.w.withStrings([m.json], (p) => x.sk_load_patch(p)); break;
       case "custom": this.w.withStrings([m.id, m.json], (a, b) => x.sk_set_custom(a, b)); break;
       case "mod": this.w.withStrings([m.json], (p) => x.sk_set_mod(p)); break;
@@ -1219,6 +1254,8 @@ class Model {
     this.byId = new Map(this.params.map((p) => [p.id, p]));
     this.listeners = new Map();   // index -> Set(fn)
     this.anyListeners = new Set();
+    this.partParamListeners = new Map();   // "part:index" -> Set(fn): one part's parameter, selected or not
+    this.nameListeners = new Set();        // (part) after a part's patch was renamed
     this.customListeners = new Map();
     this.sink = null;             // audio forwarding: {param(i, v), gesture?(i, on), patch(json), custom(id, json), mod(json), shapes(json)}
     this.mod = this.info.mod || { sources: [], slots: 0, lfos: 0, shapes: 0 };
@@ -1266,9 +1303,12 @@ class Model {
   // The same for another part of a multi.
   applyHostPart(part, i, v) {
     if (!part || part === this.part) return this.applyHost(i, v);
+    const before = this.x.sk_get_param_of(part, i);
     this.x.sk_select_part(part);
     this.x.sk_set_param(i, v);
     this.x.sk_select_part(this.part);
+    const now = this.x.sk_get_param_of(part, i);
+    if (now !== before) { this.dirtyParts[part] = true; this.emitIn(part, i, now, "host"); }
   }
   // A value that changed in the plugin (automation, the host's own controls):
   // update the page without sending it back.
@@ -1300,7 +1340,80 @@ class Model {
   emit(i, v, source) {
     for (const fn of this.listeners.get(i) || []) fn(v, source);
     for (const fn of this.anyListeners) fn(i, v, source);
+    this.emitIn(this.part, i, v, source);
   }
+
+  // ---- any part, without selecting it (the rack's voice strips) -------------------
+  // For a synth without multis, part 0 is the only one and these are the
+  // plain calls above.
+  getIn(part, id) {
+    const p = this.param(id);
+    if (!p) return NaN;
+    return !this.multi || part === this.part ? this.get(p.index) : this.x.sk_get_param_of(part, p.index);
+  }
+  setIn(part, id, v, source) {
+    const p = this.param(id);
+    if (!p) return;
+    if (!this.multi || part === this.part) return this.set(p.index, v, source);
+    const before = this.getIn(part, p.index);
+    this.x.sk_select_part(part);
+    this.x.sk_set_param(p.index, v);
+    this.x.sk_select_part(this.part);
+    const now = this.getIn(part, p.index);
+    if (now === before) return;
+    if (this.history) this.history.record("p", before, now, { i: p.index, part, strip: true });
+    this.dirtyParts[part] = true;
+    if (this.sink && this.sink.paramAt) this.sink.paramAt(part, p.index, now);
+    this.emitIn(part, p.index, now, source);
+    for (const fn of this.anyListeners) fn(-1, 0, "part");   // (something changed: the sound bar's "changed" dot)
+  }
+  gestureIn(part, id, on) {
+    if (!this.multi || part === this.part) return this.gesture(id, on);
+    const p = this.param(id);
+    if (!p) return;
+    if (this.history) { if (on) this.history.begin(`p:${part}:${p.index}`); else this.history.end(`p:${part}:${p.index}`); }
+    if (this.sink && this.sink.gestureAt) this.sink.gestureAt(part, p.index, on);
+  }
+  onIn(part, id, fn) {
+    const p = this.param(id);
+    if (!p) return () => {};
+    const key = part + ":" + p.index;
+    if (!this.partParamListeners.has(key)) this.partParamListeners.set(key, new Set());
+    this.partParamListeners.get(key).add(fn);
+    return () => { const set = this.partParamListeners.get(key); if (set) set.delete(fn); };
+  }
+  emitIn(part, i, v, source) {
+    for (const fn of this.partParamListeners.get(part + ":" + i) || []) { try { fn(v, source); } catch (err) { console.error(err); } }
+  }
+  // Every part's listeners, after something replaced several parts' values.
+  emitParts() {
+    const parts = this.multi ? this.maxParts : 1;
+    for (const key of this.partParamListeners.keys()) {
+      const [part, i] = key.split(":").map(Number);
+      if (part < parts) this.emitIn(part, i, this.getIn(part, i), "patch");
+    }
+    for (let p = 0; p < parts; p++) this.emitName(p);
+  }
+
+  // A part's patch name (the voice's name in the rack).
+  nameOf(part) {
+    if (!this.multi || part === this.part) return this.savePatch().name || "";
+    const n = this.partNames()[part];
+    return (n && n.name) || "";
+  }
+  setNameIn(part, name) {
+    const before = this.nameOf(part);
+    if (name === before) return;
+    if (!this.multi || part === this.part) this.setName(name);
+    else { this.x.sk_select_part(part); this.setName(name); this.x.sk_select_part(this.part); }
+    if (this.history) this.history.record("name", before, name, { part, label: "renaming the voice" });
+    this.dirtyParts[part] = true;
+    if (this.sink && this.sink.name) this.sink.name(part, name);
+    this.emitName(part);
+    for (const fn of this.anyListeners) fn(-1, 0, "part");
+  }
+  onName(fn) { this.nameListeners.add(fn); return () => this.nameListeners.delete(fn); }
+  emitName(part) { for (const fn of this.nameListeners) { try { fn(part); } catch (err) { console.error(err); } } }
   emitAll() { this.params.forEach((p) => this.emit(p.index, this.get(p.index), "patch")); }
 
   // Patches ----------------------------------------------------------------
@@ -1325,6 +1438,7 @@ class Model {
     this.emitMod();
     this.emitShapes();
     for (const fn of this.patchListeners) { try { fn(); } catch (err) { console.error(err); } }
+    this.emitName(this.part);
     return res;
   }
   onPatch(fn) { this.patchListeners.add(fn); return () => this.patchListeners.delete(fn); }
@@ -1364,12 +1478,14 @@ class Model {
 
   layout() { return this.multi ? this.w.json(this.x.sk_multi_layout()) : { parts: [{}], zones: [] }; }
   // Sets the layout (see Multi::layoutJson in the API). Returns what was dropped.
-  setLayout(layout, { fromHost = false } = {}) {
-    const before = this.history && !fromHost ? this.layout() : null;
+  // record: false leaves it out of undo and doesn't mark the multi changed
+  // (the page's own "ui" state, like whether Layers and splits is open).
+  setLayout(layout, { fromHost = false, record = true } = {}) {
+    const before = this.history && !fromHost && record ? this.layout() : null;
     const warnings = this.w.json(this.w.withStrings([JSON.stringify(layout)], (p) => this.x.sk_set_multi_layout(p)));
     const after = this.layout();
     if (before && JSON.stringify(before) !== JSON.stringify(after)) this.history.record("layout", before, after);
-    if (!fromHost) { this.multiDirty = true; if (this.sink && this.sink.layout) this.sink.layout(JSON.stringify(after)); }
+    if (!fromHost) { if (record) this.multiDirty = true; if (this.sink && this.sink.layout) this.sink.layout(JSON.stringify(after)); }
     // A selected part that's no longer in use.
     if (this.part >= after.parts.length) this.selectPart(after.parts.length - 1);
     for (const fn of this.layoutListeners) { try { fn(after); } catch (err) { console.error(err); } }
@@ -1379,13 +1495,13 @@ class Model {
 
   multiSave(name = "") { return JSON.parse(this.w.str(this.w.withStrings([name], (p) => this.x.sk_multi_save(p)))); }
   // Loads a whole multi: every part's patch and the layout.
-  loadMulti(multi, { fromHost = false } = {}) {
+  loadMulti(multi, { fromHost = false, label = "" } = {}) {
     const text = typeof multi === "string" ? multi : JSON.stringify(multi);
     const prev = this.history && !fromHost ? this.multiSave() : null;
     const res = this.w.json(this.w.withStrings([text], (p) => this.x.sk_multi_load(p)));
     if (!res.ok) return res;
     const saved = this.multiSave();
-    if (prev) this.history.record("multi", prev, saved, { label: `loading multi \u201c${saved.name || "multi"}\u201d` });
+    if (prev) this.history.record("multi", prev, saved, { label: label || `loading multi \u201c${saved.name || "multi"}\u201d` });
     if (this.sink && !fromHost && this.sink.multi) this.sink.multi(JSON.stringify(saved));
     this.dirtyParts = [];
     this.multiDirty = false;
@@ -1398,6 +1514,7 @@ class Model {
     for (const fn of this.patchListeners) { try { fn(); } catch (err) { console.error(err); } }
     for (const fn of this.layoutListeners) { try { fn(layout); } catch (err) { console.error(err); } }
     for (const fn of this.partListeners) { try { fn(this.part); } catch (err) { console.error(err); } }
+    this.emitParts();
     return res;
   }
 
@@ -1570,6 +1687,7 @@ class SkHistory {
     if (kind === "shapes") return "shape";
     if (kind === "custom") return extra.id === "sk.arp" || extra.id === "sk.seq" ? "pattern" : extra.id;
     if (kind === "tempo") return "tempo";
+    if (kind === "name") return "voice name";
     if (kind === "patch") return "preset change";
     if (kind === "layout") return "zones";
     if (kind === "multi") return "multi change";
@@ -1609,6 +1727,10 @@ class SkHistory {
     try {
       for (const c of list) {
         const v = c[side];
+        // A voice strip's edit or rename (rack.js) goes back to its part
+        // without selecting it, so the voice that's open stays open.
+        if (c.kind === "p" && c.part !== undefined && c.part !== this.m.part && c.strip) { this.m.setIn(c.part, c.i, v, "history"); continue; }
+        if (c.kind === "name") { this.m.setNameIn(c.part, v); continue; }
         if (c.part !== undefined && c.part !== this.m.part) this.m.selectPart(c.part);
         if (c.kind === "layout") this.m.setLayout(v);
         else if (c.kind === "multi") this.m.loadMulti(v);
@@ -1801,6 +1923,9 @@ class Audio {
       shapes: (json) => this.send({ t: "shapes", json, p: part() }),
       message: (i, v) => this.send({ t: "msg", i, v, p: part() }),
       select: (p) => this.send({ t: "select", p }),
+      // The same for a part that isn't selected (the rack's voice strips).
+      paramAt: (p, i, v) => this.send({ t: "param", i, v, p }),
+      name: (p, name) => this.send({ t: "name", name, p }),
       layout: (json) => this.send({ t: "layout", json }),
       multi: (json) => this.send({ t: "multi", json }),
     };
@@ -1878,6 +2003,10 @@ class HostAudio {
       shapes: (json) => this.send({ t: "shapes", json, p: part() }),
       message: (i, v) => this.send({ t: "msg", i, v, p: part() }),
       select: (p) => this.send({ t: "select", p }),
+      // The same for a part that isn't selected (the rack's voice strips).
+      paramAt: (p, i, v) => this.send({ t: "param", i, v, p }),
+      gestureAt: (p, i, on) => this.send({ t: "gesture", i, on, p }),
+      name: (p, name) => this.send({ t: "name", name, p }),
       layout: (json) => this.send({ t: "layout", json }),
       multi: (json) => this.send({ t: "multi", json }),
     };
@@ -2456,7 +2585,7 @@ class SkEnable {
 // parameter groups when a synth has no layout.
 
 const KIT_PANELS = {
-  voices: { title: "Voices", controls: [
+  voices: { title: "Voicing", controls: [
     ["voiceMode", "Mode"], ["glide", "Glide"], ["unison", "Unison"], ["unisonDetune", "Detune"],
     ["unisonSpread", "Spread"], ["bendRange", "Bend"],
     ["sk.halfPedal", "Half pedal", "For a continuous sustain pedal: part way down, notes you let go of fade slowly instead of stopping or ringing on, like a piano's dampers. Off: the pedal is simply down past half way. On/off pedals work the same either way."]] },
@@ -2612,7 +2741,7 @@ class Panels {
         { title: shapes.length > 1 ? "Shapes" : "Shape", sections: shapes }] });
     } else out.push(...lfos, ...shapes);
     if (this.model.mod.slots) out.push({ kit: "modMatrix" });
-    out.push({ kit: "master" });
+    if (!this.app.rackOn) out.push({ kit: "master" });
     return out;
   }
 
@@ -2766,6 +2895,8 @@ class Panels {
       this.app.matrix = new MatrixPanel(this.app);
       return this.app.matrix.root;
     }
+    // The rack's voice strips have the Output panel's controls (rack.js).
+    if (spec.kit === "master" && this.app.rackOn) return null;
     if (spec.kit) {
       const m = /^env(\d+)$/.exec(spec.kit);
       if (m) s = envPanel(Number(m[1]), this.model);
@@ -4825,6 +4956,7 @@ class PresetBar {
     this.current = this.currents[this.shownPart] || ui.current || this.currentFor(this.model.savePatch());
     this.model.dirtyParts = ui.dirtyParts || [];
     this.restoreSound(ui.sound);
+    this.app.soundLoaded();
     if (this.model.history) this.model.history.clear();
     this.refresh();
     return true;
@@ -5807,92 +5939,46 @@ class MidiClock {
 }
 
 // ---- multi.js
-// The multi bar (API.md \u00a75b): a drawer under the sound bar with a strip of
-// parts (each one patch of the synth), the selected part's patch, mix and
-// scale, and the zone editor. The sound bar (sound.js) opens it and loads and
-// saves whole sounds. The rest of the page edits whichever part is selected
-// here. Closed, it shows just the part tabs when the sound has more than one.
+// Layers and splits (API.md \u00a75b): the accordion at the top of the rack
+// (rack.js) for a sound of more than one voice. It holds the zone editor: a
+// map of keys (across) and velocity (up) with a rectangle per zone, coloured
+// by voice, and the selected zone's numbers. Whether it's open is saved with
+// the multi (the layout's "ui": {"layersOpen"}); open by default.
 
 const SK_PART_HUES = [212, 28, 150, 330, 52, 265, 185, 0];
 const skPartColor = (p, a = 1) => `hsl(${SK_PART_HUES[p % SK_PART_HUES.length]} 62% 56% / ${a})`;
 const skKeyLabel = (n) => skNoteName(n);
-const SK_KEY_NAMES = ["C", "C\u266f", "D", "D\u266f", "E", "F", "F\u266f", "G", "G\u266f", "A", "A\u266f", "B"];
 
-class MultiBar {
+class LayersPanel {
   constructor(app) {
     this.app = app;
     this.model = app.model;
-    this.key = (k) => `synthkit:${this.model.info.synth.id}:${k}`;
     this.sel = -1;                                   // the zone selected in the editor
-    this.open = !!skStore.get(this.key("multiOpen"), false);
     this.l = this.model.layout();
-    this.openListeners = new Set();
     this.build();
     this.model.onLayout((l) => { this.l = l; this.render(); });
-    this.model.onPart(() => this.render());
-    this.model.onPatch(() => this.renderParts());
-    app.presets.listeners.add(() => this.renderParts());
     this.render();
   }
 
   get parts() { return this.l.parts.length; }
-
-  // ---- building the pieces ---------------------------------------------------------
+  get open() { const ui = this.l.ui || {}; return ui.layersOpen !== false; }
 
   build() {
-    const m = this.model;
-    this.strip = h("div", { class: "parts", role: "tablist", "aria-label": "Parts" });
-    this.strip.addEventListener("keydown", (e) => {
-      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-      e.preventDefault();
-      m.selectPart(Math.max(0, Math.min(this.parts - 1, m.part + (e.key === "ArrowRight" ? 1 : -1))));
-      const t = this.strip.querySelector('[aria-selected="true"]');
-      if (t) t.focus();
-    });
-    this.addBtn = h("button", { type: "button", class: "btn part-add", title: "Add a part (layered over the keyboard)", onclick: () => this.addPart() }, "+ Part");
-
-    // The selected part's level, balance and scale: its patch's own
-    // parameters (master, sk.pan, sk.scale, sk.scaleKey), so they follow the
-    // selected part like every other control.
-    this.partLabel = h("span", { class: "mix-part" });
-    const ctl = (id, label, type) => {
-      const p = m.param(id);
-      if (!p) return null;
-      const c = makeControl(this.app, p, { label, type });
-      this.app.controls.push(c);
-      return c.root;
-    };
-    // The selected part's patch: the kit's preset bar (presets.js), here rather
-    // than at the top of the page, which picks whole sounds.
-    this.patchSlot = h("div", { class: "mix-patch" });
-    this.mix = h("div", { class: "multi-mix" },
-      this.partLabel, this.patchSlot,
-      ctl("master", "Level", "slider"), ctl("sk.pan", "Balance", "slider"),
-      ctl("sk.scale", "Scale", "menu"), ctl("sk.scaleKey", "Key", "menu"));
-
     this.zones = this.buildZones();
-
-    this.head = h("div", { class: "multi-head" }, this.strip, this.addBtn);
-    this.root = h("section", { class: "multi", id: "sk-multi", "aria-label": "Layers and splits: parts and zones" }, this.head, this.mix, this.zones);
-    this.showOpen();
+    this.body = h("div", { class: "panel-body layers-body", id: "sk-layers-body" }, this.zones);
+    this.toggle = h("button", { type: "button", class: "panel-toggle", "aria-controls": this.body.id, onclick: () => this.setOpen(!this.open) },
+      SK_CHEVRON(), h("span", { text: "Layers and splits" }));
+    const title = h("h2", { class: "panel-title" }, this.toggle,
+      skInfoButton("Which keys and velocities play which voice. Overlapping zones layer; side by side they split the keyboard. Set up\u2026 arranges every voice at once.", "Layers and splits"));
+    title.addEventListener("click", (e) => { if (!e.target.closest(".panel-toggle, .info-btn")) this.setOpen(!this.open); });
+    this.root = h("section", { class: "panel is-wide is-collapsible layers", id: "sk-multi", "aria-label": "Layers and splits: voices and zones" }, title, this.body);
   }
 
-  // The drawer: open shows everything; closed shows the part tabs only when
-  // there's more than one part (so it's clear which one the knobs edit).
+  // Open or closed, saved in the multi (not an undo step, and not a change to the sound).
   setOpen(open) {
-    this.open = !!open;
-    skStore.set(this.key("multiOpen"), this.open);
-    this.showOpen();
-    this.renderParts();   // the tabs' remove buttons come and go with the drawer
-    for (const fn of this.openListeners) fn(this.open);
-  }
-  showOpen() {
-    if (!this.root) return;
-    this.root.hidden = !this.open && this.parts <= 1;
-    this.root.classList.toggle("is-open", this.open);
-    this.addBtn.hidden = !this.open;
-    this.mix.hidden = this.zones.hidden = !this.open;
-    if (this.open && this.app.presets && this.app.presets.root.parentNode !== this.patchSlot) this.patchSlot.append(this.app.presets.root);
+    const l = this.model.layout();
+    l.ui = { ...(l.ui || {}), layersOpen: !!open };
+    this.model.setLayout(l, { record: false });
   }
 
   buildZones() {
@@ -5932,7 +6018,7 @@ class MultiBar {
     };
     const keyName = (v) => skKeyLabel(v);
     this.form = h("div", { class: "zform" },
-      choice("part", "Part", () => Array.from({ length: this.parts }, (_, i) => [String(i), `${i + 1}`]), (z) => String(z.part), (z, v) => { z.part = Number(v); }),
+      choice("part", "Voice", () => Array.from({ length: this.parts }, (_, i) => [String(i), `${i + 1}`]), (z) => String(z.part), (z, v) => { z.part = Number(v); }),
       num("keyLo", "Lowest key", 0, 127, (z) => z.key[0], (z, v) => { z.key[0] = v; if (z.key[1] < v) z.key[1] = v; }, keyName),
       num("keyHi", "Highest key", 0, 127, (z) => z.key[1], (z, v) => { z.key[1] = v; if (z.key[0] > v) z.key[0] = v; }, keyName),
       num("velLo", "Softest", 1, 127, (z) => z.vel[0], (z, v) => { z.vel[0] = v; if (z.vel[1] < v) z.vel[1] = v; }),
@@ -5955,38 +6041,11 @@ class MultiBar {
   // ---- showing the state -------------------------------------------------------------
 
   render() {
-    this.showOpen();
-    this.renderParts();
-    this.renderMix();
+    const open = this.open;
+    this.body.hidden = !open;
+    this.root.classList.toggle("is-collapsed", !open);
+    this.toggle.setAttribute("aria-expanded", String(open));
     this.renderZones();
-  }
-
-  renderParts() {
-    const m = this.model;
-    const names = m.partNames();
-    this.strip.textContent = "";
-    for (let p = 0; p < this.parts; p++) {
-      const pt = this.l.parts[p];
-      const on = p === m.part;
-      const label = (names[p] && names[p].name) || "Init";
-      this.strip.append(h("div", { class: "part" + (on ? " is-selected" : "") + (pt.mute ? " is-muted" : ""), style: `--part:${skPartColor(p)}` },
-        h("button", { type: "button", class: "part-tab", role: "tab", "aria-selected": String(on), tabindex: on ? 0 : -1, title: `Edit part ${p + 1}: ${label}`, onclick: () => m.selectPart(p) },
-          h("span", { class: "part-num", text: p + 1 }), h("span", { class: "part-name", text: label })),
-        h("button", { type: "button", class: "part-flag" + (pt.mute ? " is-on" : ""), "aria-pressed": String(!!pt.mute), title: `Mute part ${p + 1}`, "aria-label": `Mute part ${p + 1}`,
-          onclick: () => this.edit((l) => { l.parts[p].mute = !l.parts[p].mute; }) }, "M"),
-        h("button", { type: "button", class: "part-flag" + (pt.solo ? " is-on" : ""), "aria-pressed": String(!!pt.solo), title: `Solo part ${p + 1}`, "aria-label": `Solo part ${p + 1}`,
-          onclick: () => this.edit((l) => { l.parts[p].solo = !l.parts[p].solo; }) }, "S"),
-        // Remove, straight from the tab (only in the open drawer, and never the last part).
-        this.open && this.parts > 1 ? h("button", { type: "button", class: "part-flag part-remove", title: `Remove part ${p + 1}`, "aria-label": `Remove part ${p + 1}: ${label}`,
-          onclick: () => this.removePart(p) }, "\u00d7") : null));
-    }
-    this.addBtn.disabled = this.parts >= m.maxParts;
-  }
-
-  renderMix() {
-    const p = this.model.part;
-    this.mix.style.setProperty("--part", skPartColor(p));
-    this.partLabel.textContent = `Part ${p + 1}`;
   }
 
   renderZones() {
@@ -6009,13 +6068,13 @@ class MultiBar {
       this.list.append(h("button", { type: "button", class: "zchip" + (i === this.sel ? " is-selected" : ""), role: "option", "aria-selected": String(i === this.sel), style: `--part:${skPartColor(z.part)}`,
         onclick: () => { this.sel = i; this.syncSelection(); } }, h("span", { class: "zswatch" }), this.zoneText(z, i)));
     });
-    if (!zs.length) this.list.append(h("span", { class: "zempty", text: "No zones: no key plays any part. Add one, or use Set up\u2026" }));
+    if (!zs.length) this.list.append(h("span", { class: "zempty", text: "No zones: no key plays any voice. Add one, or use Set up\u2026" }));
     this.syncForm();
   }
 
   zoneText(z, i) {
     const [kl, kh] = z.key || [0, 127], [vl, vh] = z.vel || [1, 127];
-    const bits = [`Part ${z.part + 1}`, `${skKeyLabel(kl)}\u2013${skKeyLabel(kh)}`];
+    const bits = [`Voice ${z.part + 1}`, `${skKeyLabel(kl)}\u2013${skKeyLabel(kh)}`];
     if (vl > 1 || vh < 127) bits.push(`vel ${vl}\u2013${vh}`);
     if (typeof z.channel === "number") bits.push(`ch ${z.channel + 1}`);
     if (z.transpose) bits.push(`${z.transpose > 0 ? "+" : ""}${z.transpose} st`);
@@ -6070,40 +6129,6 @@ class MultiBar {
   }
   newZone(part, extra = {}) { return { part, key: [0, 127], vel: [1, 127], ...extra }; }
 
-  addPart() {
-    const m = this.model;
-    if (this.parts >= m.maxParts) return;
-    const part = this.parts;
-    this.edit((l) => { l.parts.push({ level: 0, pan: 0 }); l.zones.push(this.newZone(part)); });
-    m.selectPart(part);
-  }
-  // Removes part i; the ones after it move down a place (in a plugin, host
-  // automation stays with the place, not the sound). The part being edited
-  // stays selected, or the one taking the removed part's place.
-  removePart(i) {
-    const m = this.model, n = this.parts, was = m.part;
-    if (i < 0 || i >= n) return;
-    if (n <= 1) return;
-    const ms = m.multiSave();
-    ms.parts.splice(i, 1);
-    ms.zones = (ms.zones || []).filter((z) => z.part !== i).map((z) => (z.part > i ? { ...z, part: z.part - 1 } : z));
-    const pr = this.app.presets;
-    const currents = { ...pr.currents, [pr.shownPart]: pr.current };
-    const dirty = m.dirtyParts.slice(0, n);
-    const res = m.loadMulti(ms);
-    if (!res.ok) { this.app.toast(`Couldn't remove the part: ${res.error}`, "error"); return; }
-    // Each part keeps its preset name and "changed" mark.
-    dirty.splice(i, 1);
-    m.dirtyParts = dirty;
-    const shifted = {};
-    for (let p = 0; p < n; p++) if (p !== i && currents[p]) shifted[p > i ? p - 1 : p] = currents[p];
-    pr.currents = shifted;
-    m.selectPart(was > i ? was - 1 : Math.min(was, n - 2), { quiet: true });
-    pr.shownPart = m.part;
-    pr.current = shifted[m.part] || pr.currentFor(m.savePatch());
-    pr.refresh();
-    pr.saveSession();
-  }
   addZone() {
     const part = this.model.part;
     this.edit((l) => { l.zones.push(this.newZone(Math.min(part, l.parts.length - 1))); });
@@ -6143,10 +6168,10 @@ class MultiBar {
       }));
     };
     this.app.menu(r.left, r.bottom + 4, [
-      set(layers, "Layer: every part on every key"),
+      set(layers, "Layer: every voice on every key"),
       set(split, "Split: a slice of the keyboard each"),
       set(velocity, "Velocity layers: soft to hard, crossfaded"),
-      set(channels, "One MIDI channel per part"),
+      set(channels, "One MIDI channel per voice"),
     ]);
   }
 
@@ -6243,14 +6268,481 @@ class MultiBar {
   }
 }
 
+// ---- rack.js
+// The rack (API.md \u00a79): the sound's voices stacked top to bottom, each an
+// accordion. A voice's compact strip is always there: Show more / Compact
+// view, its name (with a pencil to rename it), mute and solo, volume, pan,
+// transpose, scale and key, tune, and \u00d7 to remove it. Show more opens the
+// voice's full interface under the strip: the synth's panels (and, in a
+// multi, the voice's own preset bar). One voice is open at a time, because the
+// panels edit the selected part (model.selectPart): opening a voice selects it.
+//
+// One voice outside a multi starts open; voices of a multi start closed. Add
+// voice (multi synths) turns one voice into a multi, or adds to one; a multi
+// gets Layers and splits (multi.js) at the top.
+
+// The strip's settings: the patch's own parameters (API.md \u00a73), so a voice
+// keeps them when it's saved, loaded or added from a preset.
+const SK_STRIP = { volume: "master", pan: "sk.pan", transpose: "sk.transpose", scale: "sk.scale", key: "sk.scaleKey", tune: "sk.a4" };
+
+// One part's parameters as a model, for the kit's controls (controls.js): a
+// voice strip edits its own part whether or not that part is selected. Pan
+// reads L/C/R and Tune (A4 in Hz) reads in cents from 440.
+function skPartModel(model, part) {
+  const cents = (hz) => 1200 * Math.log2(hz / 440);
+  const pm = Object.create(model);
+  Object.assign(pm, {
+    get: (id) => model.getIn(part, id),
+    set: (id, v, source) => model.setIn(part, id, v, source),
+    norm: (id) => model.toNorm(id, model.getIn(part, id)),
+    setNorm: (id, n, source) => model.setIn(part, id, model.fromNorm(id, Math.min(1, Math.max(0, n))), source),
+    reset: (id) => model.setIn(part, id, model.param(id).def, "ui"),
+    on: (id, fn) => model.onIn(part, id, fn),
+    gesture: (id, on) => model.gestureIn(part, id, on),
+    format: (id, v) => {
+      const p = model.param(id);
+      if (v === undefined) v = model.getIn(part, id);
+      if (p && p.id === SK_STRIP.tune) { const c = Math.round(cents(v)); return `${c > 0 ? "+" : c < 0 ? "\u2212" : ""}${Math.abs(c)} ct`; }
+      if (p && p.id === SK_STRIP.pan) { const n = Math.round(v * 100); return n === 0 ? "C" : `${n < 0 ? "L" : "R"}${Math.abs(n)}`; }
+      return model.format(id, v);
+    },
+    parse: (id, text) => {
+      const p = model.param(id);
+      const t = String(text).trim().replace("\u2212", "-");
+      if (p && p.id === SK_STRIP.tune) { const c = parseFloat(t); return Number.isFinite(c) ? 440 * Math.pow(2, c / 1200) : null; }
+      if (p && p.id === SK_STRIP.pan) {
+        const u = t.toUpperCase();
+        if (u === "C" || u === "0") return 0;
+        const n = parseFloat(u.replace(/^[LR]/, ""));
+        if (!Number.isFinite(n)) return null;
+        return Math.max(-1, Math.min(1, (u.startsWith("L") ? -n : n) / 100));
+      }
+      return model.parse(id, text);
+    },
+  });
+  return pm;
+}
+
+// A knob for the strip: smaller, and Tune's arc starts from 440 Hz.
+class StripKnob extends Knob {
+  build() {
+    super.build();
+    if (this.opts.origin !== undefined) this.origin = this.model.toNorm(this.p.index, this.opts.origin);
+  }
+}
+
+class Rack {
+  // panels: the synth's panels (Panels.build), shown in the open voice; none
+  // for a synth's own page, whose controls follow sk.part instead.
+  constructor(app, panels = null) {
+    this.app = app;
+    this.model = app.model;
+    this.panels = panels;
+    this.multi = this.model.multi;
+    this.rows = [];
+    this.openPart = 0;
+    this.layers = this.multi ? new LayersPanel(app) : null;
+    this.list = h("div", { class: "rack-voices" });
+    this.addVoice = this.multi ? new AddVoice(this) : null;
+    this.root = h("div", { class: "rack" }, this.layers && this.layers.root, this.list, this.addVoice && this.addVoice.root);
+    this.wasMulti = this.isMulti();
+    this.openPart = this.wasMulti ? -1 : 0;
+    this.build();
+
+    this.model.onLayout(() => this.layoutChanged());
+    // Another part selected (an undo, say): the open voice follows it. Not
+    // while adding or removing a voice, which reselect parts along the way.
+    this.model.onPart((p) => { if (this.busy) return; if (this.openPart >= 0 && this.openPart !== p) this.setOpen(p); else this.showOpen(); });
+    this.model.onName((p) => { if (this.rows[p]) this.rows[p].showName(); });
+    app.presets.listeners.add(() => { for (const r of this.rows) r.showName(); });
+  }
+
+  get parts() { return this.multi ? this.model.layout().parts.length : 1; }
+
+  // More than one voice, or one that doesn't play every key and velocity:
+  // the multi's controls (Layers and splits, mute, solo, remove) show.
+  isMulti(l = this.multi ? this.model.layout() : null) {
+    if (!l) return false;
+    if (l.parts.length > 1) return true;
+    const z = l.zones;
+    if (z.length !== 1) return true;
+    const [kl, kh] = z[0].key || [0, 127], [vl, vh] = z[0].vel || [1, 127];
+    return kl !== 0 || kh !== 127 || vl !== 1 || vh !== 127 || typeof z[0].channel === "number" || !!z[0].transpose || !!z[0].gain ||
+      !!(z[0].keyFade || z[0].velFade);
+  }
+
+  build() {
+    for (const r of this.rows) r.destroy();
+    this.list.textContent = "";
+    this.rows = [];
+    const n = this.parts;
+    for (let p = 0; p < n; p++) {
+      const row = new VoiceRow(this, p);
+      this.rows.push(row);
+      this.list.append(row.root);
+    }
+    this.showMulti();
+    this.showOpen();
+  }
+
+  showMulti() {
+    const multi = this.isMulti();
+    this.root.classList.toggle("is-multi", multi);
+    if (this.layers) this.layers.root.hidden = !multi;
+    for (const r of this.rows) r.showMulti(multi);
+    if (this.addVoice) this.addVoice.refresh();
+  }
+
+  layoutChanged() {
+    const multi = this.isMulti();
+    if (this.rows.length !== this.parts) {
+      // From several voices down to one: it opens, as a single voice does.
+      if (this.wasMulti && !multi) this.openPart = 0;
+      if (this.openPart >= this.parts) this.openPart = -1;
+      this.build();
+    } else {
+      if (this.wasMulti && !multi && this.parts === 1) this.openPart = 0;
+      this.showMulti();
+      for (const r of this.rows) r.showFlags();
+      this.showOpen();
+    }
+    this.wasMulti = multi;
+  }
+
+  // A whole new sound (the sound bar, an import, the session): the defaults.
+  soundLoaded() {
+    this.wasMulti = this.isMulti();
+    this.openPart = this.wasMulti ? -1 : 0;
+    if (this.openPart === 0 && this.model.part !== 0) this.model.selectPart(0);
+    this.build();
+  }
+
+  // Opens voice p (selecting it), or closes them all (-1).
+  setOpen(p) {
+    if (p >= 0 && this.multi && p !== this.model.part) {
+      this.openPart = p;           // first, so onPart doesn't move it
+      this.model.selectPart(p);
+    }
+    this.openPart = p;
+    this.showOpen();
+  }
+
+  showOpen() {
+    this.rows.forEach((r, p) => r.setOpen(p === this.openPart));
+    const row = this.rows[this.openPart];
+    if (!row) return;
+    // The voice's preset bar (a multi's voice; one voice uses the sound bar).
+    const pr = this.app.presets;
+    if (this.multi && this.isMulti()) { if (pr.root.parentNode !== row.presetSlot) row.presetSlot.append(pr.root); }
+    else if (this.multi && pr.root.parentNode === row.presetSlot) pr.root.remove();
+    if (this.panels && this.panels.parentNode !== row.panelSlot) row.panelSlot.append(this.panels);
+  }
+
+  // ---- adding and removing voices ----------------------------------------------------------
+
+  // Adds a voice playing `patch` (from preset entry `entry`), layered over the
+  // whole keyboard. One undo step; the open voice stays open.
+  addPatch(patch, entry) {
+    const m = this.model, n = this.parts;
+    if (!this.multi || n >= m.maxParts) return false;
+    const pr = this.app.presets;
+    const currents = { ...pr.currents, [pr.shownPart]: pr.current };
+    const dirty = m.dirtyParts.slice(0, n);
+    const was = m.part;
+    const ms = m.multiSave();
+    ms.parts.push({ patch });
+    ms.zones = [...(ms.zones || []), { part: n, key: [0, 127], vel: [1, 127] }];
+    this.busy = true;
+    const res = m.loadMulti(ms, { label: `adding \u201c${patch.name || "a voice"}\u201d` });
+    this.busy = false;
+    if (!res.ok) { this.app.toast(`Couldn't add the voice: ${res.error}`, "error"); return false; }
+    for (const w of res.warnings || []) this.app.toast(w, "warn");
+    m.dirtyParts = [...dirty, false];
+    pr.currents = { ...currents, [n]: entry ? pr.ref(entry) : pr.currentFor(patch) };
+    this.busy = true;
+    if (m.part !== was) m.selectPart(was, { quiet: true });
+    this.busy = false;
+    pr.shownPart = m.part;
+    pr.current = pr.currents[m.part] || pr.currentFor(m.savePatch());
+    pr.refresh();
+    pr.saveSession();
+    if (this.app.sound) this.app.sound.refresh();
+    this.app.toast(`Added \u201c${patch.name || "voice"}\u201d as voice ${n + 1}`);
+    return true;
+  }
+
+  // Removes voice i; the ones after it move down a place (in a plugin, host
+  // automation stays with the place, not the sound). One undo step.
+  removePart(i) {
+    const m = this.model, n = this.parts, was = m.part;
+    if (i < 0 || i >= n || n <= 1) return;
+    const name = m.nameOf(i);
+    const ms = m.multiSave();
+    ms.parts.splice(i, 1);
+    ms.zones = (ms.zones || []).filter((z) => z.part !== i).map((z) => (z.part > i ? { ...z, part: z.part - 1 } : z));
+    const pr = this.app.presets;
+    const currents = { ...pr.currents, [pr.shownPart]: pr.current };
+    const dirty = m.dirtyParts.slice(0, n);
+    const open = this.openPart;
+    this.openPart = open === i ? -1 : open > i ? open - 1 : open;
+    this.busy = true;
+    const res = m.loadMulti(ms, { label: `removing \u201c${name || "voice " + (i + 1)}\u201d` });
+    this.busy = false;
+    if (!res.ok) { this.openPart = open; this.app.toast(`Couldn't remove the voice: ${res.error}`, "error"); return; }
+    // Each voice keeps its preset name and "changed" mark.
+    dirty.splice(i, 1);
+    m.dirtyParts = dirty;
+    const shifted = {};
+    for (let p = 0; p < n; p++) if (p !== i && currents[p]) shifted[p > i ? p - 1 : p] = currents[p];
+    pr.currents = shifted;
+    const keep = this.openPart >= 0 ? this.openPart : was > i ? was - 1 : Math.min(was, n - 2);
+    this.busy = true;
+    m.selectPart(keep, { quiet: true });
+    this.busy = false;
+    pr.shownPart = m.part;
+    pr.current = shifted[m.part] || pr.currentFor(m.savePatch());
+    pr.refresh();
+    pr.saveSession();
+    this.showOpen();
+  }
+
+  setFlag(p, flag) {
+    const l = this.model.layout();
+    if (!l.parts[p]) return;
+    l.parts[p][flag] = !l.parts[p][flag];
+    if (!l.parts[p][flag]) delete l.parts[p][flag];
+    this.model.setLayout(l);
+  }
+
+  // A voice renamed from its strip: its patch's name. It's no longer the
+  // preset it was loaded from, so the preset bar shows it as unsaved.
+  rename(p, name) {
+    const m = this.model, pr = this.app.presets;
+    m.setNameIn(p, name);
+    if (p === pr.shownPart) pr.current = { kind: "session", name };
+    else pr.currents = { ...pr.currents, [p]: { kind: "session", name } };
+    pr.refresh();
+    pr.saveSession();
+    if (this.app.sound) this.app.sound.refresh();
+  }
+}
+
+class VoiceRow {
+  constructor(rack, part) {
+    this.rack = rack;
+    this.app = rack.app;
+    this.model = rack.model;
+    this.part = part;
+    this.unsubs = [];
+    this.build();
+  }
+
+  destroy() { for (const u of this.unsubs) u(); this.unsubs = []; }
+
+  build() {
+    const m = this.model, p = this.part, pm = skPartModel(m, p);
+    // Controls for this part only: no MIDI learn or Modulate\u2026 menu (those act
+    // on the selected part's panels), and no greying out.
+    const papp = Object.create(this.app);
+    papp.model = pm;
+    papp.enable = null;
+    papp.paramMenu = () => {};
+    this.papp = papp;
+    this.pm = pm;
+    const id = `sk-voice-${p}`;
+
+    this.toggleText = h("span", { class: "voice-toggle-text" });
+    this.toggle = h("button", { type: "button", class: "voice-toggle", "aria-controls": id + "-body", onclick: () => this.rack.setOpen(this.isOpen ? -1 : p) },
+      SK_CHEVRON(), this.toggleText);
+
+    // The name, and renaming it in place.
+    this.nameEl = h("span", { class: "voice-name" });
+    this.nameInput = h("input", { type: "text", class: "voice-name-input", "aria-label": `Name of voice ${p + 1}`, hidden: true });
+    this.nameInput.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") this.finishRename(true);
+      if (e.key === "Escape") this.finishRename(false);
+    });
+    const icon = (d) => { const s = svg("svg", { viewBox: "0 0 16 16", width: 14, height: 14, "aria-hidden": "true" }); s.append(svg("path", { d, fill: "none", stroke: "currentColor", "stroke-width": 1.6, "stroke-linecap": "round", "stroke-linejoin": "round" })); return s; };
+    this.editBtn = h("button", { type: "button", class: "btn btn-quiet btn-icon voice-edit", title: "Rename this voice", "aria-label": `Rename voice ${p + 1}`, onclick: () => this.startRename() },
+      icon("M10.5 2.5 13.5 5.5 5.5 13.5 2 14 2.5 10.5Z M9 4 12 7"));
+    this.okBtn = h("button", { type: "button", class: "btn btn-quiet btn-icon voice-ok", title: "Keep this name", "aria-label": "Keep this name", hidden: true, onclick: () => this.finishRename(true) }, icon("M3 8.5 6.5 12 13 4.5"));
+    this.cancelBtn = h("button", { type: "button", class: "btn btn-quiet btn-icon voice-cancel", title: "Cancel", "aria-label": "Cancel renaming", hidden: true, onclick: () => this.finishRename(false) }, icon("M4 4 12 12 M12 4 4 12"));
+    // Keep the input's blur from cancelling before \u2713 / \u2717 get the click.
+    for (const b of [this.okBtn, this.cancelBtn]) b.addEventListener("pointerdown", (e) => e.preventDefault());
+    this.nameInput.addEventListener("blur", () => { if (!this.nameInput.hidden) this.finishRename(true); });
+
+    this.muteBtn = h("button", { type: "button", class: "voice-flag", title: `Mute voice ${p + 1}`, "aria-label": `Mute voice ${p + 1}`, onclick: () => this.rack.setFlag(p, "mute") }, "M");
+    this.soloBtn = h("button", { type: "button", class: "voice-flag", title: `Solo voice ${p + 1}`, "aria-label": `Solo voice ${p + 1}`, onclick: () => this.rack.setFlag(p, "solo") }, "S");
+
+    const knob = (key, label, extra = {}) => {
+      const prm = m.param(SK_STRIP[key]);
+      if (!prm) return null;
+      const k = new StripKnob(papp, prm, { label, size: "small", ...extra });
+      this.unsubs.push(k.unsub);
+      return k.root;
+    };
+
+    // Transpose: a number with arrows.
+    const tp = m.param(SK_STRIP.transpose);
+    this.transpose = tp ? h("input", { type: "number", class: "voice-num", min: tp.min, max: tp.max, step: 1, "aria-label": `Transpose voice ${p + 1}, semitones`, title: "Transpose, in semitones" }) : null;
+    if (this.transpose) {
+      this.transpose.addEventListener("keydown", (e) => e.stopPropagation());
+      this.transpose.addEventListener("change", () => {
+        const v = Math.max(tp.min, Math.min(tp.max, Math.round(Number(this.transpose.value) || 0)));
+        pm.set(tp.index, v, "ui");
+        this.showTranspose();
+      });
+      this.unsubs.push(m.onIn(p, tp.index, () => this.showTranspose()));
+    }
+
+    // Scale, and its key once there's a scale.
+    const sp = m.param(SK_STRIP.scale), kp = m.param(SK_STRIP.key);
+    this.scale = sp ? h("select", { class: "voice-sel voice-scale", "aria-label": `Scale of voice ${p + 1}`, title: "Keep the keys in a scale: a key outside it plays the nearest scale note",
+      onchange: () => pm.set(sp.index, Number(this.scale.value), "ui") }, ...(sp.choices || []).map((c, i) => h("option", { value: sp.min + i, text: c }))) : null;
+    this.key = kp ? h("select", { class: "voice-sel voice-key", "aria-label": `Key of voice ${p + 1}'s scale`, title: "The scale's key",
+      onchange: () => pm.set(kp.index, Number(this.key.value), "ui") }, ...(kp.choices || []).map((c, i) => h("option", { value: kp.min + i, text: c.replace("#", "\u266f").replace(/^([A-G])b$/, "$1\u266d") }))) : null;
+    if (sp) this.unsubs.push(m.onIn(p, sp.index, () => this.showScale()));
+    if (kp) this.unsubs.push(m.onIn(p, kp.index, () => this.showScale()));
+
+    this.removeBtn = h("button", { type: "button", class: "btn btn-quiet btn-icon voice-remove", title: `Remove voice ${p + 1}`, "aria-label": `Remove voice ${p + 1}`, onclick: () => this.rack.removePart(p) }, icon("M4 4 12 12 M12 4 4 12"));
+
+    const field = (label, ...els) => h("label", { class: "voice-field" }, h("span", { class: "voice-field-label", text: label }), h("span", { class: "voice-field-input" }, ...els));
+    this.strip = h("div", { class: "voice-strip" },
+      this.toggle,
+      h("div", { class: "voice-id" }, this.nameEl, this.nameInput, this.editBtn, this.okBtn, this.cancelBtn),
+      h("div", { class: "voice-flags" }, this.muteBtn, this.soloBtn),
+      h("div", { class: "voice-ctls" },
+        knob("volume", "Volume"),
+        knob("pan", "Pan"),
+        this.transpose ? field("Transpose", this.transpose) : null,
+        this.scale ? field("Scale", this.scale, this.key) : null,
+        knob("tune", "Tune", { origin: 440, info: "Fine tuning, in cents (A4 = 440 Hz at 0)." })),
+      this.removeBtn);
+
+    this.presetSlot = h("div", { class: "voice-preset" });
+    this.panelSlot = h("div", { class: "voice-panels" });
+    this.body = h("div", { class: "voice-body", id: id + "-body" }, this.presetSlot, this.panelSlot);
+    this.root = h("section", { class: "voice", id, style: `--part:${skPartColor(p)}`, "aria-label": `Voice ${p + 1}` }, this.strip, this.body);
+    this.isOpen = null;
+    this.showName();
+    this.showTranspose();
+    this.showScale();
+    this.showFlags();
+    this.setOpen(false);
+  }
+
+  showName() {
+    const name = this.model.nameOf(this.part) || "Init";
+    this.nameEl.textContent = name;
+    this.nameEl.title = name;
+  }
+  showTranspose() {
+    if (!this.transpose || document.activeElement === this.transpose) return;
+    this.transpose.value = Math.round(this.pm.get(SK_STRIP.transpose));
+  }
+  showScale() {
+    if (!this.scale) return;
+    const v = Math.round(this.pm.get(SK_STRIP.scale));
+    this.scale.value = String(v);
+    if (this.key) {
+      this.key.value = String(Math.round(this.pm.get(SK_STRIP.key)));
+      this.key.hidden = v === 0;   // Chromatic needs no key
+    }
+  }
+  showFlags() {
+    const l = this.model.layout(), pt = (l.parts || [])[this.part] || {};
+    for (const [b, on] of [[this.muteBtn, !!pt.mute], [this.soloBtn, !!pt.solo]]) {
+      b.classList.toggle("is-on", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
+    this.root.classList.toggle("is-muted", !!pt.mute);
+  }
+  showMulti(multi) {
+    this.muteBtn.parentNode.hidden = !multi;
+    this.removeBtn.hidden = !multi;
+  }
+
+  setOpen(open) {
+    if (this.isOpen === open) return;
+    this.isOpen = open;
+    this.body.hidden = !open;
+    this.root.classList.toggle("is-open", open);
+    this.toggle.setAttribute("aria-expanded", String(open));
+    this.toggleText.textContent = open ? "Compact view" : "Show more";
+    this.toggle.title = open ? "Show just this strip" : "Show all of this voice's controls";
+  }
+
+  startRename() {
+    this.nameInput.value = this.model.nameOf(this.part);
+    this.nameEl.hidden = this.editBtn.hidden = true;
+    this.nameInput.hidden = this.okBtn.hidden = this.cancelBtn.hidden = false;
+    this.nameInput.focus();
+    this.nameInput.select();
+  }
+  finishRename(commit) {
+    if (this.nameInput.hidden) return;
+    const name = this.nameInput.value.trim();
+    this.nameInput.hidden = this.okBtn.hidden = this.cancelBtn.hidden = true;
+    this.nameEl.hidden = this.editBtn.hidden = false;
+    if (commit && name && name !== this.model.nameOf(this.part)) this.rack.rename(this.part, name);
+    this.editBtn.focus();
+  }
+}
+
+// Add voice: pick a preset and it plays as another voice, layered over the
+// keyboard (Layers and splits arranges it from there).
+class AddVoice {
+  constructor(rack) {
+    this.rack = rack;
+    this.app = rack.app;
+    this.model = rack.model;
+    this.select = h("select", { class: "preset-select add-voice-select", "aria-label": "Add a voice: pick a preset", onchange: () => this.pick() });
+    this.note = h("span", { class: "add-voice-note" });
+    this.root = h("section", { class: "panel is-wide add-voice", "aria-label": "Add voice" },
+      h("h2", { class: "panel-title" }, h("span", { text: "Add voice" }),
+        skInfoButton("Pick a preset to play it as another voice, layered over the keyboard. With more than one voice, Layers and splits (at the top) decides which keys play which.", "Add voice")),
+      h("div", { class: "add-voice-row" }, this.select, this.note));
+    this.app.presets.listeners.add(() => this.refresh());
+    skStore.on(`synthkit:${this.model.info.synth.id}:presets`, () => this.refresh());
+    this.refresh();
+  }
+
+  refresh() {
+    const pr = this.app.presets;
+    const full = this.rack.parts >= this.model.maxParts;
+    this.select.textContent = "";
+    this.select.append(h("option", { value: "", text: full ? "No room for more voices" : "Choose a preset\u2026" }));
+    const groups = new Map();
+    const group = (label) => { if (!groups.has(label)) groups.set(label, h("optgroup", { label })); return groups.get(label); };
+    this.entries = pr.entries();
+    this.entries.forEach((e, i) => {
+      const cat = pr.hasCategories() ? pr.catLabel(e.category) : "Presets";
+      group(cat + (e.kind === "user" ? " \u00b7 yours" : "")).append(h("option", { value: String(i), text: e.name }));
+    });
+    for (const g of groups.values()) this.select.append(g);
+    this.select.value = "";
+    this.select.disabled = full;
+    this.note.textContent = full ? `${this.model.maxParts} voices is the most a sound can have.` : "";
+  }
+
+  pick() {
+    const e = this.entries[Number(this.select.value)];
+    this.select.value = "";
+    if (!e) return;
+    const patch = JSON.parse(JSON.stringify(e.patch || { synth: this.model.info.synth.id, name: e.name, params: {} }));
+    this.rack.addPatch(patch, e);
+  }
+}
+
 // ---- sound.js
 // The sound bar (API.md \u00a75b): the top of the page for a synth with a multi.
 // It picks a whole sound, either one of the presets (played as one part across
 // the keyboard) or a saved multi (listed under "Multis"), and saves what you
 // have: one plain part saves as a preset, anything more as a multi. The
-// patch of each part is picked in the multi bar (multi.js), which this bar
-// opens ("Layers and splits"). Presets themselves stay in the preset bar
-// (presets.js), which this bar uses for them.
+// patch of each voice is picked in its own preset bar, in the rack (rack.js).
+// Presets themselves stay in the preset bar (presets.js), which this bar uses
+// for them.
 
 const SK_MULTIS = "Multis";
 
@@ -6301,7 +6793,7 @@ class SoundBar {
       Object.keys(z).every((k) => k === "part" || k === "key" || k === "vel");
   }
   // The multi without its name, to tell whether it changed.
-  sig() { const m = this.model.multiSave(); delete m.name; return JSON.stringify(m); }
+  sig() { const m = this.model.multiSave(); delete m.name; delete m.ui; return JSON.stringify(m); }
 
   // What the bar shows: {type: "patch"|"multi", kind, name, file?}.
   shown() {
@@ -6367,15 +6859,12 @@ class SoundBar {
     const btn = (label, title, fn, cls = "") => h("button", { type: "button", class: "btn " + cls, title, "aria-label": title, onclick: fn }, label);
     this.saveBtn = btn("Save", "Save sound", () => this.save());
     this.moreBtn = btn("More", "More sound actions", (e) => this.moreMenu(e), "btn-quiet");
-    // Opens the multi bar under the header; styled as that drawer's tab.
-    this.multiBtn = h("button", { type: "button", class: "btn sound-multi", "aria-expanded": "false", "aria-controls": "sk-multi", title: "Edit this sound's parts and zones",
-      onclick: () => this.toggleMulti() }, h("span", { text: "Layers and splits" }), h("span", { class: "sound-multi-caret", "aria-hidden": "true", text: "\u25be" }));
     this.root = h("div", { class: "presets sound" },
       this.catSelect,
       btn("\u2039", "Previous sound", () => this.step(-1), "btn-icon"),
       h("div", { class: "preset-field" }, this.select, this.nameInput, this.dirtyDot),
       btn("\u203a", "Next sound", () => this.step(1), "btn-icon"),
-      this.tag, this.multiBtn, this.saveBtn, this.moreBtn, this.fileInput);
+      this.tag, this.saveBtn, this.moreBtn, this.fileInput);
     this.refresh();
   }
 
@@ -6407,18 +6896,8 @@ class SoundBar {
     this.dirtyDot.hidden = !this.dirty;
     this.tag.hidden = cur.type !== "multi";
 
-    const open = !!(this.app.multiBar && this.app.multiBar.open);
-    this.multiBtn.setAttribute("aria-expanded", String(open));
-    this.multiBtn.classList.toggle("is-on", open);
     const state = { ...cur, dirty: this.dirty };
     for (const fn of this.listeners) { try { fn(state); } catch (err) { console.error(err); } }
-  }
-
-  toggleMulti() {
-    const mb = this.app.multiBar;
-    if (!mb) return;
-    mb.setOpen(!mb.open);
-    this.refresh();
   }
 
   pickCategory(v) {
@@ -6461,6 +6940,7 @@ class SoundBar {
       this.multiCurrent = e.kind === "factory" ? { kind: "factory", name: e.name, file: e.file } : { kind: e.kind, name: e.name };
     }
     this.baseline = this.sig();
+    this.app.soundLoaded();
     this.presets.refresh();
     this.refresh();
     this.presets.saveSession();
@@ -6577,6 +7057,7 @@ class SoundBar {
     if (!res.ok) { this.app.toast(`Couldn't import ${fileName}: ${res.error}`, "error"); return; }
     for (const w of res.warnings || []) this.app.toast(`${fileName}: ${w}`, "warn");
     this.presets.multiLoaded();
+    this.app.soundLoaded();
     if (isMulti || !this.plain()) this.storeMulti(name);
     else { this.presets.store(name); this.multiCurrent = { kind: "session", name: `${name} multi` }; this.baseline = this.sig(); this.refresh(); }
   }
@@ -6792,10 +7273,12 @@ class App {
     this.midi = new MidiInput(this);
     this.keyboard = new Keyboard(this);
     // A synth with features.multi (API.md \u00a75b) picks whole sounds in the
-    // sound bar at the top, and edits parts and zones in the multi bar under it.
-    this.multiBar = m.multi ? new MultiBar(this) : null;
+    // sound bar at the top; its voices are the rack's (rack.js).
     this.sound = m.multi ? new SoundBar(this) : null;
-    if (this.sound) this.multiBar.openListeners.add(() => this.sound.refresh());
+    // The rack (API.md \u00a79): each voice's compact strip, opening onto the
+    // panels. On by default; "voiceStrip": false keeps the plain panels with
+    // the Output panel (not for a multi synth, whose voices need it).
+    this.rackOn = m.multi || this.layout.voiceStrip !== false;
     this.buildParts();
 
     this.toasts = h("div", { class: "toasts", role: "status", "aria-live": "polite" });
@@ -6807,15 +7290,16 @@ class App {
     // kit builds the standard one from layout.json.
     const ownPage = typeof window.__skPage === "function" ? window.__skPage : null;
     const problems = [];
+    if (m.multi && this.layout.voiceStrip === false) problems.push(`layout.json: "voiceStrip": false is for synths without multis; a multi's voices need the rack.`);
     if (!ownPage) {
       const panels = new Panels(this);
       const panelEl = panels.build(this.layout.sections ? this.layout : null);
       problems.push(...panels.problems);
+      this.rack = this.rackOn ? new Rack(this, panelEl) : null;
       rootEl.append(
         this.header(),
-        this.multiBar && this.multiBar.root,
         this.banner,
-        h("main", { class: "main" }, panelEl),
+        h("main", { class: "main" }, this.rack ? this.rack.root : panelEl),
         this.layout.keyboard === false ? null : this.keyboard.root,
         this.toasts);
       if (this.layout.keyboard === false) this.keyboard.typing = false;
@@ -6837,6 +7321,7 @@ class App {
     this.audio.onParams = (changes) => { for (const [i, v, part] of changes) this.model.applyHostPart(part || 0, i, v); };
 
     this.presets.restoreSession();
+    this.soundLoaded();
     this.history.clear();   // starting up isn't a step to undo
     if (this.host) {
       // The plugin makes the sound: changes go straight to it.
@@ -6887,6 +7372,10 @@ class App {
     this.audio.onLog = (msg, kind) => this.toast(msg, kind || "error");
     for (const l of m.logs) this.toast(l, "error");
   }
+
+  // A whole sound was loaded (the sound bar, an import, the session, the
+  // plugin's state): the rack goes back to its defaults for it.
+  soundLoaded() { if (this.rack) this.rack.soundLoaded(); }
 
   later(msg, kind) { (this.pending = this.pending || []).push({ msg, kind }); }
 
@@ -7389,7 +7878,14 @@ class App {
         if (opts) this.hostBarOpts = { ...(this.hostBarOpts || {}), ...opts };
         this.hostBarEl = el;
         return el;
-      case "multi": part = this.multiBar ? this.multiBar.root : null; break;   // parts, zones and saved multis (API.md \u00a75b)
+      case "rack":
+      case "multi":   // (the old name)
+        // The voices (API.md \u00a79): strips, Layers and splits, Add voice. The
+        // page's own controls follow sk.part, so the open voice shows only
+        // its preset bar.
+        if (!this.rack) this.rack = new Rack(this, null);
+        part = this.rack.root;
+        break;
       case "output": part = this.outputEl; break;
       case "panic": part = this.panicEl; break;
       case "undo": part = this.undoEl; break;
