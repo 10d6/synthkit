@@ -541,7 +541,8 @@ Zone zoneFromJson(const Json& jz) {
 }
 
 // Multis saved before a part's level, pan and scale moved into its patch
-// (master, sk.pan, sk.scale, sk.scaleKey) had them on the part: fold them in.
+// (master, sk.pan, sk.scale, sk.scaleKey) had them on the part, and a
+// hand-written one can give them (and transpose) to adjust a preset: fold them in.
 void migratePart(Engine& e, const Json& jp, int p, std::vector<std::string>& warnings) {
   ParamStore& ps = e.params();
   const std::string part = "part " + std::to_string(p + 1) + ": ";
@@ -555,6 +556,9 @@ void migratePart(Engine& e, const Json& jp, int p, std::vector<std::string>& war
   const double pan = jp["pan"].number(0);
   const int iPan = ps.find("sk.pan");
   if (pan != 0 && iPan >= 0) ps.set(iPan, std::clamp(ps.get(iPan) + pan, -1.0, 1.0));
+  const double transpose = jp["transpose"].number(0);
+  const int iTr = ps.find("sk.transpose");
+  if (transpose != 0 && iTr >= 0) ps.set(iTr, std::clamp(ps.get(iTr) + std::round(transpose), -48.0, 48.0));
   const int iScale = ps.find("sk.scale"), iKey = ps.find("sk.scaleKey");
   if (jp["scale"].isString() && iScale >= 0) {
     const int i = multiScaleIndex(jp["scale"].string());

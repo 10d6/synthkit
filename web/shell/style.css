@@ -567,8 +567,14 @@ button, input, select { font: inherit; color: inherit; }
 .voice-toggle:hover { color: var(--ink); }
 .voice-toggle .panel-chevron { transform: rotate(-90deg); }
 .voice.is-open .voice-toggle .panel-chevron { transform: none; }
-/* A fixed width, so every voice's knobs line up down the rack. */
-.voice-id { display: flex; align-items: center; gap: 2px; flex: 0 0 14em; width: 14em; min-width: 0; }
+/* A fixed width, so every voice's knobs line up down the rack: the name, and
+   under it (in a multi) the voice's preset picker. */
+.voice-id { display: flex; flex-direction: column; align-items: stretch; gap: 3px; flex: 0 0 15em; width: 15em; min-width: 0; }
+.voice-id-name { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.voice-pick { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.voice-pick[hidden] { display: none; }
+.voice-pick-select { flex: 1; min-width: 0; padding: 3px 5px; border: 1px solid var(--edge); border-radius: 7px; background: var(--field); color: var(--ink); font: inherit; font-size: 12px; }
+.voice-pick .voice-pick-step { min-width: 24px; padding: 2px 6px; border-color: transparent; color: var(--ink-soft); }
 .voice-name {
   font-size: 16px; font-weight: 700; color: var(--ink); font-variation-settings: "wdth" 85;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
@@ -593,14 +599,15 @@ button, input, select { font: inherit; color: inherit; }
 .voice-num, .voice-sel { padding: 4px 6px; border: 1px solid var(--edge); border-radius: 7px; background: var(--field); color: var(--ink); font: inherit; font-size: 13px; }
 .voice-num { width: 4.2em; font-variant-numeric: tabular-nums; }
 .voice-scale { max-width: 11em; }
-.voice-remove { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; color: var(--ink-soft); }
+.voice-end { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.voice-save-copy { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); padding: 5px 8px; }
+.voice-save-copy:hover { color: var(--ink); }
+.voice-save-copy[hidden] { display: none; }
+.voice-remove { display: inline-flex; align-items: center; justify-content: center; color: var(--ink-soft); }
 .voice-remove:hover { color: var(--error); }
 .voice-remove[hidden] { display: none; }
 .voice-body { padding: 4px 12px 14px; border-top: 1px solid var(--edge); }
 .voice-body[hidden] { display: none; }
-.voice-preset:empty { display: none; }
-.voice-preset { display: flex; align-items: center; gap: 10px; padding: 8px 0 10px; }
-.voice-preset .presets { margin: 0; }
 .voice-panels { padding-top: 8px; }
 .add-voice-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .add-voice-select { min-width: 16em; }
@@ -614,7 +621,8 @@ button, input, select { font: inherit; color: inherit; }
   .voice-toggle-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .voice-id { flex: 1 1 0; width: auto; }
   .voice-ctls { order: 5; flex-basis: 100%; }
-  .voice-remove { margin-left: 0; }
+  .voice-end { margin-left: 0; }
+  .voice-save-copy-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .voice-body { padding: 4px 8px 12px; }
 }
 .zones { margin-top: 8px; padding: 10px; border: 1px solid var(--edge); border-radius: var(--radius); background: var(--panel); }
@@ -645,3 +653,30 @@ button, input, select { font: inherit; color: inherit; }
 .zf-num, .zf-sel { padding: 4px 6px; border: 1px solid var(--edge); border-radius: 6px; background: var(--field); color: var(--ink); font: inherit; font-size: 0.875rem; }
 .zf-note { font-size: 0.6875rem; min-height: 1em; }
 @media (max-width: 640px) { .zmap { height: 160px; } .zones-hint { display: none; } }
+
+/* ---- dialogs: unsaved changes, naming a copy, Preferences (dialog.js) --------------- */
+.sk-dialog-back {
+  position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: rgba(10, 14, 16, 0.45);
+}
+.sk-dialog {
+  width: min(420px, 100%); padding: 18px 20px 16px; border-radius: 12px; border: 1px solid var(--edge);
+  background: var(--panel); color: var(--ink); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.sk-dialog-title { margin: 0 0 8px; font-size: 17px; font-weight: 700; }
+.sk-dialog-msg { margin: 0 0 12px; font-size: 14px; line-height: 1.45; }
+.sk-dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { border-color: var(--accent); filter: brightness(1.08); }
+.sk-check { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 14px; }
+.sk-check input { margin-top: 3px; accent-color: var(--accent); }
+.sk-check > span { display: flex; flex-direction: column; gap: 3px; }
+.sk-check-small { font-size: 13px; color: var(--ink-soft); align-items: center; }
+.sk-check-small input { margin-top: 0; }
+.sk-hint { margin: 0; font-size: 12px; color: var(--ink-soft); line-height: 1.4; }
+.sk-name-form { display: flex; flex-direction: column; gap: 10px; }
+.sk-name-form .sk-hint { color: var(--warn); }
+.sk-field-row { display: grid; grid-template-columns: 5.5em 1fr; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-soft); }
+.sk-field { padding: 6px 8px; border: 1px solid var(--edge); border-radius: 7px; background: var(--field); color: var(--ink); font: inherit; font-size: 14px; min-width: 0; }
+.sk-field:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.zf[hidden] { display: none; }

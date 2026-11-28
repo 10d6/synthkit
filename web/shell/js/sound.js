@@ -170,11 +170,15 @@ class SoundBar {
 
   // ---- loading -------------------------------------------------------------------------
 
-  pick(v) {
+  // (Picking, stepping, Init and Import ask about unsaved changes first: app.confirmLeave.)
+  async pick(v) {
     const e = this.entries().find((x) => this.value(x) === v);
-    if (e) this.load(e);
+    if (!e) return;
+    if (!(await this.app.confirmLeave())) { this.refresh(); return; }
+    this.load(e);
   }
-  step(d) {
+  async step(d) {
+    if (!(await this.app.confirmLeave())) return;
     const list = this.visible();
     if (!list.length) return;
     const cur = this.find(this.shown());
@@ -210,7 +214,8 @@ class SoundBar {
     return true;
   }
 
-  init() {
+  async init() {
+    if (!(await this.app.confirmLeave())) return;
     const init = this.presets.initFor(null);
     this.load(init ? { ...init, type: "patch" } : { type: "patch", kind: "factory", name: "Init", patch: { synth: this.model.info.synth.id, name: "Init", params: {} } });
   }
@@ -222,11 +227,14 @@ class SoundBar {
     if (cur.kind === "user") return cur.type === "patch" ? this.presets.store(cur.name) : this.storeMulti(cur.name);
     this.startNaming("save", cur.kind === "factory" ? cur.name + " copy" : cur.name);
   }
+  // A multi of that name already (yours or a factory one).
+  nameTaken(name) { return !!this.userMultis[name] || this.factoryMultis.some((m) => m.name === name); }
   storeMulti(name) {
     this.userMultis[name] = this.model.multiSave(name);
     if (!skStore.set(this.key("multis"), this.userMultis)) { this.app.toast("This browser isn't letting the page store multis. Use Export to keep a file instead.", "error"); return; }
     this.multiCurrent = { kind: "user", name };
     this.baseline = this.sig();
+    if (this.app.rack) this.app.rack.keepAll();   // every voice is saved with it now
     this.refresh();
     this.presets.refresh();
     this.presets.saveSession();
@@ -296,7 +304,8 @@ class SoundBar {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
-  startImport() {
+  async startImport() {
+    if (!(await this.app.confirmLeave())) return;
     if (skHost) this.app.audio.send({ t: "import", kind: "sound" });   // the plugin shows a file dialog
     else this.fileInput.click();
   }

@@ -155,6 +155,71 @@ class App {
     for (const l of m.logs) this.toast(l, "error");
   }
 
+  // Before something replaces the sound (picking another, Init, importing):
+  // if it has unsaved changes, ask first: Save, Don't save or Cancel. True to
+  // go ahead. Preferences (or "Don't ask again") turn the question off.
+  async confirmLeave() {
+    const sb = this.sound, pr = this.presets;
+    const dirty = sb ? sb.dirty : !!this.model.dirty;
+    if (!dirty || !skPrefs.get().warnUnsaved) return true;
+    const cur = sb ? sb.shown() : pr.current;
+    const multi = sb ? !sb.plain() : false;
+    const again = h("input", { type: "checkbox", class: "sk-dont-ask" });
+    const choice = await skDialog({
+      title: "Unsaved changes",
+      message: `“${cur.name || "This sound"}” has changes that haven't been saved.`,
+      body: h("label", { class: "sk-check sk-check-small" }, again, h("span", { text: "Don't ask again" })),
+      className: "sk-dialog-unsaved",
+      buttons: [
+        { label: "Cancel", value: "cancel" },
+        { label: "Don't save", value: "discard" },
+        { label: "Save", value: "save", primary: true },
+      ],
+    });
+    if (choice === "cancel") return false;
+    if (again.checked) skPrefs.set({ warnUnsaved: false });
+    if (choice === "discard") return true;
+    // Saving: in place if it's one of yours, else under a new name.
+    if (cur.kind === "user") { if (sb) sb.save(); else pr.save(); return true; }
+    const name = await this.askName({
+      title: multi ? "Save multi" : "Save preset",
+      label: "Name",
+      initial: cur.kind === "factory" ? cur.name + " copy" : cur.name,
+      taken: (n) => (multi ? sb.nameTaken(n) : pr.nameTaken(n)),
+    });
+    if (name === null) return false;
+    if (sb) sb.storeAs(name); else pr.store(name);
+    return true;
+  }
+
+  // A name for something new, in a dialog. A name that's taken gets a number
+  // after it ("Warm Pad 2"). null if cancelled.
+  async askName({ title, label = "Name", initial = "", taken = () => false, extra = null, ok = "Save" }) {
+    const input = h("input", { type: "text", class: "sk-field", "aria-label": label });
+    input.value = skUniqueName(initial, taken);
+    const note = h("p", { class: "sk-hint", hidden: true });
+    input.addEventListener("input", () => {
+      const n = input.value.trim();
+      note.hidden = !n || !taken(n);
+      note.textContent = note.hidden ? "" : `That name is taken: it will be saved as “${skUniqueName(n, taken)}”.`;
+    });
+    let name = null;
+    const res = await skDialog({
+      title,
+      body: h("div", { class: "sk-name-form" }, h("label", { class: "sk-field-row" }, h("span", { text: label }), input), note, extra),
+      buttons: [
+        { label: "Cancel", value: "cancel" },
+        { label: ok, value: "ok", primary: true, run: () => {
+          const n = input.value.trim();
+          if (!n) { input.focus(); return false; }
+          name = skUniqueName(n, taken);
+          return true;
+        } },
+      ],
+    });
+    return res === "ok" ? name : null;
+  }
+
   // A whole sound was loaded (the sound bar, an import, the session, the
   // plugin's state): the rack goes back to its defaults for it.
   soundLoaded() { if (this.rack) this.rack.soundLoaded(); }
@@ -278,6 +343,10 @@ class App {
     const icon = svg("svg", { viewBox: "0 0 16 16", width: 16, height: 16, "aria-hidden": "true" });
     icon.append(svg("circle", { cx: 8, cy: 8, r: 6.25, fill: "none", stroke: "currentColor", "stroke-width": 1.5 }),
                 svg("path", { d: "M8 1.75 A6.25 6.25 0 0 1 8 14.25 Z", fill: "currentColor" }));
+    const gear = svg("svg", { viewBox: "0 0 16 16", width: 16, height: 16, "aria-hidden": "true" });
+    gear.append(svg("circle", { cx: 8, cy: 8, r: 2.2, fill: "none", stroke: "currentColor", "stroke-width": 1.5 }),
+      svg("path", { d: "M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4", stroke: "currentColor", "stroke-width": 1.5, "stroke-linecap": "round" }));
+    this.prefsBtn = h("button", { type: "button", class: "btn btn-quiet btn-icon prefs-btn", title: "Preferences", "aria-label": "Preferences", "aria-haspopup": "dialog", onclick: () => skPreferences() }, gear);
     this.themeBtn = h("button", { type: "button", class: "btn btn-quiet btn-icon theme-btn", title: "Switch light / dark", "aria-label": "Switch light or dark theme", onclick: () => this.cycleTheme() }, icon);
     this.tempoReadout = h("span", { class: "tempo-readout", text: "" });
     this.outputEl = h("div", { class: "output" }, this.scope, h("div", { class: "output-side" }, this.levelEl, this.voices));
@@ -306,7 +375,7 @@ class App {
       (this.sound || this.presets).root,
       this.undoEl,
       this.outputEl,
-      h("div", { class: "top-actions" }, this.panicEl, this.themeBtn));
+      h("div", { class: "top-actions" }, this.panicEl, this.prefsBtn, this.themeBtn));
   }
 
   buildBeats() {
@@ -672,6 +741,7 @@ class App {
       case "panic": part = this.panicEl; break;
       case "undo": part = this.undoEl; break;
       case "theme": part = this.themeBtn; break;
+      case "preferences": part = this.prefsBtn; break;
       case "panels": {
         const p = new Panels(this);
         part = p.build(opts.sections ? opts : (this.layout.sections ? this.layout : null));
@@ -753,6 +823,7 @@ class App {
     window.synthkit = {
       app,
       model,
+      prefs: skPrefs,   // (Preferences, for tests)
       evalCurve: skEvalCurve,
       // A multi renders as it is (every part and the zones); otherwise the one patch.
       renderOffline: (opts = {}) => Audio.renderOffline(bytes, model.multi

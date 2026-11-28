@@ -2766,7 +2766,7 @@ TEST(multi_old_part_settings_move_into_the_patch) {
   MultiRig r(2);
   auto res = r.m->load(Json::parse(R"({"format":"sk.multi","parts":[
     {"patch":{"name":"A","params":{"master":-3}},"level":-4.5,"pan":0.25,"scale":"Major Pentatonic","scaleKey":2},
-    {"patch":{"name":"B","params":{"master":3}},"level":9},
+    {"patch":{"name":"B","params":{"master":3}},"level":9,"transpose":-7},
     {"patch":{"name":"C"},"scale":"Martian"}]})"));
   CHECK(res.ok);
   ParamStore& a = r.m->part(0).params();
@@ -2778,6 +2778,7 @@ TEST(multi_old_part_settings_move_into_the_patch) {
   int clipped = 0;
   for (auto& w : res.warnings) clipped += w.find("level") != std::string::npos;
   CHECK(clipped == 1);
+  CHECK(std::lround(b.get(b.find("sk.transpose"))) == -7);       // a hand-written part's transpose is its patch's
   CHECK(!r.m->save()["parts"][0].contains("level") && !r.m->save()["parts"][0].contains("scale"));
 }
 
