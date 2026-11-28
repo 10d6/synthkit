@@ -69,6 +69,8 @@ web/wasm/                C API exported to JavaScript
 web/shell/               the page: template, style, js/ (model, audio, host
                          (plugin bridge), controls, panels, modulation, arp
                          (the arp/sequencer piano roll and generator), presets,
+                         rack (the voices: strips, Add voice), multi (Layers
+                         and splits), sound (the sound bar),
                          controllers (the keyboard's pedals and knobs), keyboard, midi, clock,
                          diagnostics (the report beside Stop all sound, API.md §10a), app; app.js also holds the
                          bridge for a synth's own page), worklet.js

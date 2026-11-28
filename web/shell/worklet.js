@@ -56,6 +56,7 @@ class SynthkitProcessor extends AudioWorkletProcessor {
       case "multi": this.w.withStrings([m.json], (p) => x.sk_multi_load(p)); this.part = x.sk_select_part(this.part); break;
       case "midi": this.queue.push(m.d); break;
       case "param": x.sk_set_param(m.i, m.v); break;
+      case "name": this.w.withStrings([m.name], (p) => x.sk_set_name(p)); break;
       case "patch": this.w.withStrings([m.json], (p) => x.sk_load_patch(p)); break;
       case "custom": this.w.withStrings([m.id, m.json], (a, b) => x.sk_set_custom(a, b)); break;
       case "mod": this.w.withStrings([m.json], (p) => x.sk_set_mod(p)); break;

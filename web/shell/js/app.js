@@ -55,10 +55,12 @@ class App {
     this.midi = new MidiInput(this);
     this.keyboard = new Keyboard(this);
     // A synth with features.multi (API.md §5b) picks whole sounds in the
-    // sound bar at the top, and edits parts and zones in the multi bar under it.
-    this.multiBar = m.multi ? new MultiBar(this) : null;
+    // sound bar at the top; its voices are the rack's (rack.js).
     this.sound = m.multi ? new SoundBar(this) : null;
-    if (this.sound) this.multiBar.openListeners.add(() => this.sound.refresh());
+    // The rack (API.md §9): each voice's compact strip, opening onto the
+    // panels. On by default; "voiceStrip": false keeps the plain panels with
+    // the Output panel (not for a multi synth, whose voices need it).
+    this.rackOn = m.multi || this.layout.voiceStrip !== false;
     this.buildParts();
 
     this.toasts = h("div", { class: "toasts", role: "status", "aria-live": "polite" });
@@ -70,15 +72,16 @@ class App {
     // kit builds the standard one from layout.json.
     const ownPage = typeof window.__skPage === "function" ? window.__skPage : null;
     const problems = [];
+    if (m.multi && this.layout.voiceStrip === false) problems.push(`layout.json: "voiceStrip": false is for synths without multis; a multi's voices need the rack.`);
     if (!ownPage) {
       const panels = new Panels(this);
       const panelEl = panels.build(this.layout.sections ? this.layout : null);
       problems.push(...panels.problems);
+      this.rack = this.rackOn ? new Rack(this, panelEl) : null;
       rootEl.append(
         this.header(),
-        this.multiBar && this.multiBar.root,
         this.banner,
-        h("main", { class: "main" }, panelEl),
+        h("main", { class: "main" }, this.rack ? this.rack.root : panelEl),
         this.layout.keyboard === false ? null : this.keyboard.root,
         this.toasts);
       if (this.layout.keyboard === false) this.keyboard.typing = false;
@@ -100,6 +103,7 @@ class App {
     this.audio.onParams = (changes) => { for (const [i, v, part] of changes) this.model.applyHostPart(part || 0, i, v); };
 
     this.presets.restoreSession();
+    this.soundLoaded();
     this.history.clear();   // starting up isn't a step to undo
     if (this.host) {
       // The plugin makes the sound: changes go straight to it.
@@ -150,6 +154,10 @@ class App {
     this.audio.onLog = (msg, kind) => this.toast(msg, kind || "error");
     for (const l of m.logs) this.toast(l, "error");
   }
+
+  // A whole sound was loaded (the sound bar, an import, the session, the
+  // plugin's state): the rack goes back to its defaults for it.
+  soundLoaded() { if (this.rack) this.rack.soundLoaded(); }
 
   later(msg, kind) { (this.pending = this.pending || []).push({ msg, kind }); }
 
@@ -652,7 +660,14 @@ class App {
         if (opts) this.hostBarOpts = { ...(this.hostBarOpts || {}), ...opts };
         this.hostBarEl = el;
         return el;
-      case "multi": part = this.multiBar ? this.multiBar.root : null; break;   // parts, zones and saved multis (API.md §5b)
+      case "rack":
+      case "multi":   // (the old name)
+        // The voices (API.md §9): strips, Layers and splits, Add voice. The
+        // page's own controls follow sk.part, so the open voice shows only
+        // its preset bar.
+        if (!this.rack) this.rack = new Rack(this, null);
+        part = this.rack.root;
+        break;
       case "output": part = this.outputEl; break;
       case "panic": part = this.panicEl; break;
       case "undo": part = this.undoEl; break;

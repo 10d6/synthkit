@@ -1,7 +1,8 @@
-// Headless-Chromium checks for the sound bar and the multi bar (API.md §5b)
+// Headless-Chromium checks for the sound bar and the rack (API.md §5b, §9)
 // on a synth with features.multi:
 //   node web/test/multi-test.cjs <synth.html> <out dir> [multi scenario.json]
-// Parts and their independent state, the zone editor (fields, dragging,
+// Voices (strips, opening, adding, removing, renaming) and their independent
+// state, the zone editor (fields, dragging,
 // keyboard), undo, saved multis, the session, edits reaching the audio
 // thread tagged with their part, and a split rendered through the real
 // AudioWorklet.
@@ -34,60 +35,127 @@ async function main() {
   await ev(() => localStorage.clear());
   await boot();
 
-  // ---- the bar ------------------------------------------------------------------------
+  // ---- the rack ------------------------------------------------------------------------
+  const rackState = () => ev(() => ({
+    voices: document.querySelectorAll(".rack .voice").length,
+    open: [...document.querySelectorAll(".rack .voice")].map((v) => v.classList.contains("is-open")),
+    layers: !document.querySelector("#sk-multi").hidden,
+    flags: !document.querySelector(".voice-flags").hidden,
+    remove: !document.querySelector(".voice-remove").hidden,
+    part: window.synthkit.model.part,
+  }));
   check(await ev(() => window.synthkit.model.multi === true), "the synth is a multi (features.multi)");
-  check(await page.locator(".multi .part-tab").count() === 1, "starts as one part");
+  let rs = await rackState();
+  check(rs.voices === 1 && rs.open[0] && !rs.layers && !rs.flags && !rs.remove && await page.locator(".add-voice").isVisible(),
+    "one voice: open, no Layers and splits, mute/solo or ×; Add voice below it", rs);
   check(await ev(() => window.synthkit.app.sound.factoryMultis.length) === 3, "factory multis are embedded in the page");
-  check(await page.locator("header .sound .sound-select").isVisible() && !(await page.locator(".multi").isVisible()),
-    "the top bar picks sounds; the multi drawer is closed with one part");
+  // The strip, left to right.
+  const order = await ev(() => {
+    const strip = document.querySelector(".voice-strip");
+    const at = (sel) => { const el = strip.querySelector(sel); return el ? [...strip.querySelectorAll("*")].indexOf(el) : -1; };
+    return [".voice-toggle", ".voice-name", ".voice-edit", ".voice-flags", '[data-param="master"]', '[data-param="sk.pan"]', ".voice-num", ".voice-scale", '[data-param="sk.a4"]', ".voice-remove"].map(at);
+  });
+  check(order.every((x, i) => x >= 0 && (i === 0 || x > order[i - 1])), "the strip: Show more, name, rename, M/S, Volume, Pan, Transpose, Scale, Tune, ×", order);
+  check(await ev(() => document.querySelector(".voice-toggle").textContent === "Compact view" && document.querySelector(".voice-strip .voice-name").textContent === "Init"),
+    "an open voice's toggle says Compact view; the strip shows the voice's name");
+  check(await ev(() => document.querySelector('.voice-strip [data-param="sk.a4"] .ctl-value').textContent === "0 ct"), "Tune reads in cents");
+  check(await ev(() => !document.querySelector(".panel-toggle") || ![...document.querySelectorAll(".panel-title")].some((t) => t.textContent.trim() === "Output")),
+    "the Output panel's place is taken by the strip");
   const groups = await ev(() => [...document.querySelectorAll(".sound-select optgroup")].map((g) => g.label));
   check(groups.includes("Multis") && groups.includes("Pads"), "the sound list has the preset categories and a Multis category", groups);
 
-  // Picking a multi from the top bar loads the whole sound; picking a preset
-  // goes back to one part playing it.
+  // Picking a multi from the top bar loads the whole sound, its voices closed;
+  // picking a preset goes back to one voice playing it, open.
   await page.selectOption(".sound-select", "m:factory:multis/bass-and-pad.json");
-  let snd = await ev(() => ({ parts: window.synthkit.model.layout().parts.length, tag: !document.querySelector(".sound-tag").hidden,
-    btn: document.querySelector(".sound-multi").textContent, tabs: document.querySelector(".multi").hidden }));
-  check(snd.parts === 2 && snd.tag && snd.btn.startsWith("Layers and splits") && !snd.tabs, "a multi from the top bar: two parts, tagged, part tabs showing", snd);
+  rs = await rackState();
+  check(rs.voices === 2 && rs.open.every((o) => !o) && rs.layers && rs.flags && rs.remove && await ev(() => !document.querySelector(".sound-tag").hidden),
+    "a multi from the top bar: two voices, closed, with Layers and splits, M/S and ×", rs);
   const warm = await ev(() => { const e = window.synthkit.app.sound.entries().find((x) => x.type === "patch" && x.category === "Pads"); return window.synthkit.app.sound.value(e); });
   await page.selectOption(".sound-select", warm);
-  snd = await ev(() => ({ parts: window.synthkit.model.layout().parts.length, plain: window.synthkit.app.sound.plain(), tag: !document.querySelector(".sound-tag").hidden,
-    shown: document.querySelector(".sound-select").value, hidden: document.querySelector(".multi").hidden, btn: document.querySelector(".sound-multi").textContent }));
-  check(snd.parts === 1 && snd.plain && !snd.tag && snd.shown === warm && snd.hidden && snd.btn.startsWith("Layers and splits"),
-    "a preset from the top bar: one part across the keyboard, no multi editing in sight", snd);
+  rs = await rackState();
+  check(rs.voices === 1 && rs.open[0] && !rs.layers && await ev(() => window.synthkit.app.sound.plain()), "a preset from the top bar: one voice, open", rs);
   await ev(() => window.synthkit.model.history.undo());
   check(await ev(() => window.synthkit.model.layout().parts.length) === 2, "loading a sound can be undone");
   await page.selectOption(".sound-select", warm);
 
-  // Open the drawer: the part's patch picker is in it.
-  await page.click(".sound-multi");
-  check(await page.locator(".multi .mix-patch .preset-select").isVisible() && await page.locator(".zmap").isVisible(),
-    "Layers and splits opens the drawer: the part's patch picker and the zones");
-
-  // Add a part: it's selected, layered over the keyboard, and has its own sound.
-  await page.click(".part-add");
+  // ---- Add voice ------------------------------------------------------------------------------
+  const addOpt = (name) => ev((name) => [...document.querySelector(".add-voice-select").options].find((o) => o.textContent === name).value, name);
+  await page.selectOption(".add-voice-select", await addOpt("Mono Bass"));
   let lay = await ev(() => window.synthkit.model.layout());
-  check(lay.parts.length === 2 && lay.zones.length === 2 && lay.zones[1].part === 1, "+ Part adds a part with a zone over every key", lay);
-  check(await ev(() => window.synthkit.model.part) === 1, "the new part is selected");
+  rs = await rackState();
+  check(lay.parts.length === 2 && lay.zones.length === 2 && lay.zones[1].part === 1 && JSON.stringify(lay.zones[1].key) === "[0,127]",
+    "Add voice adds a voice layered over every key", lay);
+  check(rs.open[0] && !rs.open[1] && rs.part === 0 && rs.layers && await ev(() => document.querySelector(".layers .zmap").offsetParent !== null),
+    "the voice being edited stays open, the new one is closed; Layers and splits shows, open", rs);
+  check(await ev(() => document.querySelectorAll(".voice-strip .voice-name")[1].textContent) === "Mono Bass" &&
+    await ev(() => window.synthkit.model.getIn(1, "master")) === await ev(() => window.synthkit.app.presets.entries().find((e) => e.name === "Mono Bass").patch.params.master ?? 0),
+    "the new voice is the preset, its own volume and all");
+  check(await ev(() => !!document.querySelector(".voice.is-open .voice-preset .preset-select")), "in a multi, the open voice has its own preset bar");
+  await ev(() => window.synthkit.model.history.undo());
+  check((await rackState()).voices === 1, "adding a voice is one undo step");
+  await ev(() => window.synthkit.model.history.redo());
+
+  // ---- opening voices ---------------------------------------------------------------------------
+  await page.click(".voice:nth-child(2) .voice-toggle");
+  rs = await rackState();
+  check(!rs.open[0] && rs.open[1] && rs.part === 1 && await ev(() => !!document.querySelector(".voice:nth-child(2) .voice-panels .panels")),
+    "Show more opens a voice (selecting it) with the synth's panels; the other closes", rs);
   await ev(() => window.synthkit.model.set("filter.cutoff", 1234));
   const cut2 = await ev(() => window.synthkit.model.get("filter.cutoff"));
-  await page.click(".part:nth-child(1) .part-tab");
+  await page.click(".voice:nth-child(1) .voice-toggle");
   const cut1 = await ev(() => window.synthkit.model.get("filter.cutoff"));
-  check(cut1 !== cut2 && Math.abs(cut2 - 1234) < 20, "each part keeps its own parameters", { cut1, cut2 });
-  await page.click(".part:nth-child(2) .part-tab");
-  check(Math.abs((await ev(() => window.synthkit.model.get("filter.cutoff"))) - 1234) < 20, "selecting a part again shows its own values");
-  // Arrow keys move between part tabs.
-  await page.focus('.part-tab[aria-selected="true"]');
-  await page.keyboard.press("ArrowLeft");
-  check(await ev(() => window.synthkit.model.part) === 0, "Left arrow selects the previous part");
+  check(cut1 !== cut2 && Math.abs(cut2 - 1234) < 20, "each voice keeps its own parameters", { cut1, cut2 });
+  await page.click(".voice:nth-child(1) .voice-toggle");
+  rs = await rackState();
+  check(rs.open.every((o) => !o) && await ev(() => document.querySelector(".voice-toggle").textContent === "Show more"), "Compact view closes it again", rs);
+  await page.click(".voice:nth-child(1) .voice-toggle");
+
+  // A closed voice's strip edits that voice, without opening or selecting it.
+  await page.fill(".voice:nth-child(2) .voice-num", "-12");
+  await page.keyboard.press("Tab");
+  rs = await rackState();
+  check(await ev(() => window.synthkit.model.getIn(1, "sk.transpose")) === -12 && await ev(() => window.synthkit.model.get("sk.transpose")) === 0 && rs.part === 0 && rs.open[0],
+    "a closed voice's Transpose sets that voice's patch; the open voice stays open", rs);
+  await page.focus('.voice:nth-child(2) [data-param="master"] .knob-dial');
+  await page.keyboard.press("ArrowDown");
+  check(await ev(() => window.synthkit.model.getIn(1, "master")) < await ev(() => window.synthkit.app.presets.entries().find((e) => e.name === "Mono Bass").patch.params.master ?? 0),
+    "its Volume knob turns that voice down");
+  await ev(() => window.synthkit.model.history.undo());
+  await ev(() => window.synthkit.model.history.undo());
+  rs = await rackState();
+  check(await ev(() => window.synthkit.model.getIn(1, "sk.transpose")) === 0 && rs.part === 0 && rs.open[0], "undoing a strip edit doesn't move the open voice", rs);
+
+  // Renaming: the pencil, then ✓ (or Enter), ✗ (or Escape).
+  await page.click(".voice:nth-child(2) .voice-edit");
+  check(await page.locator(".voice:nth-child(2) .voice-name-input").isVisible() && await page.locator(".voice:nth-child(2) .voice-ok").isVisible() &&
+    await page.locator(".voice:nth-child(2) .voice-cancel").isVisible(), "the pencil turns the name into a field with ✓ and ✗");
+  await page.fill(".voice:nth-child(2) .voice-name-input", "Low end");
+  await page.click(".voice:nth-child(2) .voice-ok");
+  check(await ev(() => window.synthkit.model.nameOf(1)) === "Low end" && await ev(() => document.querySelectorAll(".voice-name")[1].textContent) === "Low end",
+    "✓ renames the voice's patch");
+  await page.click(".voice:nth-child(2) .voice-edit");
+  await page.fill(".voice:nth-child(2) .voice-name-input", "Nope");
+  await page.keyboard.press("Escape");
+  check(await ev(() => window.synthkit.model.nameOf(1)) === "Low end", "Escape cancels");
+  await ev(() => window.synthkit.model.history.undo());
+  check(await ev(() => window.synthkit.model.nameOf(1)) === "Mono Bass", "renaming can be undone");
+  await ev(() => window.synthkit.model.history.redo());
+
+  // Layers and splits: open or closed is saved with the multi, and isn't an undo step.
+  const undoLabel = await ev(() => window.synthkit.model.history.undoLabel);
+  await page.click("#sk-multi .panel-toggle");
+  check(await ev(() => window.synthkit.model.multiSave().ui.layersOpen === false && document.querySelector(".layers-body").hidden) &&
+    await ev(() => window.synthkit.model.history.undoLabel) === undoLabel, "closing Layers and splits is saved in the multi, not an undo step");
+  await page.click("#sk-multi .panel-toggle");
 
   // ---- undo follows the part -----------------------------------------------------------
-  await page.click(".part:nth-child(2) .part-tab");
-  await ev(() => window.synthkit.model.set("filter.resonance", 0.9));
-  await page.click(".part:nth-child(1) .part-tab");
+  await page.click(".voice:nth-child(2) .voice-toggle");
+  await ev(() => window.synthkit.model.set("filter.reso", 0.9));
+  await page.click(".voice:nth-child(1) .voice-toggle");
   await ev(() => window.synthkit.model.history.undo());
-  check(await ev(() => window.synthkit.model.part) === 1 && (await ev(() => window.synthkit.model.get("filter.resonance"))) !== 0.9,
-    "undo goes back to the part a change was made in");
+  rs = await rackState();
+  check(rs.part === 1 && rs.open[1] && (await ev(() => window.synthkit.model.get("filter.reso"))) !== 0.9,
+    "undo goes back to (and opens) the voice a change was made in", rs);
 
   // ---- zone editor -----------------------------------------------------------------------
   check(await page.locator(".zrect").count() === 2, "the zone map shows both zones");
@@ -141,10 +209,10 @@ async function main() {
   await ev(() => window.synthkit.model.history.undo());
   check((await ev(() => window.synthkit.model.layout())).zones[0].velFade === undefined, "a set-up is one undo step");
 
-  // Mix.
-  await page.click(".part:nth-child(1) .part-flag:has-text('M')");
-  check((await ev(() => window.synthkit.model.layout())).parts[0].mute === true, "M mutes a part");
-  await page.click(".part:nth-child(1) .part-flag:has-text('M')");
+  // Mute.
+  await page.click(".voice:nth-child(1) .voice-flag:has-text('M')");
+  check((await ev(() => window.synthkit.model.layout())).parts[0].mute === true && await ev(() => document.querySelector(".voice").classList.contains("is-muted")), "M mutes a voice");
+  await page.click(".voice:nth-child(1) .voice-flag:has-text('M')");
 
   // ---- edits reach the audio thread tagged with their part ----------------------------------
   await page.mouse.click(5, 5);
@@ -154,36 +222,52 @@ async function main() {
     window.__sent = [];
     a.send = (m) => { window.__sent.push(m); orig(m); };
   });
-  await page.click(".part:nth-child(1) .part-tab");
-  await page.click(".part:nth-child(2) .part-tab");
+  await page.click(".voice:nth-child(1) .voice-toggle");
+  await page.click(".voice:nth-child(2) .voice-toggle");
   await ev(() => window.synthkit.model.set("filter.cutoff", 777));
   await ev(() => window.synthkit.model.setLayout({ ...window.synthkit.model.layout() }));
+  await page.fill(".voice:nth-child(1) .voice-num", "5");
+  await page.keyboard.press("Tab");
   const sent = await ev(() => window.__sent);
-  check(sent.some((m) => m.t === "select" && m.p === 1), "selecting a part tells the audio thread");
+  check(sent.some((m) => m.t === "select" && m.p === 1), "opening a voice tells the audio thread");
   check(sent.some((m) => m.t === "param" && m.p === 1), "a parameter edit says which part it is for", sent);
+  check(sent.some((m) => m.t === "param" && m.p === 0), "a closed voice's strip edit goes to its own part", sent);
   check(sent.some((m) => m.t === "layout"), "a layout edit is sent to the audio thread");
+  await ev(() => window.synthkit.model.setIn(0, "sk.transpose", 0));
   await page.mouse.click(5, 5);
 
-  // ---- remove the selected part ----------------------------------------------------------------
-  await page.click(".part-add");                                                   // a third part
+  // ---- removing voices -------------------------------------------------------------------------
+  await page.selectOption(".add-voice-select", await addOpt("Warm Pad"));             // a third voice
+  await page.click(".voice:nth-child(3) .voice-toggle");
   await ev(() => window.synthkit.model.set("filter.cutoff", 3210));
-  check(await page.locator(".part .part-remove").count() === 3, "each part's tab has a remove button");
-  await page.click('.part-remove[title="Remove part 2"]');                          // part 3 (selected) stays selected
+  check(await page.locator(".voice .voice-remove:visible").count() === 3, "each voice has ×");
+  await page.click('.voice-remove[aria-label="Remove voice 2"]');                       // voice 3 (open) moves up, still open
   lay = await ev(() => window.synthkit.model.layout());
   const moved = await ev(() => ({ part: window.synthkit.model.part, cutoff: window.synthkit.model.get("filter.cutoff") }));
-  check(lay.parts.length === 2 && lay.zones.every((z) => z.part < 2) && moved.part === 1 && Math.abs(moved.cutoff - 3210) < 20,
-    "× on part 2 removes it with no selecting first; part 3 moves down with its sound and zone, still selected", { parts: lay.parts.length, moved });
+  rs = await rackState();
+  check(lay.parts.length === 2 && lay.zones.every((z) => z.part < 2) && moved.part === 1 && Math.abs(moved.cutoff - 3210) < 20 && rs.open[1],
+    "× on voice 2 removes it; voice 3 moves up with its sound and zone, still open", { parts: lay.parts.length, moved, rs });
   await ev(() => window.synthkit.model.history.undo());
-  check(await ev(() => window.synthkit.model.layout().parts.length) === 3, "removing a part can be undone");
+  check(await ev(() => window.synthkit.model.layout().parts.length) === 3, "removing a voice can be undone");
   await ev(() => window.synthkit.model.history.redo());
-  await ev(() => window.synthkit.app.multiBar.setOpen(false));
-  check(await page.locator(".part .part-remove").count() === 0, "with the drawer closed the tabs have no remove buttons");
-  await ev(() => window.synthkit.app.multiBar.setOpen(true));
+  // Down to one voice: with its zone still a split it's still a multi;
+  // across the keyboard, it's a single voice again, open.
+  await page.click('.voice-remove[aria-label="Remove voice 2"]');
+  rs = await rackState();
+  check(rs.voices === 1 && rs.layers && rs.flags, "one voice left on part of the keyboard: Layers and splits stays, so no key goes silent unseen", rs);
+  await ev(() => window.synthkit.model.history.undo());
+  await ev(() => { const m = window.synthkit.model, l = m.layout(); l.zones = l.parts.map((_, p) => ({ part: p, key: [0, 127], vel: [1, 127] })); m.setLayout(l); });
+  await page.click('.voice-remove[aria-label="Remove voice 2"]');
+  rs = await rackState();
+  check(rs.voices === 1 && rs.open[0] && !rs.remove && !rs.layers, "removing down to one voice across the keyboard: a single voice, open, no ×", rs);
+  await ev(() => window.synthkit.model.history.undo());
+  await page.click(".voice:nth-child(2) .voice-toggle");
 
   // ---- a part in a scale -----------------------------------------------------------------------------
-  // (The part's patch's own sk.scale and sk.scaleKey.)
-  const scaleSel = '.multi-mix [data-param="sk.scale"] select', keySel = '.multi-mix [data-param="sk.scaleKey"] select';
-  check(await ev((q) => document.querySelector(q).selectedOptions[0].textContent === "Chromatic", scaleSel), "parts start chromatic");
+  // (The voice's patch's own sk.scale and sk.scaleKey, on its strip.)
+  const scaleSel = ".voice.is-open .voice-scale", keySel = ".voice.is-open .voice-key";
+  check(await ev((q) => document.querySelector(q).selectedOptions[0].textContent === "Chromatic", scaleSel) && await ev((q) => document.querySelector(q).hidden, keySel),
+    "voices start chromatic, with no key to pick");
   const penta = await ev((q) => [...document.querySelector(q).options].find((o) => o.textContent === "Major Pentatonic").value, scaleSel);
   await page.selectOption(scaleSel, penta);
   await page.selectOption(keySel, "2");
@@ -224,6 +308,8 @@ async function main() {
   check(await ev(() => window.synthkit.model.layout().parts.length) === 2 && await ev(() => window.synthkit.model.part) === 1 &&
     await ev(() => window.synthkit.app.sound.shown().name) === "My split" && await page.locator(".sound .preset-dirty").isHidden(),
     "the multi, its name and the selected part come back after a reload");
+  rs = await rackState();
+  check(rs.voices === 2 && rs.open.every((o) => !o) && rs.layers, "…with its voices closed and Layers and splits showing", rs);
   await page.screenshot({ path: path.join(outDir, "multi-sound.png"), fullPage: true });
 
   // ---- a split, rendered through the AudioWorklet --------------------------------------------------

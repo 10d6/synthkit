@@ -193,9 +193,9 @@ async function main() {
   check(await page.evaluate(() => document.querySelector(".clear-note").textContent === "Cleared"),
     "the synth's answer reaches the page", "delay.cleared from the plugin didn't show");
 
-  // 14. A multi in the plugin (API.md §5b): the bar is there, the DAW's multi loads
+  // 14. A multi in the plugin (API.md §5b): the rack is there, the DAW's multi loads
   // without echo, and part-aware messages carry the part.
-  check(await page.evaluate(() => !!document.querySelector(".multi .parts") && !!document.querySelector("header .sound")), "the sound bar and the multi bar show in the plugin", "no multi bar in plugin mode");
+  check(await page.evaluate(() => !!document.querySelector(".rack .voice") && !!document.querySelector("header .sound")), "the sound bar and the rack show in the plugin", "no rack in plugin mode");
   const factoryMulti = await page.evaluate(() => window.synthkit.model.info.multis.map((m) => m.multi).find((m) => m && m.parts.length >= 2));
   check(!!factoryMulti, "the synth has a multi with two parts to test with", "no two-part factory multi");
   await clear();

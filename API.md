@@ -133,7 +133,7 @@ check the synth against it.
 | `modSlots` | 0 | matrix routes; also adds `sk.pitch`, `sk.level` (§6) |
 | `shapes` | 0 | drawn, tempo-locked curves (§6a) |
 | `arp` | false | the kit's arpeggiator and step sequencer, with their note and phrase envelopes (§4b) |
-| `multi` | false | the synth can be played as a Multi: parts, each one patch of the synth, with zones that split, layer and velocity-layer them (§5b) |
+| `multi` | false (`true` in the template) | the synth can be played as a Multi: parts, each one patch of the synth, with zones that split, layer and velocity-layer them (§5b). On the page, each part is a voice in the rack (§9) |
 
 ## 3. Parameters
 
@@ -1107,29 +1107,31 @@ their categories, and the multis, in a *Multis* category (factory ones from
 presets). Picking a preset gives one part playing it across the keyboard;
 picking a multi loads every part and the zones; either is one undo step. A
 small *multi* tag marks a multi. *Save* keeps what you have: one plain part
-(every key and velocity, 0 dB, centred, no scale) saves as a preset, anything
+(every key and velocity, not muted or soloed) saves as a preset, anything
 more as a multi. *More* has Save as new, Rename, Delete, Category (presets),
 Export, Import (a preset or a multi file) and Start from Init.
 
-*Layers and splits*, beside the *multi* tag, opens the *multi bar* under the
-header (open, the button and the bar share an accent, like a tab and its page): a tab per part (its patch's name, with mute, solo and
-× to remove it; the parts after it move down a place), *+ Part*, and the
-selected part's row: its patch (the kit's preset bar, which loads, saves and
-steps through presets for that part only), level, balance, scale and key (the
-patch's `master`, `sk.pan`, `sk.scale` and `sk.scaleKey`).
-Under that is the zone editor. Closed, the bar shows just the part tabs when
-there's more than one part, so it's clear which part the panels edit.
-Everything else on the page (panels, modulation, the arp, undo) edits **the
-selected part**, so a synth's panels need no change for multis. In the
-editor, zones are rectangles on a map of keys (across) and velocity (up),
-coloured by part, with their fades shaded; drag one to move it, drag an edge
-to resize, or use the numbers below (key and velocity ranges, fades, curve,
-MIDI channel, transpose, gain). Arrow keys nudge the focused zone (Shift
-resizes, Alt steps by an octave). *Set up…* arranges the parts as layers, a
-split, velocity layers or one MIDI channel each, in one undoable step. The
-session restores the sound, its name, its selected part and each part's
-preset. A synth's own page (§9a) mounts the sound bar with
-`sk.mount(el, "presets")` and the multi bar with `sk.mount(el, "multi")`;
+Each part is a **voice** in the rack (§9): its strip (name, mute, solo,
+volume, pan, transpose, scale, tune, ×), opening onto the panels. One voice
+is open at a time, and opening it selects its part: everything else on the
+page (panels, modulation, the arp, undo) edits **the selected part**, so a
+synth's panels need no change for multis. A strip edits its own part whether
+or not it's open. *Add voice*, under the voices, adds a preset as another
+voice layered over the keyboard (one voice becomes a multi); × removes a
+voice, and the ones after it move down a place. In a multi the open voice
+also has its own preset bar (the kit's, which loads, saves and steps through
+presets for that voice only). With more than one voice, or one voice that
+doesn't cover every key and velocity, *Layers and splits* is at the top of
+the rack, open unless closed (which is saved with the multi, as its `ui`).
+It's the zone editor: zones are rectangles on a map of keys (across) and
+velocity (up), coloured by voice, with their fades shaded; drag one to move
+it, drag an edge to resize, or use the numbers below (key and velocity
+ranges, fades, curve, MIDI channel, transpose, gain). Arrow keys nudge the
+focused zone (Shift resizes, Alt steps by an octave). *Set up…* arranges the
+voices as layers, a split, velocity layers or one MIDI channel each, in one
+undoable step. The session restores the sound, its name, its selected part and
+each part's preset. A synth's own page (§9a) mounts the sound bar with
+`sk.mount(el, "presets")` and the rack with `sk.mount(el, "rack")`;
 `sk.presets` works on the selected part's patch, and `sk.part` /
 `sk.onPart(fn)` / `sk.selectPart(i)` say which part its own controls are
 editing. The scales' names are in the page's info (`scales`).
@@ -1496,8 +1498,26 @@ void processGlobal(GlobalContext& ctx, Buffer& io) override {
 ## 9. UI layout
 
 `ui/layout.json` arranges the synth's panel. It's optional: without it, the
-kit builds one section per parameter `group`, followed by the voice, envelope
-and output panels.
+kit builds one section per parameter `group`, followed by the voicing,
+envelope and modulation panels.
+
+**The rack.** The page shows the sound as a rack of voices, top to bottom:
+one for a plain synth, one per part of a multi (§5b). Each voice is an
+accordion whose **compact strip** is always there, left to right: *Show more*
+/ *Compact view*; the voice's name (its patch's), with a pencil that turns it
+into a field with ✓ and ✗ (Enter and Escape too); M and S (mute and solo, in
+a multi); *Volume*, *Pan*, *Transpose* (semitones), *Scale* (with its key once
+it isn't Chromatic) and *Tune* (cents from A4 = 440 Hz); and × to remove the
+voice (in a multi). These are the patch's `master`, `sk.pan`, `sk.transpose`,
+`sk.scale`, `sk.scaleKey` and `sk.a4` (§3), so they're saved with the patch.
+*Show more* opens the voice's full interface under the strip: the panels
+below. One voice is open at a time; a single voice starts open, a multi's
+voices start closed. The strip takes the place of the Output panel
+(`{ "kit": "master" }` is left out of the page). A synth with
+`features.multi` also has *Add voice* under the voices and *Layers and
+splits* at the top (§5b). `"voiceStrip": false` (top level) turns the rack off
+for a synth without multis: the panels are the page, with the Output panel
+(level, pan, transpose, scale, key, A4).
 
 ```json
 {
@@ -1513,7 +1533,7 @@ and output panels.
       { "type": "xy", "params": ["cutoff", "reso"] }
     ]},
     { "kit": "env1" }, { "kit": "env2", "title": "Filter envelope" },
-    { "kit": "voices" }, { "kit": "master" }
+    { "kit": "voices" }
   ],
   "keyboard": true
 }
@@ -1526,6 +1546,7 @@ and output panels.
 | `keyboard` | `false` leaves out the on-screen keyboard and computer-key playing (default `true`). A click plays louder the nearer the key's front edge (velocity 20–127), and where you let go sets the key-up velocity; lit keys show how hard each note was played. `{ "controllers": false }` keeps the keyboard but leaves out its pedals and knobs (below). |
 | `paramInfo` | info text per parameter ID (below) |
 | `enabledWhen` | when each parameter's controls are greyed out, per parameter ID (below) |
+| `voiceStrip` | `false` leaves out the rack (above) and keeps the Output panel; only for a synth without `features.multi` (default `true`) |
 
 | Control field | |
 |---|---|
@@ -1539,7 +1560,7 @@ and output panels.
 | Section field | |
 |---|---|
 | `title`, `controls` | a panel of controls |
-| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` (mode, glide, unison, bend range, half pedal), `master` (level, A4), and with `features.arp`: `arp` (type, then the arpeggiator's or sequencer's own controls), `arpPattern` (the piano roll, for whichever type is on), `arpEnv` and `arpPhrase` (the note and phrase envelopes, §4b) |
+| `kit` | a ready-made panel: `env1`, `env2`, … (with a live envelope drawing), `lfo1`, … (with a live preview), `shape1`, … (the curve editor), `modMatrix`, `voices` ("Voicing": mode, glide, unison, bend range, half pedal), `master` (the Output panel: level, pan, transpose, scale, key, A4; only with `"voiceStrip": false`, as the voice strip has them), and with `features.arp`: `arp` (type, then the arpeggiator's or sequencer's own controls), `arpPattern` (the piano roll, for whichever type is on), `arpEnv` and `arpPhrase` (the note and phrase envelopes, §4b) |
 | `wide` | `true` makes the panel take a full row |
 | `info` | text for an ⓘ icon beside the panel's title (kit panels too) |
 | `collapsed` | makes the panel fold at its title: `true` starts folded, `false` starts open |
@@ -1553,7 +1574,7 @@ can hold:
     { "title": "LFOs",   "sections": [ { "kit": "lfo1" }, { "kit": "lfo2" } ] },
     { "title": "Shapes", "sections": [ { "kit": "shape1" }, { "kit": "shape2" } ] }
 ] },
-{ "accordion": [ { "kit": "voices", "collapsed": true }, { "kit": "master" } ], "single": true }
+{ "accordion": [ { "kit": "voices", "collapsed": true }, { "kit": "env2" } ], "single": true }
 ```
 
 - `tabs`: a full-width row of tabs; only the chosen tab's sections show. Each
@@ -1741,7 +1762,7 @@ export function mount(sk, root) {
   | `keyboard` | the on-screen keyboard, wheels, pedals and knobs; computer keys play while it's on the page (`typing: false` to stop that). Its bar also takes the tempo and MIDI controls unless the page placed them (`tempo: false`, `midi: false`). `controllers: false` leaves out the pedals and knobs, for a page with controls of its own (the reed example has treadles). |
   | `midi`, `tempo`, `output`, `panic`, `theme` | the Connect MIDI control, tempo controls (a readout in the plugin; `space: false` if the page uses Space itself), scope and level, Stop all sound, light/dark switch |
   | `undo` | the undo and redo buttons (§9). Ctrl/⌘+Z works on every page, mounted or not |
-  | `multi` | the multi bar: parts, each part's patch, mix and scale, and zones (§5b); nothing for a synth without `features.multi` |
+  | `rack` | the rack (§9): each voice's strip, *Layers and splits* and *Add voice* (§5b). The page's own controls follow `sk.part`, so an open voice shows only its preset bar (in a multi). `multi` is the same part, by its old name |
   | `hostbar` | the host bar (below), here instead of at the top of the page |
   | `panels` | panels for a whole layout (`{ sections: [...] }` as in layout.json; default: `ui/layout.json`) |
   | `section` | one panel, from one layout section (`{ title, controls }` or `{ kit: "env1" }`, `"modMatrix"`, `"shape1"`, …); without its reset button, which comes with `panels` |

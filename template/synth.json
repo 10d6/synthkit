@@ -12,6 +12,7 @@
     "standardEnvelopes": 1,
     "standardLfos": 1,
     "modSlots": 4,
-    "tempoInPatch": true
+    "tempoInPatch": true,
+    "multi": true
   }
 }

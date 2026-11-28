@@ -6,8 +6,7 @@
     { "kit": "env1", "title": "Amp envelope" },
     { "kit": "lfo1" },
     { "kit": "modMatrix", "wide": true },
-    { "kit": "voices" },
-    { "kit": "master" }
+    { "kit": "voices" }
   ],
   "keyboard": true
 }

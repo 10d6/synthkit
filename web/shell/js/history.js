@@ -108,6 +108,7 @@ class SkHistory {
     if (kind === "shapes") return "shape";
     if (kind === "custom") return extra.id === "sk.arp" || extra.id === "sk.seq" ? "pattern" : extra.id;
     if (kind === "tempo") return "tempo";
+    if (kind === "name") return "voice name";
     if (kind === "patch") return "preset change";
     if (kind === "layout") return "zones";
     if (kind === "multi") return "multi change";
@@ -147,6 +148,10 @@ class SkHistory {
     try {
       for (const c of list) {
         const v = c[side];
+        // A voice strip's edit or rename (rack.js) goes back to its part
+        // without selecting it, so the voice that's open stays open.
+        if (c.kind === "p" && c.part !== undefined && c.part !== this.m.part && c.strip) { this.m.setIn(c.part, c.i, v, "history"); continue; }
+        if (c.kind === "name") { this.m.setNameIn(c.part, v); continue; }
         if (c.part !== undefined && c.part !== this.m.part) this.m.selectPart(c.part);
         if (c.kind === "layout") this.m.setLayout(v);
         else if (c.kind === "multi") this.m.loadMulti(v);

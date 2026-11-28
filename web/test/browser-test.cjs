@@ -110,7 +110,7 @@ async function main() {
           else if (!Object.values(kept).includes("Shapes")) fail(`the chosen tab isn't remembered: ${JSON.stringify(kept)}`);
           else pass("tabs follow arrow keys and remember the choice");
           // Accordion: Voices starts folded; its title opens it.
-          const toggle = page.locator('.panel-toggle:has-text("Voices")');
+          const toggle = page.locator('.panel-toggle:has-text("Voicing")');
           const exp0 = await toggle.getAttribute("aria-expanded");
           const glide0 = await vis('[data-param="glide"]');
           await toggle.click();
@@ -734,10 +734,11 @@ async function main() {
       // stepping inside a category, saving into one and moving a preset.
       {
         const ev = (fn, arg) => page.evaluate(fn, arg);
-        // A multi synth (API.md §5b) keeps the preset bar in the multi drawer,
-        // picking the selected part's patch; the top bar picks whole sounds.
-        await ev(() => window.synthkit.app.multiBar && window.synthkit.app.multiBar.setOpen(true));
-        const P = (await ev(() => !!window.synthkit.app.sound)) ? ".multi .presets " : ".presets ";
+        // A multi synth (API.md §5b) keeps the preset bar in the open voice of a
+        // multi (the rack), picking that voice's patch; the top bar picks whole sounds.
+        const multiSynth = await ev(() => !!window.synthkit.app.sound);
+        if (multiSynth) await ev(() => { const r = window.synthkit.app.rack; r.addPatch({ synth: window.synthkit.model.info.synth.id, name: "Init", params: {} }); r.setOpen(0); });
+        const P = multiSynth ? ".voice-preset .presets " : ".presets ";
         const opts = (sel) => ev((sel) => [...document.querySelectorAll(sel + " option")].map((o) => o.textContent), sel);
         const cats = await opts(P + ".preset-category");
         const want = ["All", "Pads", "Leads", "Bass", "Keys", "Plucks", "Sequences", "Other"];
@@ -775,12 +776,12 @@ async function main() {
         await ev(() => window.synthkit.app.presets.load(window.synthkit.app.presets.entries().find((e) => e.name === "Mono Bass")));
         await ev(() => window.synthkit.app.presets.store("Bass copy"));
         const copyCat = await ev(() => window.synthkit.app.presets.user["Bass copy"].category);
-        const groups = await ev(() => [...document.querySelectorAll(".multi .presets .preset-select optgroup, .presets:not(.sound) .preset-select optgroup")].map((g) => g.label));
+        const groups = await ev(() => [...document.querySelectorAll(".voice-preset .presets .preset-select optgroup, .presets:not(.sound) .preset-select optgroup")].map((g) => g.label));
         if (copyCat !== "Bass" || !groups.includes("Bass · yours") || !groups.includes("Leads · yours")) fail(`copy of Mono Bass: ${copyCat}, groups ${JSON.stringify(groups)}`);
         else pass("a copy of a factory preset keeps its folder's category; All groups by category");
         for (const n of ["My Pad", "Bass copy"]) await ev((n) => { const p = window.synthkit.app.presets; p.load(p.entries().find((e) => e.name === n && e.kind === "user")); p.remove(); }, n);
         await page.selectOption(P + ".preset-category", { label: "All" });
-        await ev(() => window.synthkit.app.multiBar && window.synthkit.app.multiBar.setOpen(false));
+        if (multiSynth) await ev(() => window.synthkit.app.rack.removePart(1));
       }
 
       // Diagnostics (API.md §10a). A key whose release never arrives (sent

@@ -47,6 +47,10 @@ class HostAudio {
       shapes: (json) => this.send({ t: "shapes", json, p: part() }),
       message: (i, v) => this.send({ t: "msg", i, v, p: part() }),
       select: (p) => this.send({ t: "select", p }),
+      // The same for a part that isn't selected (the rack's voice strips).
+      paramAt: (p, i, v) => this.send({ t: "param", i, v, p }),
+      gestureAt: (p, i, on) => this.send({ t: "gesture", i, on, p }),
+      name: (p, name) => this.send({ t: "name", name, p }),
       layout: (json) => this.send({ t: "layout", json }),
       multi: (json) => this.send({ t: "multi", json }),
     };
