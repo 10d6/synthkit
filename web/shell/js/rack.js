@@ -92,7 +92,8 @@ class Rack {
     this.layers = this.multi ? new LayersPanel(app) : null;
     this.list = h("div", { class: "rack-voices" });
     this.addVoice = this.multi ? new AddVoice(this) : null;
-    this.root = h("div", { class: "rack" }, this.layers && this.layers.root, this.list, this.addVoice && this.addVoice.root);
+    // Top to bottom: Layers and splits, Add voice, then the voices (newest first).
+    this.root = h("div", { class: "rack" }, this.layers && this.layers.root, this.addVoice && this.addVoice.root, this.list);
     this.wasMulti = this.isMulti();
     this.openPart = this.wasMulti ? -1 : 0;
     this.build();
@@ -144,6 +145,9 @@ class Rack {
 
   layoutChanged() {
     const multi = this.isMulti();
+    // From one voice to several (adding one, its redo, undoing a removal):
+    // a multi's voices start closed.
+    if (!this.wasMulti && multi) this.openPart = -1;
     if (this.rows.length !== this.parts) {
       // From several voices down to one: it opens, as a single voice does.
       if (this.wasMulti && !multi) this.openPart = 0;
@@ -261,37 +265,45 @@ class Rack {
   // ---- adding and removing voices ----------------------------------------------------------
 
   // Adds a voice playing `patch` (from preset entry `entry`), layered over the
-  // whole keyboard. One undo step; the open voice stays open.
+  // whole keyboard, as voice 1: the newest voice is at the top, and the others
+  // move down a place (in a plugin, host automation stays with the place, as
+  // when a voice is removed). It starts closed. From one voice, that voice
+  // closes too (a multi's voices start closed); in a multi, the open voice
+  // stays open. One undo step.
   addPatch(patch, entry) {
     const m = this.model, n = this.parts;
     if (!this.multi || n >= m.maxParts) return false;
     const pr = this.app.presets;
     const currents = { ...pr.currents, [pr.shownPart]: pr.current };
     const dirty = m.dirtyParts.slice(0, n);
-    const was = m.part, edited = m.lastEdited;
+    const was = m.part, edited = m.lastEdited, open = this.openPart;
     const ms = m.multiSave();
-    ms.parts.push({ patch });
-    ms.zones = [...(ms.zones || []), { part: n, key: [0, 127], vel: [1, 127] }];
+    ms.parts.unshift({ patch });
+    ms.zones = [{ part: 0, key: [0, 127], vel: [1, 127] }, ...(ms.zones || []).map((z) => ({ ...z, part: z.part + 1 }))];
+    this.openPart = this.isMulti() && open >= 0 ? open + 1 : -1;
     this.busy = true;
     const res = m.loadMulti(ms, { label: `adding “${patch.name || "a voice"}”` });
     this.busy = false;
-    if (!res.ok) { this.app.toast(`Couldn't add the voice: ${res.error}`, "error"); return false; }
+    if (!res.ok) { this.openPart = open; this.app.toast(`Couldn't add the voice: ${res.error}`, "error"); return false; }
     for (const w of res.warnings || []) this.app.toast(w, "warn");
-    m.dirtyParts = [...dirty, false];
-    m.lastEdited = edited;
-    this.lastAdded = n;
-    this.keep(n);
-    if (this.layers) { this.layers.sel = -1; this.layers.renderZones(); }
-    pr.currents = { ...currents, [n]: entry ? pr.ref(entry) : pr.currentFor(patch) };
+    m.dirtyParts = [false, ...dirty];
+    m.lastEdited = edited >= 0 ? edited + 1 : -1;
+    this.lastAdded = 0;
+    this.keep(0);
+    const shifted = { 0: entry ? pr.ref(entry) : pr.currentFor(patch) };
+    for (let p = 0; p < n; p++) if (currents[p]) shifted[p + 1] = currents[p];
+    pr.currents = shifted;
     this.busy = true;
-    if (m.part !== was) m.selectPart(was, { quiet: true });
+    m.selectPart(this.openPart >= 0 ? this.openPart : was + 1, { quiet: true });
     this.busy = false;
     pr.shownPart = m.part;
     pr.current = pr.currents[m.part] || pr.currentFor(m.savePatch());
+    if (this.layers) { this.layers.sel = -1; this.layers.renderZones(); }
+    this.showOpen();
     pr.refresh();
     pr.saveSession();
     if (this.app.sound) this.app.sound.refresh();
-    this.app.toast(`Added “${patch.name || "voice"}” as voice ${n + 1}`);
+    this.app.toast(`Added “${patch.name || "voice"}” at the top`);
     return true;
   }
 
@@ -597,10 +609,12 @@ class AddVoice {
     this.model = rack.model;
     this.select = h("select", { class: "preset-select add-voice-select", "aria-label": "Add a voice: pick a preset", onchange: () => this.pick() });
     this.note = h("span", { class: "add-voice-note" });
+    // One row: the title, then the picker.
     this.root = h("section", { class: "panel is-wide add-voice", "aria-label": "Add voice" },
-      h("h2", { class: "panel-title" }, h("span", { text: "Add voice" }),
-        skInfoButton("Pick a preset to play it as another voice, layered over the keyboard. With more than one voice, Layers and splits (at the top) decides which keys play which.", "Add voice")),
-      h("div", { class: "add-voice-row" }, this.select, this.note));
+      h("div", { class: "add-voice-row" },
+        h("h2", { class: "panel-title" }, h("span", { text: "Add voice" }),
+          skInfoButton("Pick a preset to play it as another voice, at the top of the voices, layered over the keyboard. With more than one voice, Layers and splits (above) decides which keys play which.", "Add voice")),
+        this.select, this.note));
     this.app.presets.listeners.add(() => this.refresh());
     skStore.on(`synthkit:${this.model.info.synth.id}:presets`, () => this.refresh());
     this.refresh();

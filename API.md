@@ -1117,9 +1117,13 @@ volume, pan, transpose, scale, tune, ×), opening onto the panels. One voice
 is open at a time, and opening it selects its part: everything else on the
 page (panels, modulation, the arp, undo) edits **the selected part**, so a
 synth's panels need no change for multis. A strip edits its own part whether
-or not it's open. *Add voice*, under the voices, adds a preset as another
-voice layered over the keyboard (one voice becomes a multi); × removes a
-voice, and the ones after it move down a place. A voice in a multi is **the
+or not it's open. *Add voice*, a one-row panel above the voices, adds a
+preset as another voice layered over the keyboard, as **voice 1**: the newest
+voice is at the top and the others move down a place. It starts closed; from
+one voice (which becomes a multi), that voice closes too, while in a multi the
+open voice stays open. × removes a voice, and the ones after it move up a
+place. (In a plugin, host automation of part *n* stays with the place: see
+*In the plugin*.) A voice in a multi is **the
 multi's own**: it holds a copy of the patch, not a link to the preset it came
 from, so editing it changes only that multi, and the sound bar's *Save* keeps
 it with the multi. Nothing else (another multi, the preset) changes. Under
@@ -1163,10 +1167,10 @@ host parameters `mix.p<n>.mute` and `.solo` ("P<n> Mute", "P<n> Solo"), kept
 in step with the layout: the host moving one changes the layout (the page
 follows), and the window changing it moves the parameter. Zones, fades and channels are not host parameters; they are saved
 with the project. The project stores a whole multi (see Plugins, below), and
-a project saved before the multi loads into part 1 alone. Removing a part in
-the window moves the parts after it down a place, and their host parameters
-with them: automation stays with the place (`p3.…` drives whatever is now
-part 3).
+a project saved before the multi loads into part 1 alone. Adding a voice in
+the window (it becomes part 1) moves every part down a place, and removing
+one moves the parts after it up a place, their host parameters with them:
+automation stays with the place (`p3.…` drives whatever is now part 3).
 
 **Not here yet.** Program change, round-robin, keyswitches, per-part outputs and a shared
 effects bus.
@@ -1532,8 +1536,8 @@ it isn't Chromatic) and *Tune* (cents from A4 = 440 Hz); and, in a multi,
 below. One voice is open at a time; a single voice starts open, a multi's
 voices start closed. The strip takes the place of the Output panel
 (`{ "kit": "master" }` is left out of the page). A synth with
-`features.multi` also has *Add voice* under the voices and *Layers and
-splits* at the top (§5b). `"voiceStrip": false` (top level) turns the rack off
+`features.multi` also has *Layers and splits* at the top and *Add voice* under
+it, above the voices (§5b). `"voiceStrip": false` (top level) turns the rack off
 for a synth without multis: the panels are the page, with the Output panel
 (level, pan, transpose, scale, key, A4).
 
